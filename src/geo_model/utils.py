@@ -2,21 +2,31 @@ import numpy as np
 import geopandas as gpd
 from pointpats import random as pprandom
 from geopandas import points_from_xy
-import shapely.geometry
+from shapely.geometry import Point, MultiPoint
 
-def sample_with_centroid(row):
+
+def sample_with_centroid_primary(row):
     geom = row["Borders"]
     centre = (row["Centroids"].x, row["Centroids"].y)
-    size = int(row["F0 to 15"]) + int(row["M0 to 15"])
+    size = int(row["F4"]) + int(row["M4"])
     if geom.is_empty or size == 0:
-        return shapely.geometry.MultiPoint()
+        return MultiPoint()
+    pts = pprandom.normal(geom, centre, size=size)
+    return points_from_xy(*pts.T).union_all()
+
+def sample_with_centroid_secondary(row):
+    geom = row["Borders"]
+    centre = (row["Centroids"].x, row["Centroids"].y)
+    size = int(row["F11"]) + int(row["M11"])
+    if geom.is_empty or size == 0:
+        return MultiPoint()
     pts = pprandom.normal(geom, centre, size=size)
     return points_from_xy(*pts.T).union_all()
 
 
 def distance_based_prefs(
-    student_point: shapely.geometry.Point,
-    school_points: list,
+    student_point: Point,
+    school_points: gpd.GeoSeries,
     noise_scale: float = 0.0,   # add > 0 to break ties randomly (same units as CRS)
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
@@ -34,15 +44,21 @@ def distance_based_prefs(
     Returns:
         list: List of preferences for each student.
     """
-    distances = np.array([student_point.distance(sp) for sp in school_points])
+    if student_point:
+        distances = np.array([student_point.distance(sp) for sp in list(school_points)])
+    else:
+        return None
     if noise_scale > 0:
         rng = rng or np.random.default_rng()
         distances = distances + rng.normal(0, noise_scale, size=len(distances))
+
     order = np.argsort(distances)
     return order
 
-
-def build_student_prefs(row: shapely.geometry.MultiPoint) -> list[list]:
+def build_student_preferences(
+        row: MultiPoint,
+        school_points: gpd.GeoSeries,
+) -> list[list]:
     """Return a list of preference lists, one per student per area.
 
     Args:
@@ -59,7 +75,7 @@ def build_student_prefs(row: shapely.geometry.MultiPoint) -> list[list]:
 
 
 def distance_based_priorities(
-    school_point: shapely.geometry.Point,
+    school_point: Point,
     student_clusters: gpd.GeoSeries,
 ) -> np.ndarray:
     """_summary_
@@ -89,9 +105,9 @@ def distance_based_priorities(
     order = np.argsort(flat_distances)
     return order
 
-
 def build_school_priorities(
-    school_point: shapely.geometry.Point,
+    school_point: Point,
+    student_points: gpd.GeoSeries,
 ) -> list:
     """
     Add a `priority_list` column to schools_gdf.

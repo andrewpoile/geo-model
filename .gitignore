@@ -29,3 +29,6 @@ htmlcov/
 
 # Data
 data/
+
+# Temporary files
+temp/
