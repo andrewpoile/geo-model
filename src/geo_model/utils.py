@@ -1,118 +1,151 @@
 import numpy as np
 import geopandas as gpd
-from pointpats import random as pprandom
-from geopandas import points_from_xy
-from shapely.geometry import Point, MultiPoint
+import shapely
+from scipy.spatial import distance as spdist
 
 
-def sample_with_centroid_primary(row):
-    geom = row["Borders"]
-    centre = (row["Centroids"].x, row["Centroids"].y)
-    size = int(row["F4"]) + int(row["M4"])
-    if geom.is_empty or size == 0:
-        return MultiPoint()
-    pts = pprandom.normal(geom, centre, size=size)
-    return points_from_xy(*pts.T).union_all()
-
-def sample_with_centroid_secondary(row):
-    geom = row["Borders"]
-    centre = (row["Centroids"].x, row["Centroids"].y)
-    size = int(row["F11"]) + int(row["M11"])
-    if geom.is_empty or size == 0:
-        return MultiPoint()
-    pts = pprandom.normal(geom, centre, size=size)
-    return points_from_xy(*pts.T).union_all()
-
-
-def distance_based_prefs(
-    student_point: Point,
-    school_points: gpd.GeoSeries,
-    noise_scale: float = 0.0,   # add > 0 to break ties randomly (same units as CRS)
-    rng: np.random.Generator | None = None,
+def sample_in_polygon(
+    geom: shapely.Geometry,
+    centre: tuple[float, float],
+    size: int,
+    rng: np.random.Generator,
+    oversample: int = 6,
 ) -> np.ndarray:
-    """Return student preference lists based on distance to schools with adjustable noise term.
+    """Sample points from a bivariate normal, truncated to a polygon.
+
+    Points are drawn i.i.d. per axis from a normal centred on `centre` with
+    standard deviation equal to half the larger side of the polygon's bounding
+    box, and rejected unless they fall strictly inside `geom`.
+
+    Candidates are drawn and tested in batches rather than one at a time. Only
+    ~17% of candidates are accepted for a typical LSOA, so `oversample` batches
+    enough candidates to satisfy the request in a single pass.
 
     Args:
-        student_point (sp.Point): The student's location.
+        geom (shapely.Geometry): Polygon the points must fall inside.
 
-        school_points (list): School locations (same CRS as student_point).
+        centre (tuple[float, float]): Centre of the sampling distribution, in
+        the same CRS as `geom`.
 
-        noise_scale (float, optional): Standard deviation of Gaussian noise added to distances before ranking.
-        Useful to break ties or add mild randomness without destroying proximity
-        signal. Set to 0 for deterministic nearest-first ordering. Defaults to 0.0.
+        size (int): Number of points to return.
+
+        rng (np.random.Generator): Source of randomness.
+
+        oversample (int, optional): Candidates drawn per point still needed.
+        Defaults to 6.
 
     Returns:
-        list: List of preferences for each student.
+        np.ndarray: Array of shape (size, 2) of accepted coordinates.
     """
-    if student_point:
-        distances = np.array([student_point.distance(sp) for sp in list(school_points)])
-    else:
-        return None
+    if geom.is_empty or size == 0:
+        return np.empty((0, 2))
+
+    shapely.prepare(geom)  # build the GEOS index once, not once per candidate
+    xmin, ymin, xmax, ymax = shapely.bounds(geom)
+    sd = max((xmax - xmin) / 2, (ymax - ymin) / 2)
+
+    accepted, needed = [], size
+    for _ in range(100):
+        candidates = rng.normal(size=(max(needed * oversample, 64), 2)) * sd + centre
+        inside = candidates[
+            shapely.contains_xy(geom, candidates[:, 0], candidates[:, 1])
+        ]
+        accepted.append(inside)
+        needed -= len(inside)
+        if needed <= 0:
+            return np.vstack(accepted)[:size]
+
+    raise RuntimeError(
+        f"Rejection sampling failed to place {size} points in polygon with bounds "
+        f"{(xmin, ymin, xmax, ymax)} after 100 batches; {needed} still needed. "
+        f"The polygon may be degenerate or `centre` may lie far outside it."
+    )
+
+
+def sample_students(
+    borders: gpd.GeoSeries,
+    centroids: gpd.GeoSeries,
+    sizes: np.ndarray,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample student locations for every area.
+
+    Args:
+        borders (gpd.GeoSeries): Area polygons.
+
+        centroids (gpd.GeoSeries): Population-weighted centre of each area,
+        aligned with `borders`.
+
+        sizes (np.ndarray): Number of students to place in each area, aligned
+        with `borders`.
+
+        rng (np.random.Generator): Source of randomness.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Coordinates of shape (n_students, 2),
+        and the positional index of the area each student was drawn in.
+    """
+    borders = np.asarray(borders)
+    centre_x = shapely.get_x(np.asarray(centroids))
+    centre_y = shapely.get_y(np.asarray(centroids))
+    sizes = np.asarray(sizes, dtype=np.int64)
+
+    if not (len(borders) == len(centre_x) == len(sizes)):
+        raise ValueError(
+            f"borders, centroids and sizes must align: got {len(borders)}, "
+            f"{len(centre_x)} and {len(sizes)}."
+        )
+
+    chunks = [
+        sample_in_polygon(geom, (cx, cy), int(n), rng)
+        for geom, cx, cy, n in zip(borders, centre_x, centre_y, sizes)
+    ]
+    student_xy = np.vstack(chunks) if chunks else np.empty((0, 2))
+    area_index = np.repeat(np.arange(len(sizes)), [len(c) for c in chunks])
+    return student_xy, area_index
+
+
+def rank_by_distance(
+    student_xy: np.ndarray,
+    school_xy: np.ndarray,
+    noise_scale: float = 0.0,
+    rng: np.random.Generator | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rank schools for each student and students for each school, by distance.
+
+    Both rankings come from a single distance matrix, since school priorities
+    are the transpose of the same pairwise distances the preferences use.
+
+    Args:
+        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+
+        school_xy (np.ndarray): School coordinates, shape (n_schools, 2). Must
+        share a CRS with `student_xy`.
+
+        noise_scale (float, optional): Standard deviation of Gaussian noise
+        added to distances before ranking preferences. Useful to break ties or
+        add mild randomness without destroying the proximity signal. Set to 0
+        for deterministic nearest-first ordering. School priorities are always
+        ranked on the unperturbed distances. Defaults to 0.0.
+
+        rng (np.random.Generator | None, optional): Source of randomness, used
+        only when `noise_scale` > 0. Defaults to None.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Student preferences of shape
+        (n_students, n_schools) holding school indices nearest-first, and
+        school priorities of shape (n_schools, n_students) holding student
+        indices nearest-first.
+    """
+    distances = spdist.cdist(student_xy, school_xy)
+
+    preference_distances = distances
     if noise_scale > 0:
         rng = rng or np.random.default_rng()
-        distances = distances + rng.normal(0, noise_scale, size=len(distances))
+        preference_distances = distances + rng.normal(
+            0, noise_scale, size=distances.shape
+        )
 
-    order = np.argsort(distances)
-    return order
-
-def build_student_preferences(
-        row: MultiPoint,
-        school_points: gpd.GeoSeries,
-) -> list[list]:
-    """Return a list of preference lists, one per student per area.
-
-    Args:
-        row (MultiPoint): Student locations.
-
-    Returns:
-        list[list]: Preferences of students based on distance to schools.
-    """
-    points = list(row.geoms)   # individual Points from the MultiPoint
-    return np.array([
-        distance_based_prefs(pt, school_points, noise_scale=0.0)
-        for pt in points
-    ])
-
-
-def distance_based_priorities(
-    school_point: Point,
-    student_clusters: gpd.GeoSeries,
-) -> np.ndarray:
-    """_summary_
-
-    Args:
-        school_point (Point): _description_
-        student_clusters (list[MultiPoint]): _description_
-        student_ids (list): _description_
-        noise_scale (float, optional): _description_. Defaults to 0.0.
-        rng (np.random.Generator | None, optional): _description_. Defaults to None.
-
-    Returns:
-        list[list]: _description_
-    """
-    flat_distances = np.array([
-        school_point.distance(student_point)
-        for student_points in student_clusters
-        for student_point in student_points.geoms
-    ])
-    # for cluster_geom, cluster_ids in zip(student_clusters, student_ids):
-    #     for pt, sid in zip(cluster_geom.geoms, cluster_ids):
-    #         flat_ids.append(sid)
-    #         flat_distances.append(school_point.distance(pt))
-
-    # flat_distances = np.array(flat_distances)
-
-    order = np.argsort(flat_distances)
-    return order
-
-def build_school_priorities(
-    school_point: Point,
-    student_points: gpd.GeoSeries,
-) -> list:
-    """
-    Add a `priority_list` column to schools_gdf.
-    Each entry is a flat list of student IDs ordered nearest-first.
-    """
-    return np.array([
-        distance_based_priorities(school_point, student_points)
-    ])
+    student_preferences = np.argsort(preference_distances, axis=1).astype(np.int32)
+    school_priorities = np.argsort(distances, axis=0).T.astype(np.int32)
+    return student_preferences, school_priorities
