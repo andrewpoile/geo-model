@@ -105,16 +105,39 @@ def sample_students(
     return student_xy, area_index
 
 
-def rank_by_distance(
+def _spread(values: np.ndarray, name: str) -> float:
+    """Standard deviation of `values`, rejecting the degenerate zero case.
+
+    Dividing by a zero spread yields NaN, which `np.argsort` orders arbitrarily
+    rather than failing, so the ranking would be silently meaningless.
+    """
+    sd = float(values.std())
+    if sd == 0:
+        raise ValueError(f"{name} have zero spread, so cannot be scaled for ranking.")
+    return sd
+
+
+def rank_schools(
     student_xy: np.ndarray,
     school_xy: np.ndarray,
+    school_scores: np.ndarray | None = None,
+    performance_weight: float = 0.0,
     noise_scale: float = 0.0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Rank schools for each student and students for each school, by distance.
+    """Rank schools for each student and students for each school.
 
-    Both rankings come from a single distance matrix, since school priorities
-    are the transpose of the same pairwise distances the preferences use.
+    Student preferences trade travel off against school performance, while
+    school priorities are the transpose of the same pairwise distances, so one
+    distance matrix serves both.
+
+    Distances and scores are each divided by their own standard deviation before
+    being combined, so `performance_weight` is a unit-free share rather than a
+    metres-per-score-point rate. Preference cost is
+
+        (1 - w) * distance / sd(distance) - w * score / sd(score)
+
+    ranked ascending, so nearer and higher-scoring schools come first.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -122,30 +145,56 @@ def rank_by_distance(
         school_xy (np.ndarray): School coordinates, shape (n_schools, 2). Must
         share a CRS with `student_xy`.
 
+        school_scores (np.ndarray | None, optional): Performance score per
+        school, aligned with `school_xy`, higher being better. Required when
+        `performance_weight` > 0. Defaults to None.
+
+        performance_weight (float, optional): Share of the preference ranking
+        driven by performance rather than distance, in [0, 1]. 0 gives
+        nearest-first ordering, 1 ranks on performance alone. School priorities
+        are unaffected either way. Defaults to 0.0.
+
         noise_scale (float, optional): Standard deviation of Gaussian noise
-        added to distances before ranking preferences. Useful to break ties or
-        add mild randomness without destroying the proximity signal. Set to 0
-        for deterministic nearest-first ordering. School priorities are always
-        ranked on the unperturbed distances. Defaults to 0.0.
+        added to the combined preference cost, measured in units of that cost
+        rather than in metres. Useful to break ties or add mild randomness
+        without destroying the underlying signal. Set to 0 for a deterministic
+        ordering. School priorities are always ranked on the unperturbed
+        distances. Defaults to 0.0.
 
         rng (np.random.Generator | None, optional): Source of randomness, used
         only when `noise_scale` > 0. Defaults to None.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: Student preferences of shape
-        (n_students, n_schools) holding school indices nearest-first, and
-        school priorities of shape (n_schools, n_students) holding student
-        indices nearest-first.
+        (n_students, n_schools) holding school indices best-first, and school
+        priorities of shape (n_schools, n_students) holding student indices
+        nearest-first.
     """
-    distances = spdist.cdist(student_xy, school_xy)
-
-    preference_distances = distances
-    if noise_scale > 0:
-        rng = rng or np.random.default_rng()
-        preference_distances = distances + rng.normal(
-            0, noise_scale, size=distances.shape
+    if not 0.0 <= performance_weight <= 1.0:
+        raise ValueError(
+            f"performance_weight must lie in [0, 1], got {performance_weight}."
         )
 
-    student_preferences = np.argsort(preference_distances, axis=1).astype(np.int32)
+    distances = spdist.cdist(student_xy, school_xy)
+    cost = (1 - performance_weight) * distances / _spread(distances, "Distances")
+
+    if performance_weight > 0:
+        if school_scores is None:
+            raise ValueError("school_scores is required when performance_weight > 0.")
+        scores = np.asarray(school_scores, dtype=float)
+        if scores.shape != (school_xy.shape[0],):
+            raise ValueError(
+                f"school_scores must hold one score per school: expected shape "
+                f"{(school_xy.shape[0],)}, got {scores.shape}."
+            )
+        if not np.isfinite(scores).all():
+            raise ValueError("school_scores holds non-finite values.")
+        cost = cost - performance_weight * scores / _spread(scores, "School scores")
+
+    if noise_scale > 0:
+        rng = rng or np.random.default_rng()
+        cost = cost + rng.normal(0, noise_scale, size=cost.shape)
+
+    student_preferences = np.argsort(cost, axis=1).astype(np.int32)
     school_priorities = np.argsort(distances, axis=0).T.astype(np.int32)
     return student_preferences, school_priorities

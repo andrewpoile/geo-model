@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 
-from utils import sample_students, rank_by_distance
+from utils import sample_students, rank_schools
 
 SEED = 20260907
 CRS = "EPSG:27700"  # British National Grid; eastings/northings in metres
@@ -14,6 +14,14 @@ SECONDARY_PHASES = ["All-through", "Middle deemed secondary", "Secondary"]
 
 POPULATION_XLSX = Path("data/student_data/sapelsoasyoa20222024.xlsx")
 POPULATION_CACHE = Path("temp/population_lsoa.pkl")
+
+# 2024-2025 is the newest release in the data folder, but it publishes no P8MEA
+# for any school in England, so 2023-2024 is the latest usable year.
+KS4_CSV = Path("data/school_data/Performancetables_csv/2023-2024/852_ks4final.csv")
+
+# Share of the secondary preference ranking driven by Progress 8 rather than
+# distance. At 0.3 one Progress 8 point is worth roughly 1.4km of extra travel.
+PERFORMANCE_WEIGHT = 0.3
 
 rng = np.random.default_rng(SEED)
 
@@ -42,6 +50,23 @@ def load_population() -> pd.DataFrame:
     POPULATION_CACHE.parent.mkdir(parents=True, exist_ok=True)
     population.to_pickle(POPULATION_CACHE)
     return population
+
+
+def load_p8() -> pd.DataFrame:
+    """Import Progress 8 scores, keyed on local authority and establishment number.
+
+    P8MEA is centred on the England average by construction: 0 is average,
+    below 0 is below average and above 0 is above average.
+
+    Independent schools carry the suppression code "NP" instead of a score.
+    They fall outside the model's school types, so they are dropped here.
+    """
+    ks4 = pd.read_csv(
+        KS4_CSV, encoding="utf-8-sig", usecols=["RECTYPE", "LEA", "ESTAB", "P8MEA"],
+    )
+    ks4 = ks4[ks4["RECTYPE"] == 1]  # school rows, not LA or national aggregates
+    ks4 = ks4.assign(P8MEA=pd.to_numeric(ks4["P8MEA"], errors="coerce"))
+    return ks4[["LEA", "ESTAB", "P8MEA"]].dropna(subset=["P8MEA"])
 
 
 population = load_population()
@@ -110,7 +135,8 @@ secondary_student_xy, secondary_student_lsoa = sample_students(
 schools = pd.read_csv("data/school_data/edubasealldata20260225.csv",
                       encoding="latin-1",
                       usecols=[
-                          "LSOA (code)","LA (name)",
+                          "LSOA (code)","LA (code)","LA (name)",
+                          "EstablishmentNumber",
                           "EstablishmentName",
                           "EstablishmentStatus (name)",
                           "TypeOfEstablishment (name)",
@@ -136,7 +162,8 @@ schools = schools[schools["PhaseOfEducation (name)"].isin(
      "Secondary"]
 )]
 schools = schools[[
-    "LSOA21CD","LA (name)",
+    "LSOA21CD","LA (code)","LA (name)",
+    "EstablishmentNumber",
     "EstablishmentName",
     "TypeOfEstablishment (name)",
     "EstablishmentTypeGroup (name)",
@@ -154,8 +181,27 @@ schools = gpd.GeoDataFrame(
 )
 schools = schools[schools["LA (name)"].isin(["Southampton"])]
 
+# Progress 8 is joined on establishment number rather than URN: Regents Park
+# Community College became an academy in 2026 and took a new URN, while its
+# establishment number is unchanged.
+schools = schools.astype({"EstablishmentNumber": int}).merge(
+    load_p8().rename(columns={"LEA": "LA (code)", "ESTAB": "EstablishmentNumber"}),
+    "left",
+    ["LA (code)", "EstablishmentNumber"],
+)
+
 primary_schools = schools[schools["PhaseOfEducation (name)"].isin(PRIMARY_PHASES)]
 secondary_schools = schools[schools["PhaseOfEducation (name)"].isin(SECONDARY_PHASES)]
+
+# An all-through school that has never had a KS4 cohort has no Progress 8 score
+# and so cannot be ranked on performance. It still serves the primary phase.
+missing_p8 = secondary_schools[secondary_schools["P8MEA"].isna()]
+if len(missing_p8):
+    print(
+        "No Progress 8 score, dropped from the secondary choice set: "
+        + ", ".join(missing_p8["EstablishmentName"])
+    )
+    secondary_schools = secondary_schools.dropna(subset=["P8MEA"])
 
 primary_school_xy = np.column_stack(
     (primary_schools.Easting.values, primary_schools.Northing.values)
@@ -165,12 +211,16 @@ secondary_school_xy = np.column_stack(
 )
 
 # School priorities are the transpose of the same pairwise distances that rank
-# student preferences, so one distance matrix per phase serves both.
-primary_student_preferences, primary_school_priorities = rank_by_distance(
+# student preferences, so one distance matrix per phase serves both. Progress 8
+# is a KS4 measure with no primary analogue, so it shapes secondary preferences
+# only, and priorities stay on distance alone in both phases.
+primary_student_preferences, primary_school_priorities = rank_schools(
     primary_student_xy, primary_school_xy,
 )
-secondary_student_preferences, secondary_school_priorities = rank_by_distance(
+secondary_student_preferences, secondary_school_priorities = rank_schools(
     secondary_student_xy, secondary_school_xy,
+    school_scores=secondary_schools.P8MEA.values,
+    performance_weight=PERFORMANCE_WEIGHT,
 )
 
 primary_school_capacities = np.array(
