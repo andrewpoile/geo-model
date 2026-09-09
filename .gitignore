@@ -27,6 +27,9 @@ htmlcov/
 .idea/
 .DS_Store
 
+# Agent instructions
+agent_docs/
+
 # Data
 data/
 
