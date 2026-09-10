@@ -105,6 +105,12 @@ def fast_DAT(
             if eviction_required:
                 assigned_students[target_school, lowest_priority_route, lowest_priority_student] = -1
                 assigned_students[target_school, target_route, s_id] = c_rank
+                # The evicted student gives up their seat on their route as
+                # well as the one at the school, and the applicant takes both.
+                if lowest_priority_route < n_routes:
+                    route_acceptance_numbers[lowest_priority_route] -= 1
+                if target_route > -1:
+                    route_acceptance_numbers[target_route] += 1
                 matching[lowest_priority_student, 0] = -1
                 matching[lowest_priority_student, 1] = -1
                 matching[s_id, 0] = target_school

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 import shapely
 from scipy.spatial import distance as spdist
@@ -117,15 +118,25 @@ def _spread(values: np.ndarray, name: str) -> float:
     return sd
 
 
-def rank_schools(
+def rank_bundles(
     student_xy: np.ndarray,
+    student_district: np.ndarray,
     school_xy: np.ndarray,
+    school_district: np.ndarray,
+    route_district: np.ndarray,
+    route_school: np.ndarray,
     school_scores: np.ndarray | None = None,
     performance_weight: float = 0.0,
+    route_discount: float = 0.0,
     noise_scale: float = 0.0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Rank schools for each student and students for each school.
+    """Rank (school, route) bundles for students and (student, route) bundles for schools.
+
+    A bundle pairs a school with a route to it, or with no route at all, written
+    as route -1. A route serves one district, so a student ranks the bundles of
+    the routes leaving their own district alongside the routeless bundle of
+    every school; a student whose district has no routes ranks schools alone.
 
     Student preferences trade travel off against school performance, while
     school priorities are the transpose of the same pairwise distances, so one
@@ -133,26 +144,54 @@ def rank_schools(
 
     Distances and scores are each divided by their own standard deviation before
     being combined, so `performance_weight` is a unit-free share rather than a
-    metres-per-score-point rate. Preference cost is
+    metres-per-score-point rate. Bundle cost is
 
-        (1 - w) * distance / sd(distance) - w * score / sd(score)
+        (1 - w) * (1 - discount) * distance / sd(distance) - w * score / sd(score)
 
-    ranked ascending, so nearer and higher-scoring schools come first.
+    ranked ascending, so nearer and higher-scoring schools come first. The
+    discount scales the travel term alone rather than the whole cost, which runs
+    negative for a school scoring above average and would turn a route into a
+    penalty. A bundle therefore never ranks below the same school without one.
+
+    School priorities carry the model's two brackets. The top bracket holds
+    every routed bundle to the school and every student living in the school's
+    own district, the bottom bracket holds the routeless bundles of everyone
+    else, and distance orders both. Every bundle takes its own rank, since the
+    mechanism compares ranks across the whole route axis when it evicts.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
 
+        student_district (np.ndarray): Positional index of the district each
+        student lives in, shape (n_students,).
+
         school_xy (np.ndarray): School coordinates, shape (n_schools, 2). Must
         share a CRS with `student_xy`.
+
+        school_district (np.ndarray): Positional index of the district each
+        school sits in, aligned with `school_xy` and indexed the same way as
+        `student_district`.
+
+        route_district (np.ndarray): District each route leaves, shape
+        (n_routes,). A route is identified by its position in this array, the
+        route axis the matching mechanism indexes.
+
+        route_school (np.ndarray): School each route arrives at, as a positional
+        index into `school_xy`, aligned with `route_district`.
 
         school_scores (np.ndarray | None, optional): Performance score per
         school, aligned with `school_xy`, higher being better. Required when
         `performance_weight` > 0. Defaults to None.
 
         performance_weight (float, optional): Share of the preference ranking
-        driven by performance rather than distance, in [0, 1]. 0 gives
+        driven by performance rather than travel, in [0, 1]. 0 gives
         nearest-first ordering, 1 ranks on performance alone. School priorities
         are unaffected either way. Defaults to 0.0.
+
+        route_discount (float, optional): Share of the travel a route takes out
+        of the ranking of the school it serves, in [0, 1]. 0 leaves a bundle
+        tied with the same school without a route, 1 ranks it as if the school
+        were next door. School priorities are unaffected. Defaults to 0.0.
 
         noise_scale (float, optional): Standard deviation of Gaussian noise
         added to the combined preference cost, measured in units of that cost
@@ -166,35 +205,195 @@ def rank_schools(
 
     Returns:
         tuple[np.ndarray, np.ndarray]: Student preferences of shape
-        (n_students, n_schools) holding school indices best-first, and school
-        priorities of shape (n_schools, n_students) holding student indices
-        nearest-first.
+        (n_students, max_options, 2) holding (school, route) pairs best-first
+        and right-padded with (-1, -1), and school priorities of shape
+        (n_schools, n_routes + 1, n_students) holding the rank of every
+        (student, route) bundle. Routeless bundles sit last on the route axis,
+        where the mechanism's index of -1 lands.
     """
     if not 0.0 <= performance_weight <= 1.0:
         raise ValueError(
             f"performance_weight must lie in [0, 1], got {performance_weight}."
         )
+    if not 0.0 <= route_discount <= 1.0:
+        raise ValueError(f"route_discount must lie in [0, 1], got {route_discount}.")
+
+    n_students = len(student_xy)
+    n_schools = len(school_xy)
+    student_district = np.asarray(student_district, dtype=np.int64)
+    school_district = np.asarray(school_district, dtype=np.int64)
+    route_district = np.asarray(route_district, dtype=np.int64)
+    route_school = np.asarray(route_school, dtype=np.int64)
+    n_routes = len(route_district)
+
+    if student_district.shape != (n_students,):
+        raise ValueError(
+            f"student_district must hold one district per student: expected "
+            f"shape {(n_students,)}, got {student_district.shape}."
+        )
+    if school_district.shape != (n_schools,):
+        raise ValueError(
+            f"school_district must hold one district per school: expected shape "
+            f"{(n_schools,)}, got {school_district.shape}."
+        )
+    if route_school.shape != route_district.shape:
+        raise ValueError(
+            f"route_district and route_school must align: got "
+            f"{route_district.shape} and {route_school.shape}."
+        )
+    if n_routes and not ((0 <= route_school) & (route_school < n_schools)).all():
+        raise ValueError(
+            f"route_school holds indices outside the {n_schools} schools given."
+        )
 
     distances = spdist.cdist(student_xy, school_xy)
-    cost = (1 - performance_weight) * distances / _spread(distances, "Distances")
+    travel = (1 - performance_weight) * distances / _spread(distances, "Distances")
+    merit = np.zeros(n_schools)
 
     if performance_weight > 0:
         if school_scores is None:
             raise ValueError("school_scores is required when performance_weight > 0.")
         scores = np.asarray(school_scores, dtype=float)
-        if scores.shape != (school_xy.shape[0],):
+        if scores.shape != (n_schools,):
             raise ValueError(
                 f"school_scores must hold one score per school: expected shape "
-                f"{(school_xy.shape[0],)}, got {scores.shape}."
+                f"{(n_schools,)}, got {scores.shape}."
             )
         if not np.isfinite(scores).all():
             raise ValueError("school_scores holds non-finite values.")
-        cost = cost - performance_weight * scores / _spread(scores, "School scores")
+        merit = -performance_weight * scores / _spread(scores, "School scores")
 
     if noise_scale > 0:
         rng = rng or np.random.default_rng()
-        cost = cost + rng.normal(0, noise_scale, size=cost.shape)
 
-    student_preferences = np.argsort(cost, axis=1).astype(np.int32)
-    school_priorities = np.argsort(distances, axis=0).T.astype(np.int32)
-    return student_preferences, school_priorities
+    # Every student in a district is offered that district's routes, so option
+    # sets are built once per district rather than once per student.
+    routes_per_district = np.bincount(route_district) if n_routes else np.zeros(1)
+    max_options = n_schools + int(routes_per_district.max())
+    preferences = np.full((n_students, max_options, 2), -1, dtype=np.int32)
+    routeless = np.column_stack((np.arange(n_schools), np.full(n_schools, -1)))
+
+    for district in np.unique(student_district):
+        students = np.flatnonzero(student_district == district)
+        routes = np.flatnonzero(route_district == district)
+        schools = route_school[routes]
+
+        options = np.vstack((routeless, np.column_stack((schools, routes))))
+        cost = np.hstack((
+            travel[students] + merit,
+            (1 - route_discount) * travel[np.ix_(students, schools)] + merit[schools],
+        ))
+        if noise_scale > 0:
+            cost = cost + rng.normal(0, noise_scale, size=cost.shape)
+
+        # Stable, so a bundle left tied with its own school by a zero discount
+        # ranks below it and a seat is only taken when the route earns it.
+        order = np.argsort(cost, axis=1, kind="stable")
+        preferences[students, :len(options)] = options[order]
+
+    priorities = np.empty((n_schools, n_routes + 1, n_students), dtype=np.int32)
+    for school in range(n_schools):
+        bundle_student = [np.arange(n_students)]
+        bundle_route = [np.full(n_students, n_routes)]
+        bracket = [np.where(student_district == school_district[school], 0, 1)]
+
+        for route in np.flatnonzero(route_school == school):
+            riders = np.flatnonzero(student_district == route_district[route])
+            bundle_student.append(riders)
+            bundle_route.append(np.full(len(riders), route))
+            bracket.append(np.zeros(len(riders), dtype=np.int64))
+
+        bundle_student = np.concatenate(bundle_student)
+        bundle_route = np.concatenate(bundle_route)
+        order = np.lexsort(
+            (distances[bundle_student, school], np.concatenate(bracket))
+        )
+        rank = np.empty(len(order), dtype=np.int32)
+        rank[order] = np.arange(len(order), dtype=np.int32)
+
+        # Bundles on another school's routes are never proposed here, so their
+        # cells take a rank worse than any real one rather than being left to
+        # masquerade as a strong claim on a seat.
+        priorities[school] = len(order)
+        priorities[school, bundle_route, bundle_student] = rank
+
+    return preferences, priorities
+
+
+def district_index(schools: pd.DataFrame, areas: pd.DataFrame) -> np.ndarray:
+    """Positional index into `areas` of the district each school sits in.
+
+    Students carry the positional index of the area they were sampled in, so a
+    school's district has to be expressed the same way before the two can be
+    compared for the local priority bracket.
+
+    A school run by the authority can stand just over the boundary in a
+    neighbouring one, in a district the model does not hold. Such a school takes
+    -1, an index no student carries, so nobody holds local priority there.
+
+    Args:
+        schools (pd.DataFrame): Schools carrying "LSOA21CD" and
+        "EstablishmentName" columns.
+
+        areas (pd.DataFrame): Districts carrying an "LSOA21CD" column, in the
+        order students were sampled from.
+
+    Returns:
+        np.ndarray: Positional index into `areas`, one per school, or -1 for a
+        school sitting outside every area.
+    """
+    lookup = pd.Series(np.arange(len(areas)), index=areas["LSOA21CD"])
+    index = lookup.reindex(schools["LSOA21CD"])
+
+    outside = index.isna().to_numpy()
+    if outside.any():
+        print(
+            "Sits in a district the model does not hold, so no student holds "
+            "local priority there: "
+            + ", ".join(schools.loc[outside, "EstablishmentName"])
+        )
+    return index.fillna(-1).to_numpy(dtype=np.int64)
+
+
+def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
+    """Seats one year group holds at each school.
+
+    The register publishes capacity across every year group a school teaches,
+    while the matching admits a single cohort, so capacity is spread evenly over
+    the years the school spans. A sixth form is smaller than the year groups
+    below it, so this understates the intake of an 11-18 school; the register
+    publishes no admission number to use in its place.
+
+    Args:
+        schools (pd.DataFrame): Schools carrying "EstablishmentName",
+        "SchoolCapacity", "StatutoryLowAge" and "StatutoryHighAge" columns.
+
+    Returns:
+        np.ndarray: Seats for one cohort at each school.
+    """
+    unsized = schools[
+        ["SchoolCapacity", "StatutoryLowAge", "StatutoryHighAge"]
+    ].isna().any(axis=1)
+    if unsized.any():
+        raise ValueError(
+            "No capacity or no age range published, so a cohort cannot be "
+            "sized: "
+            + ", ".join(schools.loc[unsized.to_numpy(), "EstablishmentName"])
+        )
+
+    year_groups = schools["StatutoryHighAge"] - schools["StatutoryLowAge"]
+    if (year_groups <= 0).any():
+        raise ValueError(
+            "These schools publish an age range covering no year group, so "
+            "their capacity cannot be split into cohorts: "
+            + ", ".join(schools.loc[(year_groups <= 0).to_numpy(), "EstablishmentName"])
+        )
+    capacity = np.rint(schools["SchoolCapacity"] / year_groups).to_numpy()
+
+    if (capacity < 1).any():
+        raise ValueError(
+            "These schools hold fewer than one seat per cohort, so the age "
+            "range or the capacity is wrong: "
+            + ", ".join(schools.loc[capacity < 1, "EstablishmentName"])
+        )
+    return capacity.astype(np.int32)

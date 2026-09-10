@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 
-from utils import sample_students, rank_schools
+from utils import sample_students, rank_bundles, district_index, cohort_capacity
+from build_routes import route_network, save_routes
 
 SEED = 20260907
 CRS = "EPSG:27700"  # British National Grid; eastings/northings in metres
@@ -22,6 +23,11 @@ KS4_CSV = Path("data/school_data/Performancetables_csv/2023-2024/852_ks4final.cs
 # Share of the secondary preference ranking driven by Progress 8 rather than
 # distance. At 0.3 one Progress 8 point is worth roughly 1.4km of extra travel.
 PERFORMANCE_WEIGHT = 0.3
+
+# Share of the travel a route takes out of the ranking of the school it serves.
+# At 0.5 a routed school ranks as if it stood half as far away, so a route is
+# worth taking but does not put every distant school ahead of the local one.
+ROUTE_DISCOUNT = 0.5
 
 rng = np.random.default_rng(SEED)
 
@@ -130,7 +136,7 @@ secondary_student_xy, secondary_student_lsoa = sample_students(
     geo_soton["Borders"], geo_soton["Centroids"], secondary_sizes, rng,
 )
 
-# Only 11 of the register's 135 columns are used, and reading the rest costs
+# Only 13 of the register's 135 columns are used, and reading the rest costs
 # more than everything the register is used for.
 schools = pd.read_csv("data/school_data/edubasealldata20260225.csv",
                       encoding="latin-1",
@@ -142,6 +148,8 @@ schools = pd.read_csv("data/school_data/edubasealldata20260225.csv",
                           "TypeOfEstablishment (name)",
                           "EstablishmentTypeGroup (name)",
                           "PhaseOfEducation (name)",
+                          "StatutoryLowAge",
+                          "StatutoryHighAge",
                           "SchoolCapacity",
                           "PercentageFSM",
                           "Easting",
@@ -168,6 +176,8 @@ schools = schools[[
     "TypeOfEstablishment (name)",
     "EstablishmentTypeGroup (name)",
     "PhaseOfEducation (name)",
+    "StatutoryLowAge",
+    "StatutoryHighAge",
     "SchoolCapacity",
     "PercentageFSM",
     "Easting",
@@ -210,30 +220,48 @@ secondary_school_xy = np.column_stack(
     (secondary_schools.Easting.values, secondary_schools.Northing.values)
 )
 
+# Routes connect the disadvantaged districts to the secondary schools they
+# cannot reach unaided, so they exist for the secondary phase alone.
+secondary_routes = route_network(geo_soton, secondary_school_xy)
+save_routes(secondary_routes)
+
 # School priorities are the transpose of the same pairwise distances that rank
 # student preferences, so one distance matrix per phase serves both. Progress 8
 # is a KS4 measure with no primary analogue, so it shapes secondary preferences
-# only, and priorities stay on distance alone in both phases.
-primary_student_preferences, primary_school_priorities = rank_schools(
-    primary_student_xy, primary_school_xy,
+# only, and priorities stay on distance and district alone in both phases.
+primary_student_preferences, primary_school_priorities = rank_bundles(
+    primary_student_xy, primary_student_lsoa,
+    primary_school_xy, district_index(primary_schools, geo_soton),
+    np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32),
 )
-secondary_student_preferences, secondary_school_priorities = rank_schools(
-    secondary_student_xy, secondary_school_xy,
+secondary_student_preferences, secondary_school_priorities = rank_bundles(
+    secondary_student_xy, secondary_student_lsoa,
+    secondary_school_xy, district_index(secondary_schools, geo_soton),
+    secondary_routes["district_idx"].to_numpy(),
+    secondary_routes["school_idx"].to_numpy(),
     school_scores=secondary_schools.P8MEA.values,
     performance_weight=PERFORMANCE_WEIGHT,
+    route_discount=ROUTE_DISCOUNT,
 )
 
-primary_school_capacities = np.array(
-    primary_schools.SchoolCapacity.values,
-    dtype=np.int32,
+# The register publishes capacity across every year group a school teaches,
+# while the matching admits one cohort, so the two are not interchangeable.
+primary_school_capacities = cohort_capacity(primary_schools)
+secondary_school_capacities = cohort_capacity(secondary_schools)
+
+print(
+    f"Primary: {primary_school_capacities.sum()} seats in a cohort for "
+    f"{len(primary_student_xy)} students."
 )
-secondary_school_capacities = np.array(
-    secondary_schools.SchoolCapacity.values,
-    dtype=np.int32,
+print(
+    f"Secondary: {secondary_school_capacities.sum()} seats in a cohort for "
+    f"{len(secondary_student_xy)} students."
 )
 
 Path("temp").mkdir(parents=True, exist_ok=True)
-np.savez(
+# Compressed, since a priority array is mostly the filler that stands in for
+# the bundles a school never hears from.
+np.savez_compressed(
     "temp/prefprio.npz",
     primary_student_preferences = primary_student_preferences,
     secondary_student_preferences = secondary_student_preferences,

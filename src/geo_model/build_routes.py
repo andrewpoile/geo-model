@@ -6,8 +6,6 @@ import geopandas as gpd
 import shapely
 from scipy.spatial import distance as spdist
 
-from build_prefs import geo_soton, secondary_school_xy
-
 # LSOAs at or below this decile are the disadvantaged districts, the only
 # districts routes are built from. 1 is the most deprived 10% of LSOAs.
 DISADVANTAGED_DECILE = 3
@@ -72,61 +70,94 @@ def build_routes(
     })
 
 
-if not 1 <= DISADVANTAGED_DECILE <= 10:
-    raise ValueError(
-        f"DISADVANTAGED_DECILE must be an IMD decile in [1, 10], got "
-        f"{DISADVANTAGED_DECILE}."
-    )
+def route_network(
+    areas: gpd.GeoDataFrame,
+    school_xy: np.ndarray,
+    decile: int = DISADVANTAGED_DECILE,
+    min_distance: float = MIN_ROUTE_DISTANCE,
+    capacity: int = ROUTE_CAPACITY,
+) -> pd.DataFrame:
+    """Select the disadvantaged districts of `areas` and route them to schools.
 
-# A student is tied to their district by position, since sample_students returns
-# a positional area index, so district_idx only means anything if geo_soton is
-# positionally indexed too.
-if not geo_soton.index.equals(pd.RangeIndex(len(geo_soton))):
-    raise ValueError(
-        "geo_soton is not positionally indexed, so route district_idx would not "
-        "line up with the area index sample_students returns."
-    )
+    Args:
+        areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IMD
+        Decile" and "Centroids" columns, positionally indexed in the order
+        students were sampled from.
 
-disadvantaged = geo_soton[geo_soton["IMD Decile"] <= DISADVANTAGED_DECILE]
-if disadvantaged.empty:
-    raise ValueError(
-        f"No LSOA sits at or below IMD decile {DISADVANTAGED_DECILE}, so there "
-        "are no disadvantaged districts to build routes from."
-    )
+        school_xy (np.ndarray): School coordinates, shape (n_schools, 2), in the
+        same CRS as the centroids.
 
-secondary_routes = build_routes(
-    disadvantaged, secondary_school_xy, MIN_ROUTE_DISTANCE, ROUTE_CAPACITY,
-)
-if secondary_routes.empty:
-    raise ValueError(
-        f"No school lies more than {MIN_ROUTE_DISTANCE}m from any of the "
-        f"{len(disadvantaged)} disadvantaged districts, so the route set is empty."
-    )
+        decile (int, optional): Districts at or below this IMD decile are the
+        disadvantaged ones routes are built from. Defaults to
+        DISADVANTAGED_DECILE.
 
-# Every school can sit within the threshold of a district, leaving it out of the
-# transport scheme entirely. That is a real result at a large MIN_ROUTE_DISTANCE
-# rather than an error, but it is silent, so it is named here.
-unrouted = disadvantaged.loc[
-    ~disadvantaged.index.isin(secondary_routes["district_idx"]), "LSOA21CD"
-]
-if len(unrouted):
+        min_distance (float, optional): Districts are routed only to schools
+        further away than this, in metres. Defaults to MIN_ROUTE_DISTANCE.
+
+        capacity (int, optional): Seats on every route. Defaults to
+        ROUTE_CAPACITY.
+
+    Returns:
+        pd.DataFrame: The route set, as returned by `build_routes`.
+    """
+    if not 1 <= decile <= 10:
+        raise ValueError(f"decile must be an IMD decile in [1, 10], got {decile}.")
+
+    # A student is tied to their district by position, since sample_students
+    # returns a positional area index, so district_idx only means anything if
+    # the area frame is positionally indexed too.
+    if not areas.index.equals(pd.RangeIndex(len(areas))):
+        raise ValueError(
+            "The area frame is not positionally indexed, so route district_idx "
+            "would not line up with the area index sample_students returns."
+        )
+
+    disadvantaged = areas[areas["IMD Decile"] <= decile]
+    if disadvantaged.empty:
+        raise ValueError(
+            f"No LSOA sits at or below IMD decile {decile}, so there are no "
+            "disadvantaged districts to build routes from."
+        )
+
+    routes = build_routes(disadvantaged, school_xy, min_distance, capacity)
+    if routes.empty:
+        raise ValueError(
+            f"No school lies more than {min_distance}m from any of the "
+            f"{len(disadvantaged)} disadvantaged districts, so the route set is "
+            "empty."
+        )
+
+    # Every school can sit within the threshold of a district, leaving it out of
+    # the transport scheme entirely. That is a real result at a large
+    # min_distance rather than an error, but it is silent, so it is named here.
+    unrouted = disadvantaged.loc[
+        ~disadvantaged.index.isin(routes["district_idx"]), "LSOA21CD"
+    ]
+    if len(unrouted):
+        print(
+            f"Every secondary school is within {min_distance}m, so no routes: "
+            + ", ".join(unrouted)
+        )
+
     print(
-        f"Every secondary school is within {MIN_ROUTE_DISTANCE}m, so no routes: "
-        + ", ".join(unrouted)
+        f"{len(disadvantaged)} disadvantaged districts at IMD decile {decile} or "
+        f"below, {len(routes)} routes to {len(school_xy)} secondary schools, "
+        f"{len(routes) / len(disadvantaged):.1f} per district."
     )
+    return routes
 
-print(
-    f"{len(disadvantaged)} disadvantaged districts at IMD decile "
-    f"{DISADVANTAGED_DECILE} or below, {len(secondary_routes)} routes to "
-    f"{len(secondary_school_xy)} secondary schools, "
-    f"{len(secondary_routes) / len(disadvantaged):.1f} per district."
-)
 
-ROUTES_CSV.parent.mkdir(parents=True, exist_ok=True)
-secondary_routes.to_csv(ROUTES_CSV, index=False)
-np.savez(
-    ROUTES_NPZ,
-    route_capacities = secondary_routes["capacity"].to_numpy(dtype=np.int32),
-    route_school_idx = secondary_routes["school_idx"].to_numpy(dtype=np.int32),
-    route_district_idx = secondary_routes["district_idx"].to_numpy(dtype=np.int32),
-)
+def save_routes(routes: pd.DataFrame) -> None:
+    """Write the route set out, whole as a CSV and by axis as arrays.
+
+    Args:
+        routes (pd.DataFrame): The route set, as returned by `route_network`.
+    """
+    ROUTES_CSV.parent.mkdir(parents=True, exist_ok=True)
+    routes.to_csv(ROUTES_CSV, index=False)
+    np.savez(
+        ROUTES_NPZ,
+        route_capacities = routes["capacity"].to_numpy(dtype=np.int32),
+        route_school_idx = routes["school_idx"].to_numpy(dtype=np.int32),
+        route_district_idx = routes["district_idx"].to_numpy(dtype=np.int32),
+    )
