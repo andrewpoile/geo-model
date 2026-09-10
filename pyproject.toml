@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=3.0.3",
     "pointpats>=2.5.5",
     "python-calamine>=0.8.2",
+    "scipy>=1.17.1",
     "seaborn>=0.13.2",
     "shapely>=2.1.2",
 ]
@@ -26,3 +27,11 @@ geo-model = "geo_model:main"
 [build-system]
 requires = ["uv_build>=0.9.27,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
