@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=3.0.3",
     "pointpats>=2.5.5",
     "python-calamine>=0.8.2",
+    "scipy>=1.17.1",
     "seaborn>=0.13.2",
     "shapely>=2.1.2",
 ]

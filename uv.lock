@@ -343,6 +343,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pointpats" },
     { name = "python-calamine" },
+    { name = "scipy" },
     { name = "seaborn" },
     { name = "shapely" },
 ]
@@ -357,6 +358,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "pointpats", specifier = ">=2.5.5" },
     { name = "python-calamine", specifier = ">=0.8.2" },
+    { name = "scipy", specifier = ">=1.17.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "shapely", specifier = ">=2.1.2" },
 ]
