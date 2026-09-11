@@ -1,8 +1,8 @@
 from pathlib import Path
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 import shapely
 from scipy.spatial import distance as spdist
 

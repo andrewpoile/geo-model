@@ -10,6 +10,8 @@ utils.py contains all the helper functions used in other scripts.
 
 Coding language is python.
 Package manager is uv.
+Testing tool is pytest.
+Linting and formatting tool is ruff.
 
 NEVER GUESS, NEVER INVENT DATA, NEVER SUPPRESS ERRORS. Do not deviate from instructions.
 If anything breaks or doesn't make sense, DO NOT IGNORE OR SUPPRESS IT, report it.

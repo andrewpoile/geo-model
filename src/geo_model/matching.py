@@ -1,6 +1,7 @@
 import numpy as np
 from numba import njit
 
+
 @njit
 def fast_DAT(
         student_preferences:np.ndarray[(3,), np.int32],
