@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 
-from utils import sample_students, rank_bundles, district_index, cohort_capacity
-from build_routes import route_network, save_routes
+from geo_model.utils import sample_students, rank_bundles, district_index, cohort_capacity
+from geo_model.build_routes import route_network, save_routes
 
 SEED = 20260907
 CRS = "EPSG:27700"  # British National Grid; eastings/northings in metres
