@@ -4,9 +4,13 @@ from numba import njit
 
 @njit
 def fast_DAT(
+    # pyrefly: ignore [bad-specialization, not-a-type]
     student_preferences: np.ndarray[(3,), np.int32],
+    # pyrefly: ignore [bad-specialization, not-a-type]
     school_priorities: np.ndarray[(3,), np.int32],
+    # pyrefly: ignore [bad-specialization, not-a-type]
     school_capacities: np.ndarray[(1,), np.int32],
+    # pyrefly: ignore [bad-specialization, not-a-type]
     route_capacities: np.ndarray[(1,), np.int32],
 ) -> np.ndarray:
     """Fast Deferred Acceptance with Transportation.

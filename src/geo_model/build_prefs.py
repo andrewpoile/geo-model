@@ -262,9 +262,11 @@ def main() -> None:
         )
         secondary_schools = secondary_schools.dropna(subset=["P8MEA"])
 
+    # pyrefly: ignore [no-matching-overload]
     primary_school_xy = np.column_stack(
         (primary_schools.Easting.values, primary_schools.Northing.values)
     )
+    # pyrefly: ignore [no-matching-overload]
     secondary_school_xy = np.column_stack(
         (secondary_schools.Easting.values, secondary_schools.Northing.values)
     )
@@ -293,6 +295,7 @@ def main() -> None:
         district_index(secondary_schools, geo_soton),
         secondary_routes["district_idx"].to_numpy(),
         secondary_routes["school_idx"].to_numpy(),
+        # pyrefly: ignore [bad-argument-type]
         school_scores=secondary_schools.P8MEA.values,
         performance_weight=PERFORMANCE_WEIGHT,
         route_discount=ROUTE_DISCOUNT,

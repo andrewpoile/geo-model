@@ -11,6 +11,7 @@ def run(preferences, priorities, school_capacities, route_capacities=NO_ROUTES):
     """Call fast_DAT with the dtypes the compiled kernel is written against."""
     return fast_DAT(
         np.asarray(preferences, dtype=np.int32),
+        # pyrefly: ignore [bad-argument-count]
         np.asarray(priorities, dtype=np.int32),
         np.asarray(school_capacities, dtype=np.int32),
         np.asarray(route_capacities, dtype=np.int32),

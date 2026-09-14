@@ -86,19 +86,23 @@ def sample_students(
         tuple[np.ndarray, np.ndarray]: Coordinates of shape (n_students, 2),
         and the positional index of the area each student was drawn in.
     """
+    # pyrefly: ignore [bad-assignment]
     borders = np.asarray(borders)
     centre_x = shapely.get_x(np.asarray(centroids))
     centre_y = shapely.get_y(np.asarray(centroids))
     sizes = np.asarray(sizes, dtype=np.int64)
 
+    # pyrefly: ignore [bad-argument-type]
     if not (len(borders) == len(centre_x) == len(sizes)):
         raise ValueError(
+            # pyrefly: ignore [bad-argument-type]
             f"borders, centroids and sizes must align: got {len(borders)}, "
             f"{len(centre_x)} and {len(sizes)}."
         )
 
     chunks = [
         sample_in_polygon(geom, (cx, cy), int(n), rng)
+        # pyrefly: ignore [bad-argument-type]
         for geom, cx, cy, n in zip(borders, centre_x, centre_y, sizes)
     ]
     student_xy = np.vstack(chunks) if chunks else np.empty((0, 2))
@@ -287,6 +291,7 @@ def rank_bundles(
             )
         )
         if noise_scale > 0:
+            # pyrefly: ignore [missing-attribute]
             cost = cost + rng.normal(0, noise_scale, size=cost.shape)
 
         # Stable, so a bundle left tied with its own school by a zero discount
@@ -390,6 +395,7 @@ def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
             "their capacity cannot be split into cohorts: "
             + ", ".join(schools.loc[(year_groups <= 0).to_numpy(), "EstablishmentName"])
         )
+    # pyrefly: ignore [missing-attribute]
     capacity = np.rint(schools["SchoolCapacity"] / year_groups).to_numpy()
 
     if (capacity < 1).any():

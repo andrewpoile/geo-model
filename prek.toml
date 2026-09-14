@@ -23,3 +23,19 @@ hooks = [
   },
   { id = "ruff-format" }
 ]
+
+[[repos]]
+repo = "local"
+hooks = [
+  {
+    id = "pyrefly",
+    name = "pyrefly",
+    entry = "uv run pyrefly check",
+    language = "system",
+    types_or = [
+      "python",
+      "pyi"
+    ],
+    pass_filenames = false
+  }
+]
