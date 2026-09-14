@@ -1,18 +1,17 @@
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 
-@njit
+# Called with parentheses so the type checker sees the compiled function's
+# signature rather than numba's decorator wrapper.
+@njit()
 def fast_DAT(
-    # pyrefly: ignore [bad-specialization, not-a-type]
-    student_preferences: np.ndarray[(3,), np.int32],
-    # pyrefly: ignore [bad-specialization, not-a-type]
-    school_priorities: np.ndarray[(3,), np.int32],
-    # pyrefly: ignore [bad-specialization, not-a-type]
-    school_capacities: np.ndarray[(1,), np.int32],
-    # pyrefly: ignore [bad-specialization, not-a-type]
-    route_capacities: np.ndarray[(1,), np.int32],
-) -> np.ndarray:
+    student_preferences: NDArray[np.int32],
+    school_priorities: NDArray[np.int32],
+    school_capacities: NDArray[np.int32],
+    route_capacities: NDArray[np.int32],
+) -> NDArray[np.int32]:
     """Fast Deferred Acceptance with Transportation.
     Takes student preferences, school priorities, and
     school and route capacities, then outputs a matching.

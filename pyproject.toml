@@ -18,8 +18,10 @@ dependencies = [
     "pytest-cov>=7.1.0",
     "python-calamine>=0.8.2",
     "scipy>=1.17.1",
+    "scipy-stubs>=1.18.1.0",
     "seaborn>=0.13.2",
     "shapely>=2.1.2",
+    "types-geopandas>=1.1.4.20260807",
 ]
 
 [project.scripts]
