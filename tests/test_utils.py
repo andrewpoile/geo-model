@@ -7,6 +7,7 @@ import shapely
 from geo_model.utils import (
     _spread,
     cohort_capacity,
+    dissimilarity_index,
     district_index,
     rank_bundles,
     sample_in_polygon,
@@ -392,3 +393,62 @@ def test_cohort_capacity_rejects_a_cohort_of_less_than_one_seat():
     schools = make_schools([3.0], [11.0], [18.0], ["Tiny"])
     with pytest.raises(ValueError, match="fewer than one seat"):
         cohort_capacity(schools)
+
+
+# --------------------------------------------------------------------------
+# dissimilarity_index
+# --------------------------------------------------------------------------
+
+
+def test_dissimilarity_index_is_zero_when_every_school_holds_the_city_mix():
+    # Two schools, each with one disadvantaged student and two others.
+    matched = [0, 0, 0, 1, 1, 1]
+    disadvantaged = [True, False, False, True, False, False]
+    assert dissimilarity_index(matched, disadvantaged, 2) == 0.0
+
+
+def test_dissimilarity_index_is_one_under_complete_segregation():
+    matched = [0, 0, 1, 1, 1]
+    disadvantaged = [True, True, False, False, False]
+    assert dissimilarity_index(matched, disadvantaged, 2) == 1.0
+
+
+def test_dissimilarity_index_matches_a_hand_worked_case():
+    # a = [3, 1] of 4, b = [1, 3] of 4: 1/2 * (|3/4 - 1/4| + |1/4 - 3/4|) = 1/2.
+    matched = [0, 0, 0, 1, 0, 1, 1, 1]
+    disadvantaged = [True, True, True, True, False, False, False, False]
+    assert dissimilarity_index(matched, disadvantaged, 2) == pytest.approx(0.5)
+
+
+def test_dissimilarity_index_counts_a_school_nobody_was_matched_to():
+    # A third school with no intake contributes nothing, so the index is
+    # unchanged by its presence but the array must still span it.
+    matched = [0, 0, 1, 1, 1]
+    disadvantaged = [True, True, False, False, False]
+    assert dissimilarity_index(matched, disadvantaged, 3) == 1.0
+
+
+def test_dissimilarity_index_leaves_unmatched_students_out():
+    # The two unmatched students would make the mix even if counted.
+    matched = [0, 0, 1, 1, 1, -1, -1]
+    disadvantaged = [True, True, False, False, False, False, True]
+    assert dissimilarity_index(matched, disadvantaged, 2) == 1.0
+
+
+@pytest.mark.parametrize(
+    "disadvantaged", [[True, True, True], [False, False, False], [True, False, False]]
+)
+def test_dissimilarity_index_rejects_an_empty_seated_group(disadvantaged):
+    # The last case seats no disadvantaged student, only leaves one unmatched.
+    with pytest.raises(ValueError, match="hold a seat, so the index is undefined"):
+        dissimilarity_index([-1, 0, 1], disadvantaged, 2)
+
+
+def test_dissimilarity_index_rejects_misaligned_inputs():
+    with pytest.raises(ValueError, match="must align"):
+        dissimilarity_index([0, 1], [True], 2)
+
+
+def test_dissimilarity_index_rejects_a_school_beyond_the_count():
+    with pytest.raises(ValueError, match="beyond the 2 schools"):
+        dissimilarity_index([0, 2], [True, False], 2)

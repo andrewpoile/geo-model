@@ -1,7 +1,7 @@
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 import shapely
+from numpy.typing import ArrayLike
 from scipy.spatial import distance as spdist
 from shapely.geometry.base import BaseGeometry
 
@@ -65,17 +65,17 @@ def sample_in_polygon(
 
 
 def sample_students(
-    borders: gpd.GeoSeries,
-    centroids: gpd.GeoSeries,
+    borders: pd.Series,
+    centroids: pd.Series,
     sizes: np.ndarray,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Sample student locations for every area.
 
     Args:
-        borders (gpd.GeoSeries): Area polygons.
+        borders (pd.Series): Area polygons.
 
-        centroids (gpd.GeoSeries): Population-weighted centre of each area,
+        centroids (pd.Series): Population-weighted centre of each area,
         aligned with `borders`.
 
         sizes (np.ndarray): Number of students to place in each area, aligned
@@ -398,3 +398,56 @@ def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
             + ", ".join(schools.loc[capacity < 1, "EstablishmentName"])
         )
     return capacity.astype(np.int32)
+
+
+def dissimilarity_index(
+    matched_school: ArrayLike,
+    disadvantaged: ArrayLike,
+    n_schools: int,
+) -> float:
+    """Dissimilarity index of a matching, disadvantaged students against the rest.
+
+    With a_c disadvantaged and b_c other students seated at school c, out of
+    A and B seated in all, the index is
+
+        D = 1/2 * sum_c | a_c / A - b_c / B |
+
+    the share of either group that would have to change school for every
+    school to hold the city-wide mix. 0 is that mix everywhere, 1 is complete
+    segregation. A student without a seat belongs to no school's intake, so
+    unmatched students are left out of both groups.
+
+    Args:
+        matched_school (ArrayLike): School each student is matched to, shape
+        (n_students,), -1 for an unmatched student. The first column of the
+        matching `fast_DAT` returns.
+
+        disadvantaged (ArrayLike): Whether each student lives in a
+        disadvantaged district, shape (n_students,).
+
+        n_schools (int): Number of schools the matching indexes.
+
+    Returns:
+        float: The index, in [0, 1].
+    """
+    matched_school = np.asarray(matched_school, dtype=np.int64)
+    disadvantaged = np.asarray(disadvantaged, dtype=bool)
+    if matched_school.shape != disadvantaged.shape:
+        raise ValueError(
+            f"matched_school and disadvantaged must align: got "
+            f"{matched_school.shape} and {disadvantaged.shape}."
+        )
+    if (matched_school >= n_schools).any():
+        raise ValueError(
+            f"matched_school holds indices beyond the {n_schools} schools."
+        )
+
+    seated = matched_school >= 0
+    group_a = np.bincount(matched_school[seated & disadvantaged], minlength=n_schools)
+    group_b = np.bincount(matched_school[seated & ~disadvantaged], minlength=n_schools)
+    if group_a.sum() == 0 or group_b.sum() == 0:
+        raise ValueError(
+            f"{group_a.sum()} disadvantaged and {group_b.sum()} other students hold "
+            "a seat, so the index is undefined."
+        )
+    return 0.5 * float(np.abs(group_a / group_a.sum() - group_b / group_b.sum()).sum())
