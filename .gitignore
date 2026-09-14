@@ -37,4 +37,4 @@ data/
 temp/
 
 # Loose testing
-experiments.ipynb
+*.ipynb

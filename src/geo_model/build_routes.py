@@ -55,19 +55,19 @@ def build_routes(
         "school_idx" and "capacity".
     """
     centroids = np.asarray(districts["Centroids"])
-    district_xy = np.column_stack(
-        (shapely.get_x(centroids), shapely.get_y(centroids))
-    )
+    district_xy = np.column_stack((shapely.get_x(centroids), shapely.get_y(centroids)))
     distances = spdist.cdist(district_xy, school_xy)
     district_pos, school_idx = np.nonzero(distances > min_distance)
 
-    return pd.DataFrame({
-        "route_id": np.arange(len(district_pos), dtype=np.int32),
-        "district_idx": districts.index.to_numpy()[district_pos].astype(np.int32),
-        "LSOA21CD": districts["LSOA21CD"].to_numpy()[district_pos],
-        "school_idx": school_idx.astype(np.int32),
-        "capacity": np.full(len(district_pos), capacity, dtype=np.int32),
-    })
+    return pd.DataFrame(
+        {
+            "route_id": np.arange(len(district_pos), dtype=np.int32),
+            "district_idx": districts.index.to_numpy()[district_pos].astype(np.int32),
+            "LSOA21CD": districts["LSOA21CD"].to_numpy()[district_pos],
+            "school_idx": school_idx.astype(np.int32),
+            "capacity": np.full(len(district_pos), capacity, dtype=np.int32),
+        }
+    )
 
 
 def route_network(
@@ -157,7 +157,7 @@ def save_routes(routes: pd.DataFrame) -> None:
     routes.to_csv(ROUTES_CSV, index=False)
     np.savez(
         ROUTES_NPZ,
-        route_capacities = routes["capacity"].to_numpy(dtype=np.int32),
-        route_school_idx = routes["school_idx"].to_numpy(dtype=np.int32),
-        route_district_idx = routes["district_idx"].to_numpy(dtype=np.int32),
+        route_capacities=routes["capacity"].to_numpy(dtype=np.int32),
+        route_school_idx=routes["school_idx"].to_numpy(dtype=np.int32),
+        route_district_idx=routes["district_idx"].to_numpy(dtype=np.int32),
     )

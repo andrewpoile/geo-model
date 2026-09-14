@@ -4,10 +4,10 @@ from numba import njit
 
 @njit
 def fast_DAT(
-        student_preferences:np.ndarray[(3,), np.int32],
-        school_priorities:np.ndarray[(3,), np.int32],
-        school_capacities:np.ndarray[(1,), np.int32],
-        route_capacities:np.ndarray[(1,), np.int32],
+    student_preferences: np.ndarray[(3,), np.int32],
+    school_priorities: np.ndarray[(3,), np.int32],
+    school_capacities: np.ndarray[(1,), np.int32],
+    route_capacities: np.ndarray[(1,), np.int32],
 ) -> np.ndarray:
     """Fast Deferred Acceptance with Transportation.
     Takes student preferences, school priorities, and
@@ -30,7 +30,9 @@ def fast_DAT(
     student_next_preference_idx = np.zeros(n_students, dtype=np.int32)
     school_acceptance_numbers = np.zeros(n_schools, dtype=np.int32)
     route_acceptance_numbers = np.zeros(n_routes, dtype=np.int32)
-    assigned_students = np.full((n_schools, n_routes+1, n_students), -1, dtype=np.int32)
+    assigned_students = np.full(
+        (n_schools, n_routes + 1, n_students), -1, dtype=np.int32
+    )
 
     free_students = np.arange(n_students, dtype=np.int32)
     pointer = n_students
@@ -56,7 +58,8 @@ def fast_DAT(
         if target_route > -1:
             r_acc_num = route_acceptance_numbers[target_route]
             route_is_full = r_acc_num >= route_capacities[target_route]
-        else: route_is_full = False
+        else:
+            route_is_full = False
         accepted = False
 
         if not school_is_full and not route_is_full:
@@ -69,13 +72,20 @@ def fast_DAT(
             accepted = True
 
         elif route_is_full:
-            lowest_priority_student = assigned_students[target_school, target_route].argmax()
+            lowest_priority_student = assigned_students[
+                target_school, target_route
+            ].argmax()
             eviction_required = (
-                c_rank < school_priorities[target_school, target_route, lowest_priority_student]
+                c_rank
+                < school_priorities[
+                    target_school, target_route, lowest_priority_student
+                ]
             )
             accepted = False
             if eviction_required:
-                assigned_students[target_school, target_route, lowest_priority_student] = -1
+                assigned_students[
+                    target_school, target_route, lowest_priority_student
+                ] = -1
                 assigned_students[target_school, target_route, s_id] = c_rank
                 matching[lowest_priority_student, 0] = -1
                 matching[lowest_priority_student, 1] = -1
@@ -99,12 +109,12 @@ def fast_DAT(
             # lowest_priority_column = assigned_students[target_school].max(axis=1)
             # lowest_priority_route = lowest_priority_column.argmax()
             # lowest_priority_student = assigned_students[target_school, lowest_priority_route].argmax()
-            eviction_required = (
-                c_rank < worst_rank
-            )
+            eviction_required = c_rank < worst_rank
             accepted = False
             if eviction_required:
-                assigned_students[target_school, lowest_priority_route, lowest_priority_student] = -1
+                assigned_students[
+                    target_school, lowest_priority_route, lowest_priority_student
+                ] = -1
                 assigned_students[target_school, target_route, s_id] = c_rank
                 # The evicted student gives up their seat on their route as
                 # well as the one at the school, and the applicant takes both.

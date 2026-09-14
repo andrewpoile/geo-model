@@ -51,7 +51,10 @@ def load_population() -> pd.DataFrame:
             return cached
 
     population = pd.read_excel(
-        POPULATION_XLSX, "Mid-2024 LSOA 2021", skiprows=3, engine="calamine",
+        POPULATION_XLSX,
+        "Mid-2024 LSOA 2021",
+        skiprows=3,
+        engine="calamine",
     )
     population = population.rename(columns={"LSOA 2021 Code": "LSOA21CD"})
     population = population[["LSOA21CD", "Total", "F4", "F11", "M4", "M11"]]
@@ -72,7 +75,9 @@ def load_p8() -> pd.DataFrame:
     They fall outside the model's school types, so they are dropped here.
     """
     ks4 = pd.read_csv(
-        KS4_CSV, encoding="utf-8-sig", usecols=["RECTYPE", "LEA", "ESTAB", "P8MEA"],
+        KS4_CSV,
+        encoding="utf-8-sig",
+        usecols=["RECTYPE", "LEA", "ESTAB", "P8MEA"],
     )
     ks4 = ks4[ks4["RECTYPE"] == 1]  # school rows, not LA or national aggregates
     ks4 = ks4.assign(P8MEA=pd.to_numeric(ks4["P8MEA"], errors="coerce"))
@@ -86,12 +91,14 @@ def main() -> None:
     population = load_population()
 
     # Import data on deprivation, necessary for determining route eligibility and measuring dissimilarity.
-    index_multi_depra = pd.read_csv("data/student_data/File_1_IoD2025 Index of Multiple Deprivation.csv")
+    index_multi_depra = pd.read_csv(
+        "data/student_data/File_1_IoD2025 Index of Multiple Deprivation.csv"
+    )
     index_multi_depra.rename(
         columns={
-            "LSOA code (2021)":"LSOA21CD",
-            "Index of Multiple Deprivation (IMD) Rank (where 1 is most deprived)":"IMD",
-            r"Index of Multiple Deprivation (IMD) Decile (where 1 is most deprived 10% of LSOAs)":"IMD Decile",
+            "LSOA code (2021)": "LSOA21CD",
+            "Index of Multiple Deprivation (IMD) Rank (where 1 is most deprived)": "IMD",
+            r"Index of Multiple Deprivation (IMD) Decile (where 1 is most deprived 10% of LSOAs)": "IMD Decile",
         },
         inplace=True,
     )
@@ -102,7 +109,7 @@ def main() -> None:
         "data/student_data/LSOA_Boundaries_geospacial_data_2021",
         where="LSOA21NM LIKE 'Southampton%'",
     )
-    geoborders = geoborders.rename_geometry('Borders')
+    geoborders = geoborders.rename_geometry("Borders")
 
     # Import the locations of the LSOA population centroids. This layer carries no
     # LSOA21NM, so it is filtered on the codes the boundary read returned.
@@ -112,7 +119,7 @@ def main() -> None:
             ",".join(f"'{code}'" for code in geoborders["LSOA21CD"])
         ),
     )
-    geocentroids = geocentroids.rename_geometry('Centroids')
+    geocentroids = geocentroids.rename_geometry("Centroids")
 
     # Distances are computed on raw eastings/northings, so both layers must already
     # be on the British National Grid.
@@ -123,79 +130,111 @@ def main() -> None:
         )
 
     # Merges the above spacial data together.
-    geomerge = geoborders.merge(geocentroids[["LSOA21CD","Centroids"]],"inner","LSOA21CD")
+    geomerge = geoborders.merge(
+        geocentroids[["LSOA21CD", "Centroids"]], "inner", "LSOA21CD"
+    )
     # Merges primary and secondary age population estimates with spacial data.
-    geomerge = geomerge.merge(population,"inner","LSOA21CD")
+    geomerge = geomerge.merge(population, "inner", "LSOA21CD")
     # Merges deprivation data with spacial data.
-    geomerge = geomerge.merge(index_multi_depra[["LSOA21CD","IMD","IMD Decile"]],"inner","LSOA21CD")
-    geo_soton = geomerge[["LSOA21CD","LSOA21NM",
-                          "IMD","IMD Decile",
-                          "Total","F4","F11","M4","M11",
-                          "Centroids","Borders"]]
+    geomerge = geomerge.merge(
+        index_multi_depra[["LSOA21CD", "IMD", "IMD Decile"]], "inner", "LSOA21CD"
+    )
+    geo_soton = geomerge[
+        [
+            "LSOA21CD",
+            "LSOA21NM",
+            "IMD",
+            "IMD Decile",
+            "Total",
+            "F4",
+            "F11",
+            "M4",
+            "M11",
+            "Centroids",
+            "Borders",
+        ]
+    ]
 
     # Simulate student locations within each LSOA, clustered on its population centroid.
     primary_sizes = (geo_soton["F4"].astype(int) + geo_soton["M4"].astype(int)).values
-    secondary_sizes = (geo_soton["F11"].astype(int) + geo_soton["M11"].astype(int)).values
+    secondary_sizes = (
+        geo_soton["F11"].astype(int) + geo_soton["M11"].astype(int)
+    ).values
 
     primary_student_xy, primary_student_lsoa = sample_students(
-        geo_soton["Borders"], geo_soton["Centroids"], primary_sizes, rng,
+        geo_soton["Borders"],
+        geo_soton["Centroids"],
+        primary_sizes,
+        rng,
     )
     secondary_student_xy, secondary_student_lsoa = sample_students(
-        geo_soton["Borders"], geo_soton["Centroids"], secondary_sizes, rng,
+        geo_soton["Borders"],
+        geo_soton["Centroids"],
+        secondary_sizes,
+        rng,
     )
 
     # Only 13 of the register's 135 columns are used, and reading the rest costs
     # more than everything the register is used for.
-    schools = pd.read_csv("data/school_data/edubasealldata20260225.csv",
-                          encoding="latin-1",
-                          usecols=[
-                              "LSOA (code)","LA (code)","LA (name)",
-                              "EstablishmentNumber",
-                              "EstablishmentName",
-                              "EstablishmentStatus (name)",
-                              "TypeOfEstablishment (name)",
-                              "EstablishmentTypeGroup (name)",
-                              "PhaseOfEducation (name)",
-                              "StatutoryLowAge",
-                              "StatutoryHighAge",
-                              "SchoolCapacity",
-                              "PercentageFSM",
-                              "Easting",
-                              "Northing",
-                          ])
-    schools = schools.rename(columns={"LSOA (code)":"LSOA21CD"})
+    schools = pd.read_csv(
+        "data/school_data/edubasealldata20260225.csv",
+        encoding="latin-1",
+        usecols=[
+            "LSOA (code)",
+            "LA (code)",
+            "LA (name)",
+            "EstablishmentNumber",
+            "EstablishmentName",
+            "EstablishmentStatus (name)",
+            "TypeOfEstablishment (name)",
+            "EstablishmentTypeGroup (name)",
+            "PhaseOfEducation (name)",
+            "StatutoryLowAge",
+            "StatutoryHighAge",
+            "SchoolCapacity",
+            "PercentageFSM",
+            "Easting",
+            "Northing",
+        ],
+    )
+    schools = schools.rename(columns={"LSOA (code)": "LSOA21CD"})
     schools = schools[schools["EstablishmentStatus (name)"] == "Open"]
-    schools = schools[schools["EstablishmentTypeGroup (name)"].isin(
-        ["Academies",
-         "Free Schools",
-         "Local authority maintained schools"]
-    )]
-    schools = schools[schools["PhaseOfEducation (name)"].isin(
-        ["All-through",
-         "Middle deemed primary",
-         "Middle deemed secondary",
-         "Primary",
-         "Secondary"]
-    )]
-    schools = schools[[
-        "LSOA21CD","LA (code)","LA (name)",
-        "EstablishmentNumber",
-        "EstablishmentName",
-        "TypeOfEstablishment (name)",
-        "EstablishmentTypeGroup (name)",
-        "PhaseOfEducation (name)",
-        "StatutoryLowAge",
-        "StatutoryHighAge",
-        "SchoolCapacity",
-        "PercentageFSM",
-        "Easting",
-        "Northing"
-    ]]
-    schools = gpd.GeoDataFrame(
-        schools,
-        geometry=gpd.points_from_xy(
-            schools.Easting, schools.Northing, crs=CRS
+    schools = schools[
+        schools["EstablishmentTypeGroup (name)"].isin(
+            ["Academies", "Free Schools", "Local authority maintained schools"]
         )
+    ]
+    schools = schools[
+        schools["PhaseOfEducation (name)"].isin(
+            [
+                "All-through",
+                "Middle deemed primary",
+                "Middle deemed secondary",
+                "Primary",
+                "Secondary",
+            ]
+        )
+    ]
+    schools = schools[
+        [
+            "LSOA21CD",
+            "LA (code)",
+            "LA (name)",
+            "EstablishmentNumber",
+            "EstablishmentName",
+            "TypeOfEstablishment (name)",
+            "EstablishmentTypeGroup (name)",
+            "PhaseOfEducation (name)",
+            "StatutoryLowAge",
+            "StatutoryHighAge",
+            "SchoolCapacity",
+            "PercentageFSM",
+            "Easting",
+            "Northing",
+        ]
+    ]
+    schools = gpd.GeoDataFrame(
+        schools, geometry=gpd.points_from_xy(schools.Easting, schools.Northing, crs=CRS)
     )
     schools = schools[schools["LA (name)"].isin(["Southampton"])]
 
@@ -209,7 +248,9 @@ def main() -> None:
     )
 
     primary_schools = schools[schools["PhaseOfEducation (name)"].isin(PRIMARY_PHASES)]
-    secondary_schools = schools[schools["PhaseOfEducation (name)"].isin(SECONDARY_PHASES)]
+    secondary_schools = schools[
+        schools["PhaseOfEducation (name)"].isin(SECONDARY_PHASES)
+    ]
 
     # An all-through school that has never had a KS4 cohort has no Progress 8 score
     # and so cannot be ranked on performance. It still serves the primary phase.
@@ -238,13 +279,18 @@ def main() -> None:
     # is a KS4 measure with no primary analogue, so it shapes secondary preferences
     # only, and priorities stay on distance and district alone in both phases.
     primary_student_preferences, primary_school_priorities = rank_bundles(
-        primary_student_xy, primary_student_lsoa,
-        primary_school_xy, district_index(primary_schools, geo_soton),
-        np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32),
+        primary_student_xy,
+        primary_student_lsoa,
+        primary_school_xy,
+        district_index(primary_schools, geo_soton),
+        np.empty(0, dtype=np.int32),
+        np.empty(0, dtype=np.int32),
     )
     secondary_student_preferences, secondary_school_priorities = rank_bundles(
-        secondary_student_xy, secondary_student_lsoa,
-        secondary_school_xy, district_index(secondary_schools, geo_soton),
+        secondary_student_xy,
+        secondary_student_lsoa,
+        secondary_school_xy,
+        district_index(secondary_schools, geo_soton),
         secondary_routes["district_idx"].to_numpy(),
         secondary_routes["school_idx"].to_numpy(),
         school_scores=secondary_schools.P8MEA.values,
@@ -271,12 +317,12 @@ def main() -> None:
     # the bundles a school never hears from.
     np.savez_compressed(
         OUTPUT_NPZ,
-        primary_student_preferences = primary_student_preferences,
-        secondary_student_preferences = secondary_student_preferences,
-        primary_school_priorities = primary_school_priorities,
-        primary_school_capacities = primary_school_capacities,
-        secondary_school_priorities = secondary_school_priorities,
-        secondary_school_capacities = secondary_school_capacities,
+        primary_student_preferences=primary_student_preferences,
+        secondary_student_preferences=secondary_student_preferences,
+        primary_school_priorities=primary_school_priorities,
+        primary_school_capacities=primary_school_capacities,
+        secondary_school_priorities=secondary_school_priorities,
+        secondary_school_capacities=secondary_school_capacities,
     )
 
 

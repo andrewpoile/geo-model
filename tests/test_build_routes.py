@@ -30,6 +30,7 @@ def make_areas(deciles, spacing=10_000.0, index=None):
 # build_routes
 # --------------------------------------------------------------------------
 
+
 def test_build_routes_joins_every_district_to_the_schools_beyond_the_threshold():
     # Distances are district 0: [0, 10000] and district 1: [10000, 0].
     districts = make_areas([1, 1])
@@ -37,13 +38,15 @@ def test_build_routes_joins_every_district_to_the_schools_beyond_the_threshold()
 
     pd.testing.assert_frame_equal(
         routes,
-        pd.DataFrame({
-            "route_id": np.array([0, 1], dtype=np.int32),
-            "district_idx": np.array([0, 1], dtype=np.int32),
-            "LSOA21CD": ["E00000000", "E00000001"],
-            "school_idx": np.array([1, 0], dtype=np.int32),
-            "capacity": np.array([30, 30], dtype=np.int32),
-        }),
+        pd.DataFrame(
+            {
+                "route_id": np.array([0, 1], dtype=np.int32),
+                "district_idx": np.array([0, 1], dtype=np.int32),
+                "LSOA21CD": ["E00000000", "E00000001"],
+                "school_idx": np.array([1, 0], dtype=np.int32),
+                "capacity": np.array([30, 30], dtype=np.int32),
+            }
+        ),
     )
 
 
@@ -76,6 +79,7 @@ def test_build_routes_measures_from_the_population_centroid():
 # --------------------------------------------------------------------------
 # route_network
 # --------------------------------------------------------------------------
+
 
 def test_route_network_routes_only_the_disadvantaged_districts(capsys):
     areas = make_areas([5, 2, 1])
@@ -136,6 +140,7 @@ def test_route_network_rejects_an_empty_route_set():
 # save_routes
 # --------------------------------------------------------------------------
 
+
 def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path, monkeypatch):
     monkeypatch.setattr(br, "ROUTES_CSV", tmp_path / "out" / "routes.csv")
     monkeypatch.setattr(br, "ROUTES_NPZ", tmp_path / "out" / "routes.npz")
@@ -147,5 +152,7 @@ def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path, monkeypatch):
     with np.load(br.ROUTES_NPZ) as axes:
         np.testing.assert_array_equal(axes["route_capacities"], routes["capacity"])
         np.testing.assert_array_equal(axes["route_school_idx"], routes["school_idx"])
-        np.testing.assert_array_equal(axes["route_district_idx"], routes["district_idx"])
+        np.testing.assert_array_equal(
+            axes["route_district_idx"], routes["district_idx"]
+        )
         assert all(axes[name].dtype == np.int32 for name in axes.files)

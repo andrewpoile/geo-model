@@ -21,6 +21,7 @@ def run(preferences, priorities, school_capacities, route_capacities=NO_ROUTES):
 # Explicit instances
 # --------------------------------------------------------------------------
 
+
 def test_a_routeless_instance_reduces_to_deferred_acceptance():
     # Both students want the first school, which holds one seat and prefers
     # the first student, so the second is deferred onto its second choice.
@@ -113,6 +114,7 @@ def test_an_instance_with_no_students_returns_an_empty_matching():
 # Stability over instances built by rank_bundles
 # --------------------------------------------------------------------------
 
+
 def instance(seed, n_students=60, n_schools=5, n_districts=4, **kwargs):
     """A random geography, ranked into an SCT instance by rank_bundles."""
     rng = np.random.default_rng(seed)
@@ -124,9 +126,12 @@ def instance(seed, n_students=60, n_schools=5, n_districts=4, **kwargs):
     route_school = np.tile([0, n_schools - 1], 2)
 
     preferences, priorities = rank_bundles(
-        rng.normal(size=(n_students, 2)) * 5000, student_district,
-        rng.normal(size=(n_schools, 2)) * 5000, school_district,
-        route_district, route_school,
+        rng.normal(size=(n_students, 2)) * 5000,
+        student_district,
+        rng.normal(size=(n_schools, 2)) * 5000,
+        school_district,
+        route_district,
+        route_school,
         route_discount=0.5,
         **kwargs,
     )
@@ -137,7 +142,9 @@ def instance(seed, n_students=60, n_schools=5, n_districts=4, **kwargs):
     return preferences, priorities, school_capacities, route_capacities
 
 
-def blocking_pairs(preferences, priorities, school_capacities, route_capacities, matching):
+def blocking_pairs(
+    preferences, priorities, school_capacities, route_capacities, matching
+):
     """Every bundle a student both prefers to its match and has a claim on.
 
     A bundle (c, r) blocks when the student prefers it to what it holds and
@@ -208,9 +215,12 @@ def test_the_matching_is_stable(seed):
     preferences, priorities, school_capacities, route_capacities = instance(seed)
     matching = run(preferences, priorities, school_capacities, route_capacities)
 
-    assert blocking_pairs(
-        preferences, priorities, school_capacities, route_capacities, matching
-    ) == []
+    assert (
+        blocking_pairs(
+            preferences, priorities, school_capacities, route_capacities, matching
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
@@ -248,9 +258,12 @@ def test_a_tighter_instance_is_still_stable():
     matching = run(preferences, priorities, school_capacities, route_capacities)
 
     assert (matching[:, 0] < 0).any()
-    assert blocking_pairs(
-        preferences, priorities, school_capacities, route_capacities, matching
-    ) == []
+    assert (
+        blocking_pairs(
+            preferences, priorities, school_capacities, route_capacities, matching
+        )
+        == []
+    )
 
 
 def test_a_performance_weighted_instance_is_still_stable():
@@ -259,6 +272,9 @@ def test_a_performance_weighted_instance_is_still_stable():
     )
     matching = run(preferences, priorities, school_capacities, route_capacities)
 
-    assert blocking_pairs(
-        preferences, priorities, school_capacities, route_capacities, matching
-    ) == []
+    assert (
+        blocking_pairs(
+            preferences, priorities, school_capacities, route_capacities, matching
+        )
+        == []
+    )

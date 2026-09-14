@@ -20,10 +20,9 @@ UNIT_SQUARE = shapely.box(0.0, 0.0, 1.0, 1.0)
 # sample_in_polygon
 # --------------------------------------------------------------------------
 
+
 def test_sample_in_polygon_returns_requested_count_inside_geometry():
-    points = sample_in_polygon(
-        UNIT_SQUARE, (0.5, 0.5), 50, np.random.default_rng(0)
-    )
+    points = sample_in_polygon(UNIT_SQUARE, (0.5, 0.5), 50, np.random.default_rng(0))
     assert points.shape == (50, 2)
     assert shapely.contains_xy(UNIT_SQUARE, points[:, 0], points[:, 1]).all()
 
@@ -54,6 +53,7 @@ def test_sample_in_polygon_raises_when_centre_lies_far_outside():
 # --------------------------------------------------------------------------
 # sample_students
 # --------------------------------------------------------------------------
+
 
 @pytest.fixture
 def two_areas():
@@ -95,6 +95,7 @@ def test_sample_students_rejects_misaligned_inputs(two_areas):
 # _spread
 # --------------------------------------------------------------------------
 
+
 def test_spread_is_the_standard_deviation():
     assert _spread(np.array([1.0, 3.0]), "Values") == pytest.approx(1.0)
 
@@ -127,9 +128,12 @@ ROUTE_SCHOOL = np.array([0])
 
 def rank_two_districts(**kwargs):
     return rank_bundles(
-        STUDENT_XY, STUDENT_DISTRICT,
-        SCHOOL_XY, SCHOOL_DISTRICT,
-        ROUTE_DISTRICT, ROUTE_SCHOOL,
+        STUDENT_XY,
+        STUDENT_DISTRICT,
+        SCHOOL_XY,
+        SCHOOL_DISTRICT,
+        ROUTE_DISTRICT,
+        ROUTE_SCHOOL,
         **kwargs,
     )
 
@@ -142,8 +146,7 @@ def test_rank_bundles_offers_routes_only_to_the_district_they_leave():
     # the discounted route first.
     np.testing.assert_array_equal(
         preferences,
-        [[[0, -1], [1, -1], [-1, -1]],
-         [[0, 0], [0, -1], [1, -1]]],
+        [[[0, -1], [1, -1], [-1, -1]], [[0, 0], [0, -1], [1, -1]]],
     )
 
 
@@ -173,18 +176,24 @@ def test_rank_bundles_priorities_bracket_local_and_routed_students_together():
 
 def test_rank_bundles_priorities_put_a_distant_local_above_a_near_outsider():
     _, priorities = rank_bundles(
-        np.array([[100.0, 0.0], [1.0, 0.0]]), np.array([0, 1]),
-        np.array([[0.0, 0.0]]), np.array([0]),
-        np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64),
+        np.array([[100.0, 0.0], [1.0, 0.0]]),
+        np.array([0, 1]),
+        np.array([[0.0, 0.0]]),
+        np.array([0]),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.int64),
     )
     np.testing.assert_array_equal(priorities[0, 0], [0, 1])
 
 
 def test_rank_bundles_without_routes_ranks_schools_by_distance_alone():
     preferences, priorities = rank_bundles(
-        np.array([[0.0, 0.0], [10.0, 0.0]]), np.array([0, 0]),
-        np.array([[0.0, 0.0], [5.0, 0.0], [20.0, 0.0]]), np.array([0, 0, 0]),
-        np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64),
+        np.array([[0.0, 0.0], [10.0, 0.0]]),
+        np.array([0, 0]),
+        np.array([[0.0, 0.0], [5.0, 0.0], [20.0, 0.0]]),
+        np.array([0, 0, 0]),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.int64),
     )
 
     assert preferences.shape == (2, 3, 2)
@@ -196,9 +205,12 @@ def test_rank_bundles_without_routes_ranks_schools_by_distance_alone():
 
 def test_rank_bundles_full_performance_weight_ranks_on_score_alone():
     preferences, _ = rank_bundles(
-        np.array([[0.0, 0.0], [10.0, 0.0]]), np.array([0, 0]),
-        np.array([[0.0, 0.0], [5.0, 0.0], [20.0, 0.0]]), np.array([0, 0, 0]),
-        np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64),
+        np.array([[0.0, 0.0], [10.0, 0.0]]),
+        np.array([0, 0]),
+        np.array([[0.0, 0.0], [5.0, 0.0], [20.0, 0.0]]),
+        np.array([0, 0, 0]),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.int64),
         school_scores=np.array([0.0, 2.0, 1.0]),
         performance_weight=1.0,
     )
@@ -213,13 +225,22 @@ def test_rank_bundles_noise_perturbs_preferences_but_not_priorities():
     school_district = np.arange(6) % 3
 
     quiet = rank_bundles(
-        student_xy, district, school_xy, school_district,
-        np.array([0, 1]), np.array([2, 4]),
+        student_xy,
+        district,
+        school_xy,
+        school_district,
+        np.array([0, 1]),
+        np.array([2, 4]),
     )
     noisy = rank_bundles(
-        student_xy, district, school_xy, school_district,
-        np.array([0, 1]), np.array([2, 4]),
-        noise_scale=0.5, rng=np.random.default_rng(11),
+        student_xy,
+        district,
+        school_xy,
+        school_district,
+        np.array([0, 1]),
+        np.array([2, 4]),
+        noise_scale=0.5,
+        rng=np.random.default_rng(11),
     )
 
     assert not np.array_equal(quiet[0], noisy[0])
@@ -253,32 +274,48 @@ def test_rank_bundles_rejects_bad_preference_parameters(kwargs, message):
 def test_rank_bundles_rejects_a_district_per_student_of_the_wrong_length():
     with pytest.raises(ValueError, match="one district per student"):
         rank_bundles(
-            STUDENT_XY, np.array([0, 1, 0]),
-            SCHOOL_XY, SCHOOL_DISTRICT, ROUTE_DISTRICT, ROUTE_SCHOOL,
+            STUDENT_XY,
+            np.array([0, 1, 0]),
+            SCHOOL_XY,
+            SCHOOL_DISTRICT,
+            ROUTE_DISTRICT,
+            ROUTE_SCHOOL,
         )
 
 
 def test_rank_bundles_rejects_a_district_per_school_of_the_wrong_length():
     with pytest.raises(ValueError, match="one district per school"):
         rank_bundles(
-            STUDENT_XY, STUDENT_DISTRICT,
-            SCHOOL_XY, np.array([0]), ROUTE_DISTRICT, ROUTE_SCHOOL,
+            STUDENT_XY,
+            STUDENT_DISTRICT,
+            SCHOOL_XY,
+            np.array([0]),
+            ROUTE_DISTRICT,
+            ROUTE_SCHOOL,
         )
 
 
 def test_rank_bundles_rejects_misaligned_route_axes():
     with pytest.raises(ValueError, match="must align"):
         rank_bundles(
-            STUDENT_XY, STUDENT_DISTRICT, SCHOOL_XY, SCHOOL_DISTRICT,
-            np.array([0, 1]), np.array([0]),
+            STUDENT_XY,
+            STUDENT_DISTRICT,
+            SCHOOL_XY,
+            SCHOOL_DISTRICT,
+            np.array([0, 1]),
+            np.array([0]),
         )
 
 
 def test_rank_bundles_rejects_a_route_to_a_school_that_does_not_exist():
     with pytest.raises(ValueError, match="outside the 2 schools"):
         rank_bundles(
-            STUDENT_XY, STUDENT_DISTRICT, SCHOOL_XY, SCHOOL_DISTRICT,
-            np.array([1]), np.array([5]),
+            STUDENT_XY,
+            STUDENT_DISTRICT,
+            SCHOOL_XY,
+            SCHOOL_DISTRICT,
+            np.array([1]),
+            np.array([5]),
         )
 
 
@@ -286,12 +323,15 @@ def test_rank_bundles_rejects_a_route_to_a_school_that_does_not_exist():
 # district_index
 # --------------------------------------------------------------------------
 
+
 def test_district_index_maps_schools_onto_area_positions(capsys):
     areas = pd.DataFrame({"LSOA21CD": ["A", "B", "C"]})
-    schools = pd.DataFrame({
-        "LSOA21CD": ["C", "A", "Z"],
-        "EstablishmentName": ["Third", "First", "Over the border"],
-    })
+    schools = pd.DataFrame(
+        {
+            "LSOA21CD": ["C", "A", "Z"],
+            "EstablishmentName": ["Third", "First", "Over the border"],
+        }
+    )
 
     index = district_index(schools, areas)
 
@@ -314,13 +354,16 @@ def test_district_index_says_nothing_when_every_school_sits_inside(capsys):
 # cohort_capacity
 # --------------------------------------------------------------------------
 
+
 def make_schools(capacity, low, high, names=None):
-    return pd.DataFrame({
-        "EstablishmentName": names or [f"School {i}" for i in range(len(capacity))],
-        "SchoolCapacity": capacity,
-        "StatutoryLowAge": low,
-        "StatutoryHighAge": high,
-    })
+    return pd.DataFrame(
+        {
+            "EstablishmentName": names or [f"School {i}" for i in range(len(capacity))],
+            "SchoolCapacity": capacity,
+            "StatutoryLowAge": low,
+            "StatutoryHighAge": high,
+        }
+    )
 
 
 def test_cohort_capacity_spreads_capacity_over_the_years_a_school_spans():

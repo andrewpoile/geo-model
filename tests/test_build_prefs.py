@@ -29,21 +29,25 @@ def population_source(tmp_path, monkeypatch):
     source = tmp_path / "population.xlsx"
     monkeypatch.setattr(bp, "POPULATION_XLSX", source)
     monkeypatch.setattr(bp, "POPULATION_CACHE", tmp_path / "cache" / "population.pkl")
-    write_population_workbook(source, {
-        "LAD 2023 Code": ["E06000045", "E06000045"],
-        "LSOA 2021 Code": ["E01011949", "E01011950"],
-        "Total": [1898, 1247],
-        "F4": [11, 13],
-        "F11": [9, 7],
-        "M4": [4, 7],
-        "M11": [18, 10],
-    })
+    write_population_workbook(
+        source,
+        {
+            "LAD 2023 Code": ["E06000045", "E06000045"],
+            "LSOA 2021 Code": ["E01011949", "E01011950"],
+            "Total": [1898, 1247],
+            "F4": [11, 13],
+            "F11": [9, 7],
+            "M4": [4, 7],
+            "M11": [18, 10],
+        },
+    )
     return source
 
 
 # --------------------------------------------------------------------------
 # load_population
 # --------------------------------------------------------------------------
+
 
 def test_load_population_keeps_only_the_columns_the_model_uses(population_source):
     population = bp.load_population()
@@ -59,7 +63,9 @@ def test_load_population_writes_a_cache_keyed_on_the_source_file(population_sour
     assert bp.POPULATION_CACHE.exists()
     stat = population_source.stat()
     assert population.attrs["source_key"] == (
-        population_source.name, stat.st_mtime_ns, stat.st_size
+        population_source.name,
+        stat.st_mtime_ns,
+        stat.st_size,
     )
 
 
@@ -82,15 +88,18 @@ def test_load_population_rebuilds_a_cache_left_behind_by_another_file(
     bp.load_population()
 
     # The cache now holds a key from a workbook that is no longer the source.
-    write_population_workbook(population_source, {
-        "LAD 2023 Code": ["E06000045"],
-        "LSOA 2021 Code": ["E01099999"],
-        "Total": [1],
-        "F4": [2],
-        "F11": [3],
-        "M4": [4],
-        "M11": [5],
-    })
+    write_population_workbook(
+        population_source,
+        {
+            "LAD 2023 Code": ["E06000045"],
+            "LSOA 2021 Code": ["E01099999"],
+            "Total": [1],
+            "F4": [2],
+            "F11": [3],
+            "M4": [4],
+            "M11": [5],
+        },
+    )
 
     rebuilt = bp.load_population()
     np.testing.assert_array_equal(rebuilt["LSOA21CD"], ["E01099999"])
@@ -122,6 +131,7 @@ def ks4_source(tmp_path, monkeypatch):
         path.write_text(KS4_HEADER + body, encoding="utf-8-sig")
         monkeypatch.setattr(bp, "KS4_CSV", path)
         return path
+
     return write
 
 
@@ -129,8 +139,8 @@ def test_load_p8_keeps_school_rows_with_a_published_score(ks4_source):
     ks4_source(
         "1,852,4278,116458,Bitterne Park School,-0.19\n"
         "1,852,4311,116469,Cantell School,0.21\n"
-        "2,852,,,Southampton LA average,-0.35\n"   # local authority aggregate
-        "4,,,,England average,0.00\n"              # national aggregate
+        "2,852,,,Southampton LA average,-0.35\n"  # local authority aggregate
+        "4,,,,England average,0.00\n"  # national aggregate
     )
 
     p8 = bp.load_p8()

@@ -279,17 +279,20 @@ def rank_bundles(
         schools = route_school[routes]
 
         options = np.vstack((routeless, np.column_stack((schools, routes))))
-        cost = np.hstack((
-            travel[students] + merit,
-            (1 - route_discount) * travel[np.ix_(students, schools)] + merit[schools],
-        ))
+        cost = np.hstack(
+            (
+                travel[students] + merit,
+                (1 - route_discount) * travel[np.ix_(students, schools)]
+                + merit[schools],
+            )
+        )
         if noise_scale > 0:
             cost = cost + rng.normal(0, noise_scale, size=cost.shape)
 
         # Stable, so a bundle left tied with its own school by a zero discount
         # ranks below it and a seat is only taken when the route earns it.
         order = np.argsort(cost, axis=1, kind="stable")
-        preferences[students, :len(options)] = options[order]
+        preferences[students, : len(options)] = options[order]
 
     priorities = np.empty((n_schools, n_routes + 1, n_students), dtype=np.int32)
     for school in range(n_schools):
@@ -305,9 +308,7 @@ def rank_bundles(
 
         bundle_student = np.concatenate(bundle_student)
         bundle_route = np.concatenate(bundle_route)
-        order = np.lexsort(
-            (distances[bundle_student, school], np.concatenate(bracket))
-        )
+        order = np.lexsort((distances[bundle_student, school], np.concatenate(bracket)))
         rank = np.empty(len(order), dtype=np.int32)
         rank[order] = np.arange(len(order), dtype=np.int32)
 
@@ -371,14 +372,15 @@ def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
     Returns:
         np.ndarray: Seats for one cohort at each school.
     """
-    unsized = schools[
-        ["SchoolCapacity", "StatutoryLowAge", "StatutoryHighAge"]
-    ].isna().any(axis=1)
+    unsized = (
+        schools[["SchoolCapacity", "StatutoryLowAge", "StatutoryHighAge"]]
+        .isna()
+        .any(axis=1)
+    )
     if unsized.any():
         raise ValueError(
             "No capacity or no age range published, so a cohort cannot be "
-            "sized: "
-            + ", ".join(schools.loc[unsized.to_numpy(), "EstablishmentName"])
+            "sized: " + ", ".join(schools.loc[unsized.to_numpy(), "EstablishmentName"])
         )
 
     year_groups = schools["StatutoryHighAge"] - schools["StatutoryLowAge"]
