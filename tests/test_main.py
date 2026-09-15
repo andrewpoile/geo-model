@@ -119,8 +119,31 @@ def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch):
         for school in ("Alpha School", "Beta School", "Gamma School")
     )
 
-    sweep_main.plot(results, intake)
+    # A school without an FSM figure draws blank rather than failing.
+    fsm = pd.Series({"Alpha School": 0.4, "Beta School": np.nan, "Gamma School": 0.1})
+
+    sweep_main.plot(results, intake, fsm)
 
     for name in [*sweep_main.GRID, "sweep"]:
         png = sweep_main.SWEEP_DIR / f"{name}.png"
         assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
+
+
+# --------------------------------------------------------------------------
+# fsm_share
+# --------------------------------------------------------------------------
+
+
+def test_fsm_share_scales_the_register_percentage_and_names_a_missing_one(capsys):
+    schools = pd.DataFrame(
+        {
+            "EstablishmentName": ["Alpha School", "Beta School"],
+            "PercentageFSM": [55.7, np.nan],
+        }
+    )
+
+    fsm = sweep_main.fsm_share(schools)
+
+    assert fsm["Alpha School"] == pytest.approx(0.557)
+    assert np.isnan(fsm["Beta School"])
+    assert "drawn blank: Beta School" in capsys.readouterr().out

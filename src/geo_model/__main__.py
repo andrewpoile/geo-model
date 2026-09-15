@@ -160,6 +160,31 @@ def plot_parameter(ax: Axes, results: pd.DataFrame, parameter: str) -> None:
     sns.despine(ax=ax)
 
 
+def fsm_share(secondary_schools: pd.DataFrame) -> pd.Series:
+    """The share of each school's pupils eligible for free school meals.
+
+    The register's own measure of a school's disadvantage, so the point of
+    comparison for the share the model seats. The two are not the same
+    measure: the model counts students by the deprivation decile of their
+    district, the register counts pupils by their own eligibility.
+
+    Args:
+        secondary_schools (pd.DataFrame): Schools carrying
+        "EstablishmentName" and "PercentageFSM".
+
+    Returns:
+        pd.Series: The share, in [0, 1], indexed by establishment name. A
+        school the register holds no figure for is named and left NaN.
+    """
+    fsm = secondary_schools.set_index("EstablishmentName")["PercentageFSM"] / 100
+    if fsm.isna().any():
+        print(
+            "No FSM percentage recorded, so drawn blank: "
+            + ", ".join(fsm.index[fsm.isna()])
+        )
+    return fsm
+
+
 def plot_intake(
     ax: Axes, schools: pd.DataFrame, parameter: str, scenario: str, order: pd.Index
 ) -> None:
@@ -201,11 +226,39 @@ def plot_intake(
     ax.tick_params(axis="y", rotation=0)
 
 
+def plot_fsm(ax: Axes, fsm: pd.Series, order: pd.Index) -> None:
+    """Draw the FSM strip: the register's share for each school, on the
+    intake panels' scale, as the fixed point of comparison for both.
+
+    Args:
+        ax (Axes): Axis to draw on.
+
+        fsm (pd.Series): As returned by `fsm_share`.
+
+        order (pd.Index): School names, top to bottom.
+    """
+    sns.heatmap(
+        fsm.reindex(order).to_frame("FSM"),
+        vmin=0,
+        vmax=1,
+        cmap=SHARE_CMAP,
+        cbar=False,
+        yticklabels=False,
+        ax=ax,
+    )
+    ax.set_ylabel("")
+
+
 def draw_columns(
-    fig: Figure, results: pd.DataFrame, schools: pd.DataFrame, parameters: list[str]
+    fig: Figure,
+    results: pd.DataFrame,
+    schools: pd.DataFrame,
+    fsm: pd.Series,
+    parameters: list[str],
 ) -> None:
     """Fill `fig` with a column per parameter: the index on top, then each
-    school's intake with routes and without.
+    school's intake with routes and without, and the FSM strip closing both
+    intake rows.
 
     The index panels share one y-axis and the intake panels one colour scale,
     so effects compare across columns. Schools are ordered by their unrouted
@@ -218,6 +271,8 @@ def draw_columns(
 
         schools (pd.DataFrame): The school rows `sweep` returns.
 
+        fsm (pd.Series): As returned by `fsm_share`.
+
         parameters (list[str]): Keys of GRID, one per column.
     """
     schools = schools.assign(
@@ -226,13 +281,24 @@ def draw_columns(
     unrouted = schools[schools["scenario"] == "without routes"]
     order = unrouted.groupby("school")["share"].mean().sort_values(ascending=False)
 
-    axes = fig.subplots(3, len(parameters), squeeze=False)
+    # The FSM strip takes a narrow last column of its own, so the intake
+    # panels stay in the columns of the index panels above them.
+    grid = fig.subplots(
+        3,
+        len(parameters) + 1,
+        squeeze=False,
+        width_ratios=[*[1] * len(parameters), 0.12],
+    )
+    axes, strips = grid[:, :-1], grid[:, -1]
     for ax in axes[0, 1:]:
         ax.sharey(axes[0, 0])
     for column, parameter in zip(axes.T, parameters):
         plot_parameter(column[0], results, parameter)
         for ax, scenario in zip(column[1:], COLOURS):
             plot_intake(ax, schools, parameter, scenario, order.index)
+    strips[0].axis("off")
+    for ax in strips[1:]:
+        plot_fsm(ax, fsm, order.index)
     # Labels once per row and per column. The index panel keeps its own axis,
     # since it is numeric where the intake panels are categorical.
     for ax in axes[:, 1:].flat:
@@ -247,14 +313,14 @@ def draw_columns(
     )
     fig.colorbar(
         axes[1, 0].collections[0],
-        ax=axes[1:].ravel().tolist(),
+        ax=grid[1:].ravel().tolist(),
         label="Disadvantaged share of intake",
         fraction=0.04,
         pad=0.02,
     )
 
 
-def plot(results: pd.DataFrame, schools: pd.DataFrame) -> None:
+def plot(results: pd.DataFrame, schools: pd.DataFrame, fsm: pd.Series) -> None:
     """Plot every parameter on its own and all of them side by side.
 
     Each parameter is written to SWEEP_DIR as its own PNG, and the matrix of
@@ -264,16 +330,18 @@ def plot(results: pd.DataFrame, schools: pd.DataFrame) -> None:
         results (pd.DataFrame): The scenario rows `sweep` returns.
 
         schools (pd.DataFrame): The school rows `sweep` returns.
+
+        fsm (pd.Series): As returned by `fsm_share`.
     """
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
     for parameter in GRID:
         # A bare Figure draws without a display backend, which pyplot would need.
         fig = Figure(figsize=(9, 12), layout="constrained")
-        draw_columns(fig, results, schools, [parameter])
+        draw_columns(fig, results, schools, fsm, [parameter])
         fig.savefig(SWEEP_DIR / f"{parameter}.png", dpi=200)
 
     fig = Figure(figsize=(4.5 * len(GRID), 13), layout="constrained")
-    draw_columns(fig, results, schools, list(GRID))
+    draw_columns(fig, results, schools, fsm, list(GRID))
     fig.savefig(PLOT_PNG, dpi=200)
 
 
@@ -303,7 +371,7 @@ def main() -> None:
         aggfunc="mean",
     )
     print(summary.loc[list(GRID)].round(3))
-    plot(results, schools)
+    plot(results, schools, fsm_share(secondary_schools))
     print(f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV} and the plots in {SWEEP_DIR}.")
 
 
