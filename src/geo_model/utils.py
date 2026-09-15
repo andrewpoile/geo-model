@@ -400,22 +400,15 @@ def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
     return capacity.astype(np.int32)
 
 
-def dissimilarity_index(
+def school_intake(
     matched_school: ArrayLike,
     disadvantaged: ArrayLike,
     n_schools: int,
-) -> float:
-    """Dissimilarity index of a matching, disadvantaged students against the rest.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Count the disadvantaged and the other students seated at each school.
 
-    With a_c disadvantaged and b_c other students seated at school c, out of
-    A and B seated in all, the index is
-
-        D = 1/2 * sum_c | a_c / A - b_c / B |
-
-    the share of either group that would have to change school for every
-    school to hold the city-wide mix. 0 is that mix everywhere, 1 is complete
-    segregation. A student without a seat belongs to no school's intake, so
-    unmatched students are left out of both groups.
+    A student without a seat belongs to no school's intake, so unmatched
+    students are left out of both counts.
 
     Args:
         matched_school (ArrayLike): School each student is matched to, shape
@@ -428,7 +421,8 @@ def dissimilarity_index(
         n_schools (int): Number of schools the matching indexes.
 
     Returns:
-        float: The index, in [0, 1].
+        tuple[np.ndarray, np.ndarray]: Disadvantaged and other students
+        seated at each school, each of shape (n_schools,).
     """
     matched_school = np.asarray(matched_school, dtype=np.int64)
     disadvantaged = np.asarray(disadvantaged, dtype=bool)
@@ -443,8 +437,43 @@ def dissimilarity_index(
         )
 
     seated = matched_school >= 0
-    group_a = np.bincount(matched_school[seated & disadvantaged], minlength=n_schools)
-    group_b = np.bincount(matched_school[seated & ~disadvantaged], minlength=n_schools)
+    return (
+        np.bincount(matched_school[seated & disadvantaged], minlength=n_schools),
+        np.bincount(matched_school[seated & ~disadvantaged], minlength=n_schools),
+    )
+
+
+def dissimilarity_index(
+    matched_school: ArrayLike,
+    disadvantaged: ArrayLike,
+    n_schools: int,
+) -> float:
+    """Dissimilarity index of a matching, disadvantaged students against the rest.
+
+    With a_c disadvantaged and b_c other students seated at school c, out of
+    A and B seated in all, the index is
+
+        D = 1/2 * sum_c | a_c / A - b_c / B |
+
+    the share of either group that would have to change school for every
+    school to hold the city-wide mix. 0 is that mix everywhere, 1 is complete
+    segregation. The counts are those of `school_intake`, so unmatched
+    students are left out of both groups.
+
+    Args:
+        matched_school (ArrayLike): School each student is matched to, shape
+        (n_students,), -1 for an unmatched student. The first column of the
+        matching `fast_DAT` returns.
+
+        disadvantaged (ArrayLike): Whether each student lives in a
+        disadvantaged district, shape (n_students,).
+
+        n_schools (int): Number of schools the matching indexes.
+
+    Returns:
+        float: The index, in [0, 1].
+    """
+    group_a, group_b = school_intake(matched_school, disadvantaged, n_schools)
     if group_a.sum() == 0 or group_b.sum() == 0:
         raise ValueError(
             f"{group_a.sum()} disadvantaged and {group_b.sum()} other students hold "

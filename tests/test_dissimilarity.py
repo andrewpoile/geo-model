@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from geo_model import build_prefs as bp
 from geo_model import build_routes as br
 from geo_model import dissimilarity as ds
 from geo_model import load_data as ld
@@ -30,6 +31,61 @@ def test_disadvantaged_students_defaults_to_the_route_decile():
 
     np.testing.assert_array_equal(
         ds.disadvantaged_students(np.array([0, 1]), areas), [True, False]
+    )
+
+
+# --------------------------------------------------------------------------
+# student_samples and score_sample: against the real data folder
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def secondary():
+    """The area and secondary school frames, loaded once for the module."""
+    return ld.load_areas(), ld.load_schools()[1]
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_student_samples_draws_one_reproducible_sample_per_seed(secondary):
+    areas, _ = secondary
+    sizes = bp.cohort_sizes(areas, "secondary")
+
+    first = list(ds.student_samples(areas, sizes, 2))
+    second = list(ds.student_samples(areas, sizes, 2))
+
+    assert len(first) == 2
+    assert all(len(xy) == sizes.sum() for xy, _ in first)
+    # Different seeds draw different students, the same seed the same ones.
+    assert not np.array_equal(first[0][0], first[1][0])
+    for (xy_a, lsoa_a), (xy_b, lsoa_b) in zip(first, second):
+        np.testing.assert_array_equal(xy_a, xy_b)
+        np.testing.assert_array_equal(lsoa_a, lsoa_b)
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
+    areas, schools = secondary
+    routes = br.route_network(areas, schools[["Easting", "Northing"]].to_numpy())
+    student_xy, student_lsoa = next(
+        ds.student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1)
+    )
+
+    rows, school_rows = ds.score_sample(
+        student_xy, student_lsoa, areas, schools, routes
+    )
+    rows, intake = pd.DataFrame(rows), pd.DataFrame(school_rows)
+
+    assert list(rows["scenario"]) == ["with routes", "without routes"]
+    assert rows["dissimilarity"].between(0, 1).all()
+    assert (rows["n_matched"] + rows["n_unmatched"] == len(student_xy)).all()
+
+    # Every school of both scenarios has its intake counted, and the counts
+    # add up to the students seated in that scenario.
+    assert len(intake) == 2 * len(schools)
+    assert set(intake["school"]) == set(schools["EstablishmentName"])
+    seated = intake.groupby("scenario")[["disadvantaged", "other"]].sum().sum(axis=1)
+    pd.testing.assert_series_equal(
+        seated, rows.set_index("scenario")["n_matched"], check_names=False
     )
 
 

@@ -85,6 +85,33 @@ def test_main_only_routes_the_secondary_phase(redirected_outputs):
         assert (built["secondary_student_preferences"][..., 1] > -1).any()
 
 
+# --------------------------------------------------------------------------
+# secondary_instance
+# --------------------------------------------------------------------------
+
+
+@pytestmark_data
+def test_secondary_instance_ranks_nearest_first_without_performance_weight():
+    areas = ld.load_areas()
+    _, schools = ld.load_schools()
+    student_xy, student_lsoa = bp.sample_students(
+        areas["Borders"],
+        areas["Centroids"],
+        bp.cohort_sizes(areas, "secondary"),
+        np.random.default_rng(0),
+    )
+
+    preferences, _, _, _ = bp.secondary_instance(
+        student_xy, student_lsoa, areas, schools, None, performance_weight=0.0
+    )
+
+    school_xy = schools[["Easting", "Northing"]].to_numpy()
+    nearest = np.argmin(
+        np.linalg.norm(student_xy[:, None] - school_xy[None], axis=2), axis=1
+    )
+    np.testing.assert_array_equal(preferences[:, 0, 0], nearest)
+
+
 @pytestmark_data
 def test_main_is_reproducible_from_the_seed(redirected_outputs):
     bp.main()

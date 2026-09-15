@@ -12,6 +12,7 @@ from geo_model.utils import (
     rank_bundles,
     sample_in_polygon,
     sample_students,
+    school_intake,
 )
 
 UNIT_SQUARE = shapely.box(0.0, 0.0, 1.0, 1.0)
@@ -393,6 +394,31 @@ def test_cohort_capacity_rejects_a_cohort_of_less_than_one_seat():
     schools = make_schools([3.0], [11.0], [18.0], ["Tiny"])
     with pytest.raises(ValueError, match="fewer than one seat"):
         cohort_capacity(schools)
+
+
+# --------------------------------------------------------------------------
+# school_intake
+# --------------------------------------------------------------------------
+
+
+def test_school_intake_counts_each_group_per_school_leaving_unmatched_out():
+    matched = [0, 0, 1, 1, 1, -1, -1]
+    disadvantaged = [True, True, False, True, False, True, False]
+
+    group_a, group_b = school_intake(matched, disadvantaged, 3)
+
+    np.testing.assert_array_equal(group_a, [2, 1, 0])
+    np.testing.assert_array_equal(group_b, [0, 2, 0])
+
+
+def test_school_intake_rejects_misaligned_inputs():
+    with pytest.raises(ValueError, match="must align"):
+        school_intake([0, 1], [True], 2)
+
+
+def test_school_intake_rejects_a_school_beyond_the_count():
+    with pytest.raises(ValueError, match="beyond the 2 schools"):
+        school_intake([0, 2], [True, False], 2)
 
 
 # --------------------------------------------------------------------------

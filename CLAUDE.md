@@ -10,6 +10,8 @@ matching.md contains more information relevant to the matching paradigm.
 
 dissimilarity.py draws fresh student samples over many seeds, matches each with and without routes, scores every matching with the dissimilarity index and box-plots the index per scenario.
 
+__main__.py (`python -m geo_model`) sweeps each model parameter one at a time over the same student samples, scores every setting with and without routes, and plots the index against each parameter, singly and as a matrix of subplots.
+
 utils.py contains all the helper functions used in other scripts.
 
 Coding language is python.

@@ -49,13 +49,16 @@ def secondary_instance(
     areas: pd.DataFrame,
     secondary_schools: gpd.GeoDataFrame,
     routes: pd.DataFrame | None,
+    performance_weight: float = PERFORMANCE_WEIGHT,
+    route_discount: float = ROUTE_DISCOUNT,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Rank one secondary student sample into an SCT instance.
 
     Progress 8 weights the preferences, and routes are offered when a route
     set is given. Without one the instance is a plain school choice problem
     on the same students, the baseline the transport scheme is measured
-    against.
+    against. The two weights default to the model's constants, and are taken
+    as arguments so a sweep can vary them without rebinding the module.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -72,6 +75,14 @@ def secondary_instance(
 
         routes (pd.DataFrame | None): The route set, as returned by
         `route_network`, or None for an instance without routes.
+
+        performance_weight (float, optional): Share of the preference ranking
+        driven by Progress 8 rather than travel, in [0, 1]. Defaults to
+        PERFORMANCE_WEIGHT.
+
+        route_discount (float, optional): Share of the travel a route takes
+        out of the ranking of the school it serves, in [0, 1]. Defaults to
+        ROUTE_DISCOUNT.
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: Student
@@ -94,8 +105,8 @@ def secondary_instance(
         route_district,
         route_school,
         school_scores=secondary_schools["P8MEA"].to_numpy(),
-        performance_weight=PERFORMANCE_WEIGHT,
-        route_discount=ROUTE_DISCOUNT,
+        performance_weight=performance_weight,
+        route_discount=route_discount,
     )
     return preferences, priorities, cohort_capacity(secondary_schools), route_capacities
 

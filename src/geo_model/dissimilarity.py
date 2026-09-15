@@ -1,20 +1,48 @@
 import argparse
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
 
-from geo_model.build_prefs import SEED, cohort_sizes, secondary_instance
-from geo_model.build_routes import DISADVANTAGED_DECILE, route_network
+from geo_model.build_prefs import (
+    PERFORMANCE_WEIGHT,
+    ROUTE_DISCOUNT,
+    SEED,
+    cohort_sizes,
+    secondary_instance,
+)
+from geo_model.build_routes import (
+    DISADVANTAGED_DECILE,
+    MIN_ROUTE_DISTANCE,
+    ROUTE_CAPACITY,
+    route_network,
+)
 from geo_model.load_data import load_areas, load_schools
 from geo_model.matching import fast_DAT
-from geo_model.utils import dissimilarity_index, sample_students
+from geo_model.utils import dissimilarity_index, sample_students, school_intake
 
 N_SEEDS = 30
 RESULTS_CSV = Path("temp/dissimilarity.csv")
 PLOT_PNG = Path("temp/dissimilarity.png")
+
+
+@dataclass(frozen=True)
+class Settings:
+    """The parameters a matching can be scored under, at the model's defaults."""
+
+    decile: int = DISADVANTAGED_DECILE
+    min_distance: float = MIN_ROUTE_DISTANCE
+    capacity: int = ROUTE_CAPACITY
+    performance_weight: float = PERFORMANCE_WEIGHT
+    route_discount: float = ROUTE_DISCOUNT
+
+
+DEFAULTS = Settings()
 
 
 def disadvantaged_students(
@@ -38,13 +66,170 @@ def disadvantaged_students(
     return areas["IMD Decile"].to_numpy()[student_lsoa] <= decile
 
 
+def student_samples(
+    areas: pd.DataFrame, sizes: np.ndarray, n_seeds: int
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    """Draw one secondary student sample per seed, reproducibly from SEED.
+
+    Args:
+        areas (pd.DataFrame): Districts carrying "Borders" and "Centroids".
+
+        sizes (np.ndarray): Students to sample in each area, aligned with
+        `areas`.
+
+        n_seeds (int): Number of samples to draw.
+
+    Yields:
+        tuple[np.ndarray, np.ndarray]: Coordinates and positional district
+        index of each student, as returned by `sample_students`.
+    """
+    for stream in np.random.SeedSequence(SEED).spawn(n_seeds):
+        yield sample_students(
+            areas["Borders"], areas["Centroids"], sizes, np.random.default_rng(stream)
+        )
+
+
+def score_sample(
+    student_xy: np.ndarray,
+    student_lsoa: np.ndarray,
+    areas: pd.DataFrame,
+    secondary_schools: gpd.GeoDataFrame,
+    routes: pd.DataFrame,
+    *,
+    decile: int = DISADVANTAGED_DECILE,
+    performance_weight: float = PERFORMANCE_WEIGHT,
+    route_discount: float = ROUTE_DISCOUNT,
+) -> tuple[list[dict], list[dict]]:
+    """Match one student sample with and without routes and score both.
+
+    The sample is matched twice: as the transport instance with its routes,
+    and as the same students with no routes at all. Both matchings are scored
+    for segregation on the same students, so the two scores differ by the
+    routes alone. Each school's intake is counted by group as well, so the
+    composition behind the index can be seen.
+
+    Args:
+        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+
+        student_lsoa (np.ndarray): Positional index into `areas` of the
+        district each student was sampled in.
+
+        areas (pd.DataFrame): Districts, in the order students were sampled
+        from, carrying the columns `secondary_instance` and
+        `disadvantaged_students` read.
+
+        secondary_schools (gpd.GeoDataFrame): Schools, as `secondary_instance`
+        takes them.
+
+        routes (pd.DataFrame): The route set, as returned by `route_network`.
+
+        decile (int, optional): Districts at or below this IMD decile are the
+        disadvantaged group the index measures. Defaults to
+        DISADVANTAGED_DECILE.
+
+        performance_weight (float, optional): Passed to `secondary_instance`.
+        Defaults to PERFORMANCE_WEIGHT.
+
+        route_discount (float, optional): Passed to `secondary_instance`.
+        Defaults to ROUTE_DISCOUNT.
+
+    Returns:
+        tuple[list[dict], list[dict]]: One row per scenario, with keys
+        "scenario", "dissimilarity", "n_matched" and "n_unmatched", and one
+        row per (scenario, school), with keys "scenario", "school" (the
+        establishment name), "disadvantaged" and "other" (students seated).
+    """
+    disadvantaged = disadvantaged_students(student_lsoa, areas, decile)
+    n_schools = len(secondary_schools)
+    rows, school_rows = [], []
+    for scenario, route_set in [("with routes", routes), ("without routes", None)]:
+        instance = secondary_instance(
+            student_xy,
+            student_lsoa,
+            areas,
+            secondary_schools,
+            route_set,
+            performance_weight,
+            route_discount,
+        )
+        matched_school = fast_DAT(*instance)[:, 0]
+        rows.append(
+            {
+                "scenario": scenario,
+                "dissimilarity": dissimilarity_index(
+                    matched_school, disadvantaged, n_schools
+                ),
+                "n_matched": int((matched_school >= 0).sum()),
+                "n_unmatched": int((matched_school < 0).sum()),
+            }
+        )
+        group_a, group_b = school_intake(matched_school, disadvantaged, n_schools)
+        school_rows += [
+            {"scenario": scenario, "school": name, "disadvantaged": a, "other": b}
+            for name, a, b in zip(
+                secondary_schools["EstablishmentName"], group_a, group_b
+            )
+        ]
+    return rows, school_rows
+
+
+def score_settings(
+    settings: Settings,
+    samples: list[tuple[np.ndarray, np.ndarray]],
+    areas: gpd.GeoDataFrame,
+    secondary_schools: gpd.GeoDataFrame,
+) -> tuple[list[dict], list[dict]]:
+    """Score every sample at one setting of the parameters.
+
+    Lives here rather than in `__main__` so worker processes can import it:
+    multiprocessing never re-imports a `__main__` module into its workers.
+
+    Args:
+        settings (Settings): The parameter values to build routes and rank
+        preferences with.
+
+        samples (list[tuple[np.ndarray, np.ndarray]]): Student samples, as
+        yielded by `student_samples`, in seed order.
+
+        areas (gpd.GeoDataFrame): Districts, as `route_network` takes them.
+
+        secondary_schools (gpd.GeoDataFrame): Schools, as `score_sample`
+        takes them.
+
+    Returns:
+        tuple[list[dict], list[dict]]: The scenario rows and the school rows
+        `score_sample` returns for every sample, each tagged with "seed",
+        the scenario rows with "n_routes" as well.
+    """
+    print(f"Scoring {settings}")
+    routes = route_network(
+        areas,
+        secondary_schools[["Easting", "Northing"]].to_numpy(),
+        decile=settings.decile,
+        min_distance=settings.min_distance,
+        capacity=settings.capacity,
+    )
+    rows, school_rows = [], []
+    for seed, (student_xy, student_lsoa) in enumerate(samples):
+        scenario_rows, intake_rows = score_sample(
+            student_xy,
+            student_lsoa,
+            areas,
+            secondary_schools,
+            routes,
+            decile=settings.decile,
+            performance_weight=settings.performance_weight,
+            route_discount=settings.route_discount,
+        )
+        rows += [{"seed": seed, "n_routes": len(routes), **r} for r in scenario_rows]
+        school_rows += [{"seed": seed, **r} for r in intake_rows]
+    return rows, school_rows
+
+
 def run(n_seeds: int) -> pd.DataFrame:
     """Score the secondary matching with and without routes over fresh samples.
 
-    Each seed draws a new student sample, which is matched twice: as the
-    transport instance with its routes, and as the same students with no
-    routes at all. Both matchings are scored for segregation on the same
-    students, so the two scores of a seed differ by the routes alone.
+    Each seed draws a new student sample and scores it with `score_sample`.
 
     Args:
         n_seeds (int): Number of student samples to draw.
@@ -58,31 +243,15 @@ def run(n_seeds: int) -> pd.DataFrame:
     _, secondary_schools = load_schools()
     sizes = cohort_sizes(areas, "secondary")
     routes = route_network(areas, secondary_schools[["Easting", "Northing"]].to_numpy())
-    n_schools = len(secondary_schools)
 
     rows = []
-    for seed, stream in enumerate(np.random.SeedSequence(SEED).spawn(n_seeds)):
-        student_xy, student_lsoa = sample_students(
-            areas["Borders"], areas["Centroids"], sizes, np.random.default_rng(stream)
+    for seed, (student_xy, student_lsoa) in enumerate(
+        student_samples(areas, sizes, n_seeds)
+    ):
+        scenario_rows, _ = score_sample(
+            student_xy, student_lsoa, areas, secondary_schools, routes
         )
-        disadvantaged = disadvantaged_students(student_lsoa, areas)
-
-        for scenario, route_set in [("with routes", routes), ("without routes", None)]:
-            instance = secondary_instance(
-                student_xy, student_lsoa, areas, secondary_schools, route_set
-            )
-            matched_school = fast_DAT(*instance)[:, 0]
-            rows.append(
-                {
-                    "seed": seed,
-                    "scenario": scenario,
-                    "dissimilarity": dissimilarity_index(
-                        matched_school, disadvantaged, n_schools
-                    ),
-                    "n_matched": int((matched_school >= 0).sum()),
-                    "n_unmatched": int((matched_school < 0).sum()),
-                }
-            )
+        rows += [{"seed": seed, **r} for r in scenario_rows]
         print(f"Seed {seed + 1} of {n_seeds}: {len(student_xy)} students.")
 
     results = pd.DataFrame(rows)
