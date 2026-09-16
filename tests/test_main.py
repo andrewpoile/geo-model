@@ -7,6 +7,7 @@ import pytest
 from geo_model import __main__ as sweep_main
 from geo_model import build_prefs as bp
 from geo_model import load_data as ld
+from geo_model.utils import MODES
 
 DATA = ld.POPULATION_XLSX.parent.parent
 
@@ -37,6 +38,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path)
     monkeypatch.setattr(sweep_main, "RESULTS_CSV", tmp_path / "sweep.csv")
     monkeypatch.setattr(sweep_main, "SCHOOLS_CSV", tmp_path / "schools.csv")
+    monkeypatch.setattr(sweep_main, "MODES_CSV", tmp_path / "modes.csv")
     monkeypatch.setattr(
         sweep_main,
         "GRID",
@@ -54,15 +56,19 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
         sweep_main.student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1)
     )
 
-    results, intake = sweep_main.sweep(samples, areas, schools)
+    shares = ld.load_nts_mode_shares()
+
+    results, intake, modes = sweep_main.sweep(samples, areas, schools, shares)
 
     assert len(results) == 3 * 1 * 2
     assert len(intake) == 3 * 1 * 2 * len(schools)
-    for frame in (results, intake):
+    assert len(modes) == 3 * 1 * 2 * len(MODES)
+    for frame in (results, intake, modes):
         assert list(frame.columns[:2]) == ["parameter", "value"]
     assert results["dissimilarity"].between(0, 1).all()
     pd.testing.assert_frame_equal(pd.read_csv(sweep_main.RESULTS_CSV), results)
     pd.testing.assert_frame_equal(pd.read_csv(sweep_main.SCHOOLS_CSV), intake)
+    pd.testing.assert_frame_equal(pd.read_csv(sweep_main.MODES_CSV), modes)
 
     # Every seated student sits in exactly one school's intake.
     keys = ["parameter", "value", "seed", "scenario"]
@@ -71,10 +77,18 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
         seated, results.set_index(keys)["n_matched"], check_names=False
     )
 
+    # Every seated student travels by exactly one expected mode.
+    travelling = modes.groupby(keys)["students"].sum()
+    pd.testing.assert_series_equal(
+        travelling,
+        results.set_index(keys)["n_matched"].astype(float),
+        check_names=False,
+    )
+
     # Scoring the cells in worker processes changes nothing but the wall time.
-    pooled_results, pooled_intake = sweep_main.sweep(samples, areas, schools, workers=2)
-    pd.testing.assert_frame_equal(pooled_results, results)
-    pd.testing.assert_frame_equal(pooled_intake, intake)
+    pooled = sweep_main.sweep(samples, areas, schools, shares, workers=2)
+    for pooled_frame, frame in zip(pooled, (results, intake, modes)):
+        pd.testing.assert_frame_equal(pooled_frame, frame)
 
     # Route capacity plays no part in the unrouted instance, so on the same
     # sample its score cannot move with it; only the routed score can.
@@ -82,6 +96,10 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     assert unrouted["dissimilarity"].nunique() == 1
     routed = results[results["scenario"] == "with routes"]
     assert routed.groupby("parameter")["dissimilarity"].nunique()["capacity"] == 2
+    # More seats on every route carry more students by route.
+    riders = modes[(modes["scenario"] == "with routes") & (modes["mode"] == "route")]
+    riders = riders[riders["parameter"] == "capacity"].set_index("value")["students"]
+    assert riders[1] < riders[sweep_main.DEFAULTS.capacity]
 
 
 # --------------------------------------------------------------------------
@@ -119,10 +137,16 @@ def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch):
         for school in ("Alpha School", "Beta School", "Gamma School")
     )
 
+    modes = pd.DataFrame(
+        {**cell, "mode": mode, "students": rng.uniform(0, 500)}
+        for cell in cells
+        for mode in MODES
+    )
+
     # A school without an FSM figure draws blank rather than failing.
     fsm = pd.Series({"Alpha School": 0.4, "Beta School": np.nan, "Gamma School": 0.1})
 
-    sweep_main.plot(results, intake, fsm)
+    sweep_main.plot(results, intake, modes, fsm)
 
     for name in [*sweep_main.GRID, "sweep"]:
         png = sweep_main.SWEEP_DIR / f"{name}.png"

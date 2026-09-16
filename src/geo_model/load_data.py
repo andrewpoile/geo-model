@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 
 CRS = "EPSG:27700"  # British National Grid; eastings/northings in metres
@@ -18,6 +19,28 @@ REGISTER_CSV = Path("data/school_data/edubasealldata20260225.csv")
 # 2024-2025 is the newest release in the data folder, but it publishes no P8MEA
 # for any school in England, so 2023-2024 is the latest usable year.
 KS4_CSV = Path("data/school_data/Performancetables_csv/2023-2024/852_ks4final.csv")
+
+# NTS0614a: trips to and from school by trip length, main mode and age, England,
+# 2002 onwards. Education trips under 50 miles only; bus is private and local
+# bus together, other is rail and everything else.
+NTS_MODE_BY_LENGTH_ODS = Path("data/travel_data/nts/nts0614.ods")
+NTS_MODE_BY_LENGTH_SHEET = "NTS0614a_length_by_mode"
+NTS_BANDS = [
+    "Under 1 mile",
+    "1 to under 2 miles",
+    "2 to under 5 miles",
+    "5 miles and over",
+]
+NTS_MODES = {
+    "Walk (%) [note 2]": "walk",
+    "Pedal cycle (%) [note 3]": "cycle",
+    "Car or van (%)": "car",
+    "Bus (%) [note 4]": "bus",
+    "Other transport (%) [note 5]": "other",
+}
+NTS_TRIPS = "Unweighted sample size: trips (thousands) (number)"
+# The latest survey year, the default the shares are taken from.
+NTS_YEARS = [2025]
 
 
 def load_population() -> pd.DataFrame:
@@ -66,6 +89,66 @@ def load_p8() -> pd.DataFrame:
     ks4 = ks4[ks4["RECTYPE"] == 1]  # school rows, not LA or national aggregates
     ks4 = ks4.assign(P8MEA=pd.to_numeric(ks4["P8MEA"], errors="coerce"))
     return ks4[["LEA", "ESTAB", "P8MEA"]].dropna(subset=["P8MEA"])
+
+
+def load_nts_mode_shares(
+    years: list[int] = NTS_YEARS, age: str = "11 to 16"
+) -> pd.DataFrame:
+    """Import the NTS share of school trips by main mode within each trip-length band.
+
+    More than one year is pooled per band as a mean weighted by each year's
+    unweighted trip sample, the survey's own measure of how much each year's
+    estimate rests on. The 2025 diary moved from paper to digital collection,
+    which the survey reports lowered the recorded number of short walks and car
+    trips, so shares across that break are not strictly comparable.
+
+    Args:
+        years (list[int], optional): Survey years to draw on, 2002 onwards.
+        Defaults to NTS_YEARS.
+
+        age (str, optional): Age band as the table labels it, one of "5 to
+        16", "5 to 10" and "11 to 16". Defaults to "11 to 16".
+
+    Returns:
+        pd.DataFrame: One row per band in NTS_BANDS order, one column per mode
+        in NTS_MODES order, each row summing to 1.
+    """
+    table = pd.read_excel(
+        NTS_MODE_BY_LENGTH_ODS, NTS_MODE_BY_LENGTH_SHEET, header=5, engine="calamine"
+    )
+    table.columns = table.columns.str.strip()
+    table = table.rename(columns=NTS_MODES)
+
+    missing = sorted(set(years) - set(table["Year"]))
+    if missing:
+        raise ValueError(f"NTS0614a holds no year {missing}.")
+    if age not in set(table["Age"]):
+        raise ValueError(f"NTS0614a holds no age band {age!r}.")
+    table = table[table["Year"].isin(years) & (table["Age"] == age)]
+
+    modes = list(NTS_MODES.values())
+    shares = (
+        pd.DataFrame(
+            {
+                band: np.average(
+                    table.loc[table["Trip length"] == band, modes],
+                    axis=0,
+                    weights=table.loc[table["Trip length"] == band, NTS_TRIPS],
+                )
+                for band in NTS_BANDS
+            },
+            index=modes,
+        ).T
+        / 100
+    )
+    # np.average raises on an empty band, so every band is present by here.
+
+    if not np.allclose(shares.sum(axis=1), 1, atol=1e-6):
+        raise ValueError(
+            "NTS0614a mode shares do not sum to 100 in every band:\n"
+            f"{shares.sum(axis=1)}"
+        )
+    return shares
 
 
 def load_areas() -> gpd.GeoDataFrame:

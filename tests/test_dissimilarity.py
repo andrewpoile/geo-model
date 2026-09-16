@@ -6,6 +6,7 @@ from geo_model import build_prefs as bp
 from geo_model import build_routes as br
 from geo_model import dissimilarity as ds
 from geo_model import load_data as ld
+from geo_model.utils import MODES
 
 DATA = ld.POPULATION_XLSX.parent.parent
 
@@ -70,10 +71,10 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
         ds.student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1)
     )
 
-    rows, school_rows = ds.score_sample(
-        student_xy, student_lsoa, areas, schools, routes
+    rows, school_rows, mode_rows = ds.score_sample(
+        student_xy, student_lsoa, areas, schools, routes, ld.load_nts_mode_shares()
     )
-    rows, intake = pd.DataFrame(rows), pd.DataFrame(school_rows)
+    rows, intake, modes = map(pd.DataFrame, (rows, school_rows, mode_rows))
 
     assert list(rows["scenario"]) == ["with routes", "without routes"]
     assert rows["dissimilarity"].between(0, 1).all()
@@ -87,6 +88,18 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
     pd.testing.assert_series_equal(
         seated, rows.set_index("scenario")["n_matched"], check_names=False
     )
+
+    # Every seated student travels by exactly one expected mode, and only
+    # the routed scenario seats anyone on a route.
+    assert len(modes) == 2 * len(MODES)
+    pd.testing.assert_series_equal(
+        modes.groupby("scenario")["students"].sum(),
+        rows.set_index("scenario")["n_matched"].astype(float),
+        check_names=False,
+    )
+    on_route = modes[modes["mode"] == "route"].set_index("scenario")["students"]
+    assert on_route["with routes"] > 0
+    assert on_route["without routes"] == 0
 
 
 # --------------------------------------------------------------------------

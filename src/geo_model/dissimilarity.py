@@ -22,9 +22,15 @@ from geo_model.build_routes import (
     ROUTE_CAPACITY,
     route_network,
 )
-from geo_model.load_data import load_areas, load_schools
+from geo_model.load_data import load_areas, load_nts_mode_shares, load_schools
 from geo_model.matching import fast_DAT
-from geo_model.utils import dissimilarity_index, sample_students, school_intake
+from geo_model.utils import (
+    CIRCUITY,
+    dissimilarity_index,
+    expected_modes,
+    sample_students,
+    school_intake,
+)
 
 N_SEEDS = 30
 RESULTS_CSV = Path("temp/dissimilarity.csv")
@@ -89,24 +95,77 @@ def student_samples(
         )
 
 
+def match_sample(
+    student_xy: np.ndarray,
+    student_lsoa: np.ndarray,
+    areas: pd.DataFrame,
+    secondary_schools: gpd.GeoDataFrame,
+    routes: pd.DataFrame,
+    performance_weight: float = PERFORMANCE_WEIGHT,
+    route_discount: float = ROUTE_DISCOUNT,
+) -> Iterator[tuple[str, np.ndarray]]:
+    """Match one student sample with and without routes.
+
+    The sample is matched twice: as the transport instance with its routes,
+    and as the same students with no routes at all, so whatever is measured
+    on the two matchings differs by the routes alone.
+
+    Args:
+        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+
+        student_lsoa (np.ndarray): Positional index into `areas` of the
+        district each student was sampled in.
+
+        areas (pd.DataFrame): Districts, as `secondary_instance` takes them.
+
+        secondary_schools (gpd.GeoDataFrame): Schools, as `secondary_instance`
+        takes them.
+
+        routes (pd.DataFrame): The route set, as returned by `route_network`.
+
+        performance_weight (float, optional): Passed to `secondary_instance`.
+        Defaults to PERFORMANCE_WEIGHT.
+
+        route_discount (float, optional): Passed to `secondary_instance`.
+        Defaults to ROUTE_DISCOUNT.
+
+    Yields:
+        tuple[str, np.ndarray]: The scenario, "with routes" then "without
+        routes", and its matching as returned by `fast_DAT`.
+    """
+    for scenario, route_set in [("with routes", routes), ("without routes", None)]:
+        instance = secondary_instance(
+            student_xy,
+            student_lsoa,
+            areas,
+            secondary_schools,
+            route_set,
+            performance_weight,
+            route_discount,
+        )
+        yield scenario, fast_DAT(*instance)
+
+
 def score_sample(
     student_xy: np.ndarray,
     student_lsoa: np.ndarray,
     areas: pd.DataFrame,
     secondary_schools: gpd.GeoDataFrame,
     routes: pd.DataFrame,
+    shares: pd.DataFrame,
     *,
     decile: int = DISADVANTAGED_DECILE,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
-) -> tuple[list[dict], list[dict]]:
+    circuity: float = CIRCUITY,
+) -> tuple[list[dict], list[dict], list[dict]]:
     """Match one student sample with and without routes and score both.
 
-    The sample is matched twice: as the transport instance with its routes,
-    and as the same students with no routes at all. Both matchings are scored
-    for segregation on the same students, so the two scores differ by the
-    routes alone. Each school's intake is counted by group as well, so the
-    composition behind the index can be seen.
+    Both matchings are scored for segregation on the same students, so the
+    two scores differ by the routes alone. Each school's intake is counted by
+    group as well, so the composition behind the index can be seen, and the
+    students seated are counted by expected travel mode, so the modal shift
+    the routes induce can be seen too.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -123,6 +182,9 @@ def score_sample(
 
         routes (pd.DataFrame): The route set, as returned by `route_network`.
 
+        shares (pd.DataFrame): NTS mode share within each trip-length band,
+        as returned by `load_nts_mode_shares`.
+
         decile (int, optional): Districts at or below this IMD decile are the
         disadvantaged group the index measures. Defaults to
         DISADVANTAGED_DECILE.
@@ -133,26 +195,31 @@ def score_sample(
         route_discount (float, optional): Passed to `secondary_instance`.
         Defaults to ROUTE_DISCOUNT.
 
+        circuity (float, optional): Passed to `expected_modes`. Defaults to
+        CIRCUITY.
+
     Returns:
-        tuple[list[dict], list[dict]]: One row per scenario, with keys
-        "scenario", "dissimilarity", "n_matched" and "n_unmatched", and one
+        tuple[list[dict], list[dict], list[dict]]: One row per scenario, with
+        keys "scenario", "dissimilarity", "n_matched" and "n_unmatched"; one
         row per (scenario, school), with keys "scenario", "school" (the
-        establishment name), "disadvantaged" and "other" (students seated).
+        establishment name), "disadvantaged" and "other" (students seated);
+        and one row per (scenario, mode), with keys "scenario", "mode" and
+        "students" (expected).
     """
     disadvantaged = disadvantaged_students(student_lsoa, areas, decile)
     n_schools = len(secondary_schools)
-    rows, school_rows = [], []
-    for scenario, route_set in [("with routes", routes), ("without routes", None)]:
-        instance = secondary_instance(
-            student_xy,
-            student_lsoa,
-            areas,
-            secondary_schools,
-            route_set,
-            performance_weight,
-            route_discount,
-        )
-        matched_school = fast_DAT(*instance)[:, 0]
+    school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
+    rows, school_rows, mode_rows = [], [], []
+    for scenario, matching in match_sample(
+        student_xy,
+        student_lsoa,
+        areas,
+        secondary_schools,
+        routes,
+        performance_weight,
+        route_discount,
+    ):
+        matched_school = matching[:, 0]
         rows.append(
             {
                 "scenario": scenario,
@@ -170,7 +237,12 @@ def score_sample(
                 secondary_schools["EstablishmentName"], group_a, group_b
             )
         ]
-    return rows, school_rows
+        modes = expected_modes(matching, student_xy, school_xy, shares, circuity)
+        mode_rows += [
+            {"scenario": scenario, "mode": mode, "students": students}
+            for mode, students in modes.items()
+        ]
+    return rows, school_rows, mode_rows
 
 
 def score_settings(
@@ -178,7 +250,9 @@ def score_settings(
     samples: list[tuple[np.ndarray, np.ndarray]],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
-) -> tuple[list[dict], list[dict]]:
+    shares: pd.DataFrame,
+    circuity: float = CIRCUITY,
+) -> tuple[list[dict], list[dict], list[dict]]:
     """Score every sample at one setting of the parameters.
 
     Lives here rather than in `__main__` so worker processes can import it:
@@ -196,10 +270,15 @@ def score_settings(
         secondary_schools (gpd.GeoDataFrame): Schools, as `score_sample`
         takes them.
 
+        shares (pd.DataFrame): Passed to `score_sample`.
+
+        circuity (float, optional): Passed to `score_sample`. Defaults to
+        CIRCUITY.
+
     Returns:
-        tuple[list[dict], list[dict]]: The scenario rows and the school rows
-        `score_sample` returns for every sample, each tagged with "seed",
-        the scenario rows with "n_routes" as well.
+        tuple[list[dict], list[dict], list[dict]]: The scenario, school and
+        mode rows `score_sample` returns for every sample, each tagged with
+        "seed", the scenario rows with "n_routes" as well.
     """
     print(f"Scoring {settings}")
     routes = route_network(
@@ -209,21 +288,24 @@ def score_settings(
         min_distance=settings.min_distance,
         capacity=settings.capacity,
     )
-    rows, school_rows = [], []
+    rows, school_rows, mode_rows = [], [], []
     for seed, (student_xy, student_lsoa) in enumerate(samples):
-        scenario_rows, intake_rows = score_sample(
+        scenario_rows, intake_rows, travel_rows = score_sample(
             student_xy,
             student_lsoa,
             areas,
             secondary_schools,
             routes,
+            shares,
             decile=settings.decile,
             performance_weight=settings.performance_weight,
             route_discount=settings.route_discount,
+            circuity=circuity,
         )
         rows += [{"seed": seed, "n_routes": len(routes), **r} for r in scenario_rows]
         school_rows += [{"seed": seed, **r} for r in intake_rows]
-    return rows, school_rows
+        mode_rows += [{"seed": seed, **r} for r in travel_rows]
+    return rows, school_rows, mode_rows
 
 
 def run(n_seeds: int) -> pd.DataFrame:
@@ -243,13 +325,14 @@ def run(n_seeds: int) -> pd.DataFrame:
     _, secondary_schools = load_schools()
     sizes = cohort_sizes(areas, "secondary")
     routes = route_network(areas, secondary_schools[["Easting", "Northing"]].to_numpy())
+    shares = load_nts_mode_shares()
 
     rows = []
     for seed, (student_xy, student_lsoa) in enumerate(
         student_samples(areas, sizes, n_seeds)
     ):
-        scenario_rows, _ = score_sample(
-            student_xy, student_lsoa, areas, secondary_schools, routes
+        scenario_rows, _, _ = score_sample(
+            student_xy, student_lsoa, areas, secondary_schools, routes, shares
         )
         rows += [{"seed": seed, **r} for r in scenario_rows]
         print(f"Seed {seed + 1} of {n_seeds}: {len(student_xy)} students.")
