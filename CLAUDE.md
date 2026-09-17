@@ -12,6 +12,8 @@ dissimilarity.py draws fresh student samples over many seeds, matches each with 
 
 car_displacement.py matches fresh student samples with and without routes and estimates the travel mode of every seated student from the National Travel Survey's mode shares by trip length (data/travel_data/nts), routed students taking their route, then plots the modes of both scenarios and the change between them. The mode estimate itself lives in utils.py and is scored alongside the dissimilarity index, so the sweep carries it too.
 
+mechanisms.py scores two variants of the mechanism against the paper's on the same student samples, each alone and together: a walking threshold that withholds routes from students who can walk (by the seat the routeless matching gives them, or by the nearest school to their home) and reserved route seats that let a routed student ride without taking a seat from a routeless one. Both are instance transformations in utils.py, so fast_DAT is unchanged, and both are fields of dissimilarity.Settings.
+
 __main__.py (`python -m geo_model`) sweeps each model parameter one at a time over the same student samples, scores every setting with and without routes, and plots the index, each school's intake and the change in travel mode against each parameter, singly and as a matrix of subplots.
 
 utils.py contains all the helper functions used in other scripts.

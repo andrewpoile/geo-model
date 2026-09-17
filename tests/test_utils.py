@@ -5,6 +5,7 @@ import pytest
 import shapely
 
 from geo_model.load_data import NTS_BANDS
+from geo_model.matching import fast_DAT
 from geo_model.utils import (
     MILE,
     MODES,
@@ -15,10 +16,14 @@ from geo_model.utils import (
     expected_modes,
     mode_change,
     rank_bundles,
+    reserve_routes,
+    route_eligibility,
     sample_in_polygon,
     sample_students,
     school_intake,
     trip_band,
+    unreserve,
+    withhold_routes,
 )
 
 UNIT_SQUARE = shapely.box(0.0, 0.0, 1.0, 1.0)
@@ -325,6 +330,157 @@ def test_rank_bundles_rejects_a_route_to_a_school_that_does_not_exist():
             np.array([1]),
             np.array([5]),
         )
+
+
+# --------------------------------------------------------------------------
+# route_eligibility
+# --------------------------------------------------------------------------
+
+
+def test_route_eligibility_by_routeless_seat_reads_the_seat_held():
+    school_xy = np.array([[0.0, 0.0], [20.0, 0.0]])
+    # s0 sits at its school, s1 holds no seat, s2 is exactly the threshold
+    # from its school and s3 is beyond it.
+    student_xy = np.array([[0.0, 0.0], [0.0, 0.0], [10.0, 0.0], [5.0, 0.0]])
+    routeless = np.array([[0, -1], [-1, -1], [1, -1], [1, -1]])
+
+    eligible = route_eligibility(student_xy, school_xy, routeless, 10.0, "routeless")
+
+    np.testing.assert_array_equal(eligible, [False, True, False, True])
+
+
+def test_route_eligibility_by_nearest_school_ignores_the_seat_held():
+    school_xy = np.array([[0.0, 0.0], [20.0, 0.0]])
+    # s0 is unseated but sits at a school, s1 is exactly the threshold from
+    # its nearest school and s2 is beyond it.
+    student_xy = np.array([[0.0, 0.0], [30.0, 0.0], [31.0, 0.0]])
+    routeless = np.array([[-1, -1], [1, -1], [1, -1]])
+
+    eligible = route_eligibility(student_xy, school_xy, routeless, 10.0, "nearest")
+
+    np.testing.assert_array_equal(eligible, [False, False, True])
+
+
+def test_route_eligibility_rejects_an_unknown_rule():
+    with pytest.raises(ValueError, match="rule must be"):
+        route_eligibility(
+            np.zeros((1, 2)), np.zeros((1, 2)), np.array([[0, -1]]), 1.0, "district"
+        )
+
+
+# --------------------------------------------------------------------------
+# withhold_routes, reserve_routes and unreserve: on the two-district instance
+# --------------------------------------------------------------------------
+
+
+def test_withhold_routes_pads_out_the_routed_bundles_of_ineligible_students():
+    preferences, _ = rank_two_districts(route_discount=0.5)
+    before = preferences.copy()
+
+    withheld = withhold_routes(preferences, np.array([True, False]))
+
+    # The second student loses its route in place, keeping the rest of the
+    # list in order, and the first student's list is untouched.
+    np.testing.assert_array_equal(withheld[0], before[0])
+    np.testing.assert_array_equal(withheld[1], [[-1, -1], [0, -1], [1, -1]])
+    np.testing.assert_array_equal(preferences, before)
+
+
+def test_withhold_routes_leaves_eligible_students_alone():
+    preferences, _ = rank_two_districts(route_discount=0.5)
+    np.testing.assert_array_equal(
+        withhold_routes(preferences, np.array([True, True])), preferences
+    )
+
+
+def test_withhold_routes_rejects_a_flag_per_student_of_the_wrong_length():
+    preferences, _ = rank_two_districts()
+    with pytest.raises(ValueError, match="one flag per student"):
+        withhold_routes(preferences, np.array([True]))
+
+
+def test_reserve_routes_makes_each_route_a_pool_at_its_school():
+    preferences, priorities = rank_two_districts(route_discount=0.5)
+
+    pooled, pool_priorities, pool_capacities = reserve_routes(
+        preferences, priorities, np.array([1, 1]), ROUTE_SCHOOL, np.array([1])
+    )
+
+    # The routed bundle (c0, r0) becomes pool 2, and no pool carries a route.
+    np.testing.assert_array_equal(pooled[0], preferences[0])
+    np.testing.assert_array_equal(pooled[1], [[2, -1], [0, -1], [1, -1]])
+    # Each school pool takes its routeless ranks, the route pool the ranks of
+    # its riders at c0.
+    assert pool_priorities.shape == (3, 1, 2)
+    np.testing.assert_array_equal(pool_priorities[:, 0], [[0, 2], [1, 0], [3, 1]])
+    np.testing.assert_array_equal(pool_capacities, [1, 1, 1])
+    assert pool_capacities.dtype == np.int32
+
+
+def test_reserve_routes_rejects_a_route_axis_of_the_wrong_length():
+    preferences, priorities = rank_two_districts()
+    with pytest.raises(ValueError, match="hold 1 routes"):
+        reserve_routes(
+            preferences, priorities, np.array([1, 1]), np.array([0, 0]), np.array([1])
+        )
+
+
+def test_unreserve_maps_a_route_pool_back_to_its_school_and_route():
+    matching = np.array([[0, -1], [2, -1], [-1, -1]], dtype=np.int32)
+    np.testing.assert_array_equal(
+        unreserve(matching, 2, ROUTE_SCHOOL), [[0, -1], [0, 0], [-1, -1]]
+    )
+
+
+def test_unreserve_rejects_a_pool_beyond_the_routes():
+    with pytest.raises(ValueError, match="beyond the 2 schools and 1 routes"):
+        unreserve(np.array([[3, -1]]), 2, ROUTE_SCHOOL)
+
+
+# A routed applicant outranks a local student at its school. c0 sits in
+# district 0 with one seat; s0 is local to it at 5m, s1 is in district 1 at
+# 2m and rides the one route there. Distances are s0: [5, 15], s1: [2, 18].
+CONTESTED = {
+    "student_xy": np.array([[5.0, 0.0], [2.0, 0.0]]),
+    "student_district": STUDENT_DISTRICT,
+    "school_xy": SCHOOL_XY,
+    "school_district": SCHOOL_DISTRICT,
+    "route_district": ROUTE_DISTRICT,
+    "route_school": ROUTE_SCHOOL,
+    "route_discount": 0.5,
+}
+ONE_SEAT_EACH = np.array([1, 1], dtype=np.int32)
+ONE_RIDER = np.array([1], dtype=np.int32)
+
+
+def test_a_routed_student_takes_the_local_students_seat_without_reserves():
+    preferences, priorities = rank_bundles(**CONTESTED)
+    matching = fast_DAT(preferences, priorities, ONE_SEAT_EACH, ONE_RIDER)
+    np.testing.assert_array_equal(matching, [[1, -1], [0, 0]])
+
+
+def test_a_routed_student_rides_on_a_reserved_seat_beside_the_local_student():
+    preferences, priorities = rank_bundles(**CONTESTED)
+    pooled = reserve_routes(
+        preferences, priorities, ONE_SEAT_EACH, ROUTE_SCHOOL, ONE_RIDER
+    )
+
+    matching = unreserve(fast_DAT(*pooled, ONE_RIDER[:0]), 2, ROUTE_SCHOOL)
+
+    # c0 now seats both: the local student on its one seat, the rider on
+    # the route's.
+    np.testing.assert_array_equal(matching, [[0, -1], [0, 0]])
+
+
+def test_a_student_withheld_a_route_never_holds_one():
+    preferences, priorities = rank_bundles(**CONTESTED)
+    withheld = withhold_routes(preferences, np.array([True, False]))
+
+    matching = fast_DAT(withheld, priorities, ONE_SEAT_EACH, ONE_RIDER)
+
+    # On foot the rider falls to the bottom bracket at c0, so the local
+    # student keeps the seat and the rider is deferred to c1.
+    np.testing.assert_array_equal(matching, [[0, -1], [1, -1]])
 
 
 # --------------------------------------------------------------------------

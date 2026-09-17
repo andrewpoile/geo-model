@@ -6,7 +6,8 @@ from geo_model import build_prefs as bp
 from geo_model import build_routes as br
 from geo_model import dissimilarity as ds
 from geo_model import load_data as ld
-from geo_model.utils import MODES
+from geo_model.matching import fast_DAT
+from geo_model.utils import MILE, MODES
 
 DATA = ld.POPULATION_XLSX.parent.parent
 
@@ -61,6 +62,88 @@ def test_student_samples_draws_one_reproducible_sample_per_seed(secondary):
     for (xy_a, lsoa_a), (xy_b, lsoa_b) in zip(first, second):
         np.testing.assert_array_equal(xy_a, xy_b)
         np.testing.assert_array_equal(lsoa_a, lsoa_b)
+
+
+@pytest.fixture(scope="module")
+def one_sample(secondary):
+    """One student sample and the default route set."""
+    areas, schools = secondary
+    routes = br.route_network(areas, schools[["Easting", "Northing"]].to_numpy())
+    student_xy, student_lsoa = next(
+        ds.student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1)
+    )
+    return student_xy, student_lsoa, routes
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_match_sample_at_the_defaults_is_the_paper_mechanism(secondary, one_sample):
+    areas, schools = secondary
+    student_xy, student_lsoa, routes = one_sample
+
+    matched = dict(ds.match_sample(student_xy, student_lsoa, areas, schools, routes))
+
+    assert list(matched) == ["with routes", "without routes"]
+    for route_set, matching in zip((routes, None), matched.values()):
+        instance = bp.secondary_instance(
+            student_xy, student_lsoa, areas, schools, route_set
+        )
+        np.testing.assert_array_equal(matching, fast_DAT(*instance))
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"walk_distance": MILE},
+        {"walk_distance": MILE, "walk_rule": "nearest"},
+        {"reserved": True},
+        {"walk_distance": MILE, "reserved": True},
+    ],
+    ids=["gated-routeless", "gated-nearest", "reserved", "both"],
+)
+def test_match_sample_levers_change_the_routed_matching_alone(
+    secondary, one_sample, kwargs
+):
+    areas, schools = secondary
+    student_xy, student_lsoa, routes = one_sample
+    default = dict(ds.match_sample(student_xy, student_lsoa, areas, schools, routes))
+
+    varied = dict(
+        ds.match_sample(student_xy, student_lsoa, areas, schools, routes, **kwargs)
+    )
+
+    np.testing.assert_array_equal(varied["without routes"], default["without routes"])
+    assert not np.array_equal(varied["with routes"], default["with routes"])
+    routed = varied["with routes"]
+    if kwargs.get("walk_distance"):
+        # A route is only held by a student the routeless matching left
+        # unseated or seated beyond walking distance, or with no school in
+        # walking distance of home.
+        routeless = default["without routes"]
+        school_xy = schools[["Easting", "Northing"]].to_numpy()
+        if kwargs.get("walk_rule") == "nearest":
+            distance = np.linalg.norm(
+                student_xy[:, None] - school_xy[None], axis=2
+            ).min(axis=1)
+        else:
+            seated = routeless[:, 0] >= 0
+            distance = np.full(len(routeless), np.inf)
+            distance[seated] = np.linalg.norm(
+                student_xy[seated] - school_xy[routeless[seated, 0]], axis=1
+            )
+        assert (distance[routed[:, 1] >= 0] > MILE).all()
+    if kwargs.get("reserved"):
+        # Routed students ride on seats of their own, so routeless students
+        # never exceed a school's own seats and the schools seat more in all.
+        on_foot = routed[:, 1] < 0
+        capacities = bp.secondary_instance(
+            student_xy, student_lsoa, areas, schools, None
+        )[2]
+        seats = np.bincount(
+            routed[on_foot & (routed[:, 0] >= 0), 0], minlength=len(schools)
+        )
+        assert (seats <= capacities).all()
+        assert (routed[:, 0] >= 0).sum() > (default["with routes"][:, 0] >= 0).sum()
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")

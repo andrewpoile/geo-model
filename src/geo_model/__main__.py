@@ -199,7 +199,7 @@ def plot_parameter(
         legend=False,
         ax=ax,
     )
-    ax.axvline(asdict(DEFAULTS)[parameter], **DEFAULT_LINE)
+    ax.axvline(float(asdict(DEFAULTS)[parameter]), **DEFAULT_LINE)
     ax.set_xlabel(AXIS_LABELS[parameter])
     ax.yaxis.grid(True, color="#e1e0d9")
     ax.set_axisbelow(True)

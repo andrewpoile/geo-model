@@ -331,6 +331,175 @@ def rank_bundles(
     return preferences, priorities
 
 
+def route_eligibility(
+    student_xy: np.ndarray,
+    school_xy: np.ndarray,
+    routeless_matching: np.ndarray,
+    walk_distance: float,
+    rule: str,
+) -> np.ndarray:
+    """Whether each student may be offered a route, by a walking threshold.
+
+    A route carries a student to a school they could not walk to, so a student
+    who can walk is offered none. Two rules say what "can walk" means:
+
+    - "routeless": the student holds a seat within `walk_distance` in the
+      matching without routes. A student that matching leaves unseated can
+      walk nowhere, so is always eligible.
+    - "nearest": a school lies within `walk_distance` of the student's home,
+      whatever seat they would hold. Exogenous, unlike the first rule.
+
+    Args:
+        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+
+        school_xy (np.ndarray): School coordinates, shape (n_schools, 2), in
+        the same CRS as `student_xy`.
+
+        routeless_matching (np.ndarray): The matching of the same students
+        without routes, as returned by `fast_DAT`. Read by "routeless" alone.
+
+        walk_distance (float): Straight-line metres a student is taken to
+        walk. A student exactly this far is not eligible.
+
+        rule (str): "routeless" or "nearest".
+
+    Returns:
+        np.ndarray: Boolean, one per student.
+    """
+    if rule == "routeless":
+        school = routeless_matching[:, 0]
+        seated = school >= 0
+        distance = np.full(len(school), np.inf)
+        distance[seated] = np.linalg.norm(
+            student_xy[seated] - school_xy[school[seated]], axis=1
+        )
+    elif rule == "nearest":
+        distance = spdist.cdist(student_xy, school_xy).min(axis=1)
+    else:
+        raise ValueError(f"rule must be 'routeless' or 'nearest', got {rule!r}.")
+    return distance > walk_distance
+
+
+def withhold_routes(preferences: np.ndarray, eligible: np.ndarray) -> np.ndarray:
+    """Take every routed bundle out of the lists of ineligible students.
+
+    The bundles are overwritten with the (-1, -1) padding, which `fast_DAT`
+    passes over wherever it sits in a list, so the mechanism is unchanged.
+    Priorities need no change either: a bundle never proposed is never held.
+
+    Args:
+        preferences (np.ndarray): Student preferences, shape (n_students,
+        max_options, 2), as returned by `rank_bundles`.
+
+        eligible (np.ndarray): Whether each student keeps their routed
+        bundles, shape (n_students,).
+
+    Returns:
+        np.ndarray: A copy of `preferences` with the bundles withheld.
+    """
+    eligible = np.asarray(eligible, dtype=bool)
+    if eligible.shape != (len(preferences),):
+        raise ValueError(
+            f"eligible must hold one flag per student: expected shape "
+            f"{(len(preferences),)}, got {eligible.shape}."
+        )
+    withheld = preferences.copy()
+    withheld[~eligible[:, None] & (preferences[:, :, 1] >= 0)] = -1
+    return withheld
+
+
+def reserve_routes(
+    preferences: np.ndarray,
+    priorities: np.ndarray,
+    school_capacities: np.ndarray,
+    route_school: np.ndarray,
+    route_capacities: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Recast an SCT instance so every route holds seats of its own.
+
+    In the instance `rank_bundles` builds a routed bundle competes for the
+    school's seats and can evict a routeless student. Here each route becomes
+    a slot pool at its school, numbered `n_schools + route`, holding the
+    route's seats on top of the school's: a routed applicant competes only
+    with the route's other riders and a routeless applicant only with other
+    routeless applicants. The result is a routeless instance for `fast_DAT`,
+    whose matching `unreserve` maps back to (school, route).
+
+    Args:
+        preferences (np.ndarray): Student preferences, shape (n_students,
+        max_options, 2), as returned by `rank_bundles`.
+
+        priorities (np.ndarray): School priorities, shape (n_schools,
+        n_routes + 1, n_students), as returned by `rank_bundles`.
+
+        school_capacities (np.ndarray): Seats at each school, shape
+        (n_schools,).
+
+        route_school (np.ndarray): School each route arrives at, shape
+        (n_routes,).
+
+        route_capacities (np.ndarray): Seats on each route, aligned with
+        `route_school`.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]: Preferences over the
+        pools with every route index -1, pool priorities of shape
+        (n_schools + n_routes, 1, n_students), and pool capacities.
+    """
+    n_schools, n_routes = priorities.shape[0], priorities.shape[1] - 1
+    route_school = np.asarray(route_school, dtype=np.int64)
+    if route_school.shape != (n_routes,) or len(route_capacities) != n_routes:
+        raise ValueError(
+            f"priorities hold {n_routes} routes, route_school {route_school.shape} "
+            f"and route_capacities {len(route_capacities)}."
+        )
+
+    pooled = preferences.copy()
+    routed = pooled[:, :, 1] >= 0
+    pooled[routed, 0] = n_schools + pooled[routed, 1]
+    pooled[:, :, 1] = -1
+
+    pool_priorities = np.concatenate(
+        (
+            priorities[:, n_routes, :],
+            priorities[route_school, np.arange(n_routes), :],
+        )
+    )[:, None, :]
+    pool_capacities = np.concatenate((school_capacities, route_capacities))
+    return pooled, pool_priorities, pool_capacities.astype(np.int32)
+
+
+def unreserve(
+    matching: np.ndarray, n_schools: int, route_school: np.ndarray
+) -> np.ndarray:
+    """Map a matching over the pools of `reserve_routes` back to (school, route).
+
+    Args:
+        matching (np.ndarray): As returned by `fast_DAT` on the reserved
+        instance, every route index -1.
+
+        n_schools (int): Number of schools ahead of the route pools.
+
+        route_school (np.ndarray): School each route arrives at.
+
+    Returns:
+        np.ndarray: (school, route) per student, -1 when absent, in the form
+        `fast_DAT` returns on the original instance.
+    """
+    route_school = np.asarray(route_school, dtype=np.int64)
+    pool = matching[:, 0]
+    if (pool >= n_schools + len(route_school)).any():
+        raise ValueError(
+            f"matching holds pools beyond the {n_schools} schools and "
+            f"{len(route_school)} routes."
+        )
+    on_route = pool >= n_schools
+    unreserved = matching.copy()
+    unreserved[on_route, 1] = pool[on_route] - n_schools
+    unreserved[on_route, 0] = route_school[unreserved[on_route, 1]]
+    return unreserved
+
+
 def district_index(schools: pd.DataFrame, areas: pd.DataFrame) -> np.ndarray:
     """Positional index into `areas` of the district each school sits in.
 

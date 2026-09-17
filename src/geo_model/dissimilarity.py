@@ -1,4 +1,5 @@
 import argparse
+import functools
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,8 +29,12 @@ from geo_model.utils import (
     CIRCUITY,
     dissimilarity_index,
     expected_modes,
+    reserve_routes,
+    route_eligibility,
     sample_students,
     school_intake,
+    unreserve,
+    withhold_routes,
 )
 
 N_SEEDS = 30
@@ -39,13 +44,22 @@ PLOT_PNG = Path("temp/dissimilarity.png")
 
 @dataclass(frozen=True)
 class Settings:
-    """The parameters a matching can be scored under, at the model's defaults."""
+    """The parameters a matching can be scored under, at the model's defaults.
+
+    The last three vary the mechanism rather than the instance, and default
+    to the mechanism of the paper: every disadvantaged student is offered
+    their district's routes, and a routed student competes for the school's
+    seats. See `match_sample`.
+    """
 
     decile: int = DISADVANTAGED_DECILE
     min_distance: float = MIN_ROUTE_DISTANCE
     capacity: int = ROUTE_CAPACITY
     performance_weight: float = PERFORMANCE_WEIGHT
     route_discount: float = ROUTE_DISCOUNT
+    walk_distance: float = 0.0
+    walk_rule: str = "routeless"
+    reserved: bool = False
 
 
 DEFAULTS = Settings()
@@ -103,12 +117,18 @@ def match_sample(
     routes: pd.DataFrame,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
+    walk_distance: float = 0.0,
+    walk_rule: str = "routeless",
+    reserved: bool = False,
 ) -> Iterator[tuple[str, np.ndarray]]:
     """Match one student sample with and without routes.
 
     The sample is matched twice: as the transport instance with its routes,
     and as the same students with no routes at all, so whatever is measured
-    on the two matchings differs by the routes alone.
+    on the two matchings differs by the routes alone. The routeless matching
+    is made first, since a walking threshold can read it, and the routed
+    instance is then reshaped by whichever of the mechanism variants are
+    set before it is matched.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -129,21 +149,58 @@ def match_sample(
         route_discount (float, optional): Passed to `secondary_instance`.
         Defaults to ROUTE_DISCOUNT.
 
+        walk_distance (float, optional): Metres within which a student is
+        taken to walk, so is offered no route; see `route_eligibility`. 0
+        offers every disadvantaged student their district's routes.
+        Defaults to 0.
+
+        walk_rule (str, optional): The rule `route_eligibility` applies,
+        read when `walk_distance` > 0. Defaults to "routeless".
+
+        reserved (bool, optional): Whether each route holds seats of its own
+        on top of its school's, so that a routed student never takes a seat
+        from a routeless one; see `reserve_routes`. Defaults to False.
+
     Yields:
         tuple[str, np.ndarray]: The scenario, "with routes" then "without
         routes", and its matching as returned by `fast_DAT`.
     """
-    for scenario, route_set in [("with routes", routes), ("without routes", None)]:
-        instance = secondary_instance(
+    instance = functools.partial(
+        secondary_instance,
+        student_xy,
+        student_lsoa,
+        areas,
+        secondary_schools,
+        performance_weight=performance_weight,
+        route_discount=route_discount,
+    )
+    routeless = fast_DAT(*instance(None))
+
+    preferences, priorities, school_capacities, route_capacities = instance(routes)
+    if walk_distance > 0:
+        eligible = route_eligibility(
             student_xy,
-            student_lsoa,
-            areas,
-            secondary_schools,
-            route_set,
-            performance_weight,
-            route_discount,
+            secondary_schools[["Easting", "Northing"]].to_numpy(),
+            routeless,
+            walk_distance,
+            walk_rule,
         )
-        yield scenario, fast_DAT(*instance)
+        preferences = withhold_routes(preferences, eligible)
+    if reserved:
+        route_school = routes["school_idx"].to_numpy()
+        pooled = reserve_routes(
+            preferences, priorities, school_capacities, route_school, route_capacities
+        )
+        routed = unreserve(
+            fast_DAT(*pooled, np.empty(0, dtype=np.int32)),
+            len(secondary_schools),
+            route_school,
+        )
+    else:
+        routed = fast_DAT(preferences, priorities, school_capacities, route_capacities)
+
+    yield "with routes", routed
+    yield "without routes", routeless
 
 
 def score_sample(
@@ -157,6 +214,9 @@ def score_sample(
     decile: int = DISADVANTAGED_DECILE,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
+    walk_distance: float = 0.0,
+    walk_rule: str = "routeless",
+    reserved: bool = False,
     circuity: float = CIRCUITY,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Match one student sample with and without routes and score both.
@@ -195,6 +255,15 @@ def score_sample(
         route_discount (float, optional): Passed to `secondary_instance`.
         Defaults to ROUTE_DISCOUNT.
 
+        walk_distance (float, optional): Passed to `match_sample`. Defaults
+        to 0.
+
+        walk_rule (str, optional): Passed to `match_sample`. Defaults to
+        "routeless".
+
+        reserved (bool, optional): Passed to `match_sample`. Defaults to
+        False.
+
         circuity (float, optional): Passed to `expected_modes`. Defaults to
         CIRCUITY.
 
@@ -218,6 +287,9 @@ def score_sample(
         routes,
         performance_weight,
         route_discount,
+        walk_distance,
+        walk_rule,
+        reserved,
     ):
         matched_school = matching[:, 0]
         rows.append(
@@ -300,6 +372,9 @@ def score_settings(
             decile=settings.decile,
             performance_weight=settings.performance_weight,
             route_discount=settings.route_discount,
+            walk_distance=settings.walk_distance,
+            walk_rule=settings.walk_rule,
+            reserved=settings.reserved,
             circuity=circuity,
         )
         rows += [{"seed": seed, "n_routes": len(routes), **r} for r in scenario_rows]
