@@ -16,6 +16,12 @@ BOUNDARIES_DIR = Path("data/student_data/LSOA_Boundaries_geospacial_data_2021")
 CENTROIDS_DIR = Path("data/student_data/LSOA_PopCentroids_geospatial_data_2021")
 REGISTER_CSV = Path("data/school_data/edubasealldata20260225.csv")
 
+# Year 7 published admission numbers, transcribed from Southampton City
+# Council's determined admission arrangements. Every school holds the same
+# number in both published years, so the choice of year changes nothing today.
+PAN_CSV = Path("data/school_data/secondary_pan.csv")
+PAN_YEAR = "PAN2026"
+
 # 2024-2025 is the newest release in the data folder, but it publishes no P8MEA
 # for any school in England, so 2023-2024 is the latest usable year.
 KS4_CSV = Path("data/school_data/Performancetables_csv/2023-2024/852_ks4final.csv")
@@ -89,6 +95,28 @@ def load_p8() -> pd.DataFrame:
     ks4 = ks4[ks4["RECTYPE"] == 1]  # school rows, not LA or national aggregates
     ks4 = ks4.assign(P8MEA=pd.to_numeric(ks4["P8MEA"], errors="coerce"))
     return ks4[["LEA", "ESTAB", "P8MEA"]].dropna(subset=["P8MEA"])
+
+
+def load_pan(year: str = PAN_YEAR) -> pd.DataFrame:
+    """Import published admission numbers, keyed on local authority and establishment number.
+
+    A PAN is the number of places a school offers in Year 7, which is the
+    cohort the matching admits, so it sizes a school directly. The register's
+    capacity covers every year group a school teaches instead, sixth form
+    included, and so cannot be read as an intake.
+
+    Args:
+        year (str, optional): Admission year column to read, as the file
+        heads it. Defaults to PAN_YEAR.
+
+    Returns:
+        pd.DataFrame: One row per school, carrying "LA (code)",
+        "EstablishmentNumber" and "PAN".
+    """
+    pan = pd.read_csv(PAN_CSV)
+    if year not in pan.columns:
+        raise ValueError(f"{PAN_CSV.name} holds no admission year {year!r}.")
+    return pan[["LA (code)", "EstablishmentNumber", year]].rename(columns={year: "PAN"})
 
 
 def load_nts_mode_shares(
@@ -228,9 +256,9 @@ def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     Returns:
         tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]: The primary and the
         secondary schools, each carrying the register columns the model uses,
-        "P8MEA" and a point geometry. A secondary school without a Progress 8
-        score cannot be ranked on performance, so it is dropped from the
-        secondary frame.
+        "P8MEA" and a point geometry, the secondary frame carrying "PAN" as
+        well. A secondary school without a Progress 8 score cannot be ranked
+        on performance, so it is dropped from the secondary frame.
     """
     # Only 13 of the register's 135 columns are used, and reading the rest costs
     # more than everything the register is used for.
@@ -320,4 +348,17 @@ def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
         )
         secondary_schools = secondary_schools.dropna(subset=["P8MEA"])
 
-    return primary_schools, secondary_schools
+    # Only the secondary phase publishes an admission number, so only this
+    # frame carries one and only it is sized on an intake rather than on the
+    # register's capacity across every year group.
+    secondary_schools = secondary_schools.merge(
+        load_pan(), "left", ["LA (code)", "EstablishmentNumber"]
+    )
+    missing_pan = secondary_schools[secondary_schools["PAN"].isna()]
+    if len(missing_pan):
+        raise ValueError(
+            "No published admission number held, so an intake cannot be sized: "
+            + ", ".join(missing_pan["EstablishmentName"])
+        )
+
+    return primary_schools, secondary_schools.astype({"PAN": int})

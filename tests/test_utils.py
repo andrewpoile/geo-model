@@ -374,6 +374,16 @@ def make_schools(capacity, low, high, names=None):
     )
 
 
+def test_cohort_capacity_takes_a_published_admission_number_as_it_stands():
+    schools = make_schools([500.0, 210.0], [4.0, 11.0], [11.0, 16.0]).assign(
+        PAN=[60, 180]
+    )
+    capacity = cohort_capacity(schools)
+
+    np.testing.assert_array_equal(capacity, [60, 180])  # not 500 / 7, 210 / 5
+    assert capacity.dtype == np.int32
+
+
 def test_cohort_capacity_spreads_capacity_over_the_years_a_school_spans():
     schools = make_schools([500.0, 210.0], [4.0, 11.0], [11.0, 16.0])
     capacity = cohort_capacity(schools)

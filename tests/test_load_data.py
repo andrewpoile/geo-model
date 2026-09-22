@@ -189,3 +189,53 @@ def test_load_p8_fails_loudly_when_the_release_is_missing(tmp_path, monkeypatch)
 
     with pytest.raises(FileNotFoundError):
         ld.load_p8()
+
+
+# --------------------------------------------------------------------------
+# load_pan
+# --------------------------------------------------------------------------
+
+PAN_HEADER = "LA (code),EstablishmentNumber,EstablishmentName,PAN2026,PAN2027\n"
+
+
+@pytest.fixture
+def pan_source(tmp_path, monkeypatch):
+    def write(body):
+        path = tmp_path / "secondary_pan.csv"
+        path.write_text(PAN_HEADER + body)
+        monkeypatch.setattr(ld, "PAN_CSV", path)
+        return path
+
+    return write
+
+
+def test_load_pan_reads_the_admission_year_it_is_asked_for(pan_source):
+    pan_source(
+        "852,4278,Bitterne Park School,360,370\n852,4311,Cantell School,250,260\n"
+    )
+
+    pan = ld.load_pan("PAN2027")
+
+    assert list(pan.columns) == ["LA (code)", "EstablishmentNumber", "PAN"]
+    np.testing.assert_array_equal(pan["EstablishmentNumber"], [4278, 4311])
+    np.testing.assert_array_equal(pan["PAN"], [370, 260])
+
+
+def test_load_pan_defaults_to_the_year_the_model_runs_on(pan_source):
+    pan_source("852,4278,Bitterne Park School,360,370\n")
+
+    np.testing.assert_array_equal(ld.load_pan()["PAN"], [360])
+
+
+def test_load_pan_rejects_an_admission_year_the_file_does_not_hold(pan_source):
+    pan_source("852,4278,Bitterne Park School,360,370\n")
+
+    with pytest.raises(ValueError, match="PAN2099"):
+        ld.load_pan("PAN2099")
+
+
+def test_load_pan_fails_loudly_when_the_file_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(ld, "PAN_CSV", tmp_path / "absent.csv")
+
+    with pytest.raises(FileNotFoundError):
+        ld.load_pan()

@@ -369,19 +369,23 @@ def district_index(schools: pd.DataFrame, areas: pd.DataFrame) -> np.ndarray:
 def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
     """Seats one year group holds at each school.
 
-    The register publishes capacity across every year group a school teaches,
-    while the matching admits a single cohort, so capacity is spread evenly over
-    the years the school spans. A sixth form is smaller than the year groups
-    below it, so this understates the intake of an 11-18 school; the register
-    publishes no admission number to use in its place.
+    A secondary school publishes an admission number, the places it offers in
+    the year it admits, which is the cohort the matching fills, so a frame
+    carrying one is sized on it as it stands. Nothing equivalent is published
+    for the primary phase, so there the register's capacity across every year
+    group a school teaches is spread evenly over the years the school spans.
 
     Args:
-        schools (pd.DataFrame): Schools carrying "EstablishmentName",
-        "SchoolCapacity", "StatutoryLowAge" and "StatutoryHighAge" columns.
+        schools (pd.DataFrame): Schools carrying a "PAN" column, or else
+        "EstablishmentName", "SchoolCapacity", "StatutoryLowAge" and
+        "StatutoryHighAge" columns.
 
     Returns:
         np.ndarray: Seats for one cohort at each school.
     """
+    if "PAN" in schools.columns:
+        return schools["PAN"].to_numpy(dtype=np.int32)
+
     unsized = (
         schools[["SchoolCapacity", "StatutoryLowAge", "StatutoryHighAge"]]
         .isna()
