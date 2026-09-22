@@ -135,7 +135,9 @@ def main() -> None:
     # Routes connect the disadvantaged districts to the secondary schools they
     # cannot reach unaided, so they exist for the secondary phase alone.
     secondary_routes = route_network(
-        geo_soton, secondary_schools[["Easting", "Northing"]].to_numpy()
+        geo_soton,
+        secondary_schools[["Easting", "Northing"]].to_numpy(),
+        secondary_schools["P8MEA"].to_numpy(),
     )
     save_routes(secondary_routes)
 

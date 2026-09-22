@@ -46,6 +46,17 @@ GRID = {
     ],
     # The largest disadvantaged cohort is 40 students, so 40 seats never bind.
     "capacity": [replace(DEFAULTS, capacity=c) for c in (1, 2, 5, 10, 20, 30, 40)],
+    # P8MEA runs from -0.99 to 0.82 over the 12 secondary schools. At -0.72 or
+    # below every disadvantaged district has a school above the threshold within
+    # the radius and the route set empties, so the grid starts at -0.5; above
+    # 0.82 no school is, so the condition is inert and the route set is whole.
+    "max_local_p8": [replace(DEFAULTS, max_local_p8=p / 4) for p in range(-2, 5)],
+    # Half miles in metres. Every disadvantaged district has a school above
+    # MAX_LOCAL_P8 within 5.6km, so the route set empties from there.
+    "local_radius": [
+        replace(DEFAULTS, local_radius=r)
+        for r in (0, 805, 1609, 2414, 3218, 4023, 4828)
+    ],
     "performance_weight": [
         replace(DEFAULTS, performance_weight=w / 10) for w in range(11)
     ],
@@ -56,6 +67,8 @@ AXIS_LABELS = {
     "decile": "Disadvantaged at or below IMD decile",
     "min_distance": "Minimum route distance (m)",
     "capacity": "Route capacity (seats)",
+    "max_local_p8": "Highest Progress 8 allowed nearby",
+    "local_radius": "Local performance radius (m)",
     "performance_weight": "Performance weight",
     "route_discount": "Route discount",
 }

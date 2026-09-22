@@ -18,6 +18,8 @@ from geo_model.build_prefs import (
 )
 from geo_model.build_routes import (
     DISADVANTAGED_DECILE,
+    LOCAL_RADIUS,
+    MAX_LOCAL_P8,
     MIN_ROUTE_DISTANCE,
     ROUTE_CAPACITY,
     route_network,
@@ -44,6 +46,8 @@ class Settings:
     decile: int = DISADVANTAGED_DECILE
     min_distance: float = MIN_ROUTE_DISTANCE
     capacity: int = ROUTE_CAPACITY
+    max_local_p8: float = MAX_LOCAL_P8
+    local_radius: float = LOCAL_RADIUS
     performance_weight: float = PERFORMANCE_WEIGHT
     route_discount: float = ROUTE_DISCOUNT
 
@@ -290,9 +294,12 @@ def score_settings(
     routes = route_network(
         areas,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
+        secondary_schools["P8MEA"].to_numpy(),
         decile=settings.decile,
         min_distance=settings.min_distance,
         capacity=settings.capacity,
+        max_local_p8=settings.max_local_p8,
+        local_radius=settings.local_radius,
     )
     rows, school_rows, mode_rows = [], [], []
     for seed, (student_xy, student_lsoa) in enumerate(samples):
@@ -330,7 +337,11 @@ def run(n_seeds: int) -> pd.DataFrame:
     areas = load_areas()
     _, secondary_schools = load_schools()
     sizes = cohort_sizes(areas, "secondary")
-    routes = route_network(areas, secondary_schools[["Easting", "Northing"]].to_numpy())
+    routes = route_network(
+        areas,
+        secondary_schools[["Easting", "Northing"]].to_numpy(),
+        secondary_schools["P8MEA"].to_numpy(),
+    )
     shares = load_nts_mode_shares()
 
     rows = []

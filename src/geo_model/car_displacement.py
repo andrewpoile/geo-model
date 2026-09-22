@@ -59,7 +59,11 @@ def run(
     areas = load_areas()
     _, secondary_schools = load_schools()
     sizes = cohort_sizes(areas, "secondary")
-    routes = route_network(areas, secondary_schools[["Easting", "Northing"]].to_numpy())
+    routes = route_network(
+        areas,
+        secondary_schools[["Easting", "Northing"]].to_numpy(),
+        secondary_schools["P8MEA"].to_numpy(),
+    )
     shares = load_nts_mode_shares(years)
 
     rows = []
