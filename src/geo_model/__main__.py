@@ -11,7 +11,7 @@ import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Patch, Rectangle
 
 from geo_model.build_prefs import cohort_sizes
 from geo_model.dissimilarity import (
@@ -70,6 +70,14 @@ MODE_COLOURS = {
     "bus": "#de8f05",
     "other": "#cc78bc",
     "route": "#1f2933",
+}
+# The scenario hues again, the disadvantaged group in full ink and the rest
+# washed out, so the unassigned panel reads against the scenario panels.
+GROUP_COLOURS = {
+    "disadvantaged, with routes": "#2a78d6",
+    "disadvantaged, without routes": "#52514e",
+    "other, with routes": "#7fb0e3",
+    "other, without routes": "#a5a49f",
 }
 DEFAULT_LINE = {"color": "#898781", "linestyle": "--", "linewidth": 1}
 # One hue, light to dark, for the share of a school's intake that is disadvantaged.
@@ -160,6 +168,26 @@ def legend_handles(colours: dict[str, str]) -> list[Line2D]:
     ] + [Line2D([], [], label="default", **DEFAULT_LINE)]
 
 
+def positions(parameter: str) -> pd.Series:
+    """The x position of every value `parameter` sweeps, indexed by value.
+
+    Every panel of a column is drawn against these positions rather than
+    against the values themselves, so the panels that can only be categorical
+    — the stacked bars and the intake heatmaps — share one axis with the line
+    panels. The positions are the cell centres `sns.heatmap` draws its columns
+    at, so the bars and the lines land on the heatmap's own grid.
+
+    Args:
+        parameter (str): A key of GRID.
+
+    Returns:
+        pd.Series: The position of every value the parameter sweeps, in the
+        order GRID holds them.
+    """
+    values = [getattr(settings, parameter) for settings in GRID[parameter]]
+    return pd.Series(np.arange(len(values)) + 0.5, index=values)
+
+
 def plot_parameter(
     ax: Axes,
     rows: pd.DataFrame,
@@ -185,9 +213,11 @@ def plot_parameter(
         colours (dict[str, str]): Colour of every level of `hue`, in the
         order the lines are drawn.
     """
+    at = positions(parameter)
+    cell = rows[rows["parameter"] == parameter]
     sns.lineplot(
-        rows[rows["parameter"] == parameter],
-        x="value",
+        cell.assign(position=cell["value"].map(at)),
+        x="position",
         y=y,
         hue=hue,
         hue_order=list(colours),
@@ -199,7 +229,7 @@ def plot_parameter(
         legend=False,
         ax=ax,
     )
-    ax.axvline(asdict(DEFAULTS)[parameter], **DEFAULT_LINE)
+    ax.axvline(at[asdict(DEFAULTS)[parameter]], **DEFAULT_LINE)
     ax.set_xlabel(AXIS_LABELS[parameter])
     ax.yaxis.grid(True, color="#e1e0d9")
     ax.set_axisbelow(True)
@@ -231,6 +261,73 @@ def fsm_share(secondary_schools: pd.DataFrame) -> pd.Series:
     return fsm
 
 
+def plot_stack(ax: Axes, rows: pd.DataFrame, parameter: str) -> None:
+    """Draw one parameter's unassigned panel: a bar per scenario at every
+    value, stacked by the group the unplaced students belong to.
+
+    Args:
+        ax (Axes): Axis to draw on.
+
+        rows (pd.DataFrame): Rows `unassigned_rows` returns.
+
+        parameter (str): A key of GRID.
+    """
+    at = positions(parameter)
+    cell = rows[rows["parameter"] == parameter]
+    stack = cell.pivot_table(
+        index="value", columns="series", values="unassigned", aggfunc="mean"
+    ).reindex(at.index)
+    width = 0.38
+    for offset, scenario in zip((-width / 2, width / 2), COLOURS):
+        bottom = np.zeros(len(stack))
+        for group in ("disadvantaged", "other"):
+            series = f"{group}, {scenario}"
+            ax.bar(
+                at.to_numpy() + offset,
+                stack[series],
+                width,
+                bottom=bottom,
+                color=GROUP_COLOURS[series],
+                edgecolor="white",
+                linewidth=0.5,
+            )
+            bottom += stack[series].to_numpy()
+    ax.axvline(at[asdict(DEFAULTS)[parameter]], **DEFAULT_LINE)
+    ax.set_xlabel(AXIS_LABELS[parameter])
+    ax.yaxis.grid(True, color="#e1e0d9")
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+
+def unassigned_rows(results: pd.DataFrame) -> pd.DataFrame:
+    """The students each group is left without a place, one row per group.
+
+    A student unseated by the matching is scored by neither the index nor the
+    intake panels, both of which count seated students alone, so the burden of
+    going unplaced is only visible here.
+
+    Args:
+        results (pd.DataFrame): The scenario rows `sweep` returns, carrying
+        "n_unmatched" and "unassigned_disadvantaged".
+
+    Returns:
+        pd.DataFrame: Two rows per scenario row, carrying "unassigned" (that
+        group's students with no place) and "series", a key of GROUP_COLOURS
+        naming the group and the scenario.
+    """
+    unmatched, disadvantaged = (
+        results["n_unmatched"],
+        results["unassigned_disadvantaged"],
+    )
+    rows = pd.concat(
+        [
+            results.assign(group="disadvantaged", unassigned=disadvantaged),
+            results.assign(group="other", unassigned=unmatched - disadvantaged),
+        ]
+    )
+    return rows.assign(series=rows["group"] + ", " + rows["scenario"])
+
+
 def plot_intake(
     ax: Axes, schools: pd.DataFrame, parameter: str, scenario: str, order: pd.Index
 ) -> None:
@@ -252,21 +349,13 @@ def plot_intake(
     cell = schools[
         (schools["parameter"] == parameter) & (schools["scenario"] == scenario)
     ]
+    at = positions(parameter)
     share = cell.pivot_table(index="school", columns="value", values="share")
-    share = share.reindex(order)
-    sns.heatmap(
-        share,
-        vmin=0,
-        vmax=1,
-        cmap=SHARE_CMAP,
-        cbar=False,
-        xticklabels=[f"{value:g}" for value in share.columns],
-        ax=ax,
-    )
-    (default,) = np.flatnonzero(share.columns == asdict(DEFAULTS)[parameter])
-    ax.add_patch(
-        Rectangle((int(default), 0), 1, len(share), fill=False, **DEFAULT_LINE)
-    )
+    share = share.reindex(index=order, columns=at.index)
+    sns.heatmap(share, vmin=0, vmax=1, cmap=SHARE_CMAP, cbar=False, ax=ax)
+    # The cell's left edge, since the position is its centre.
+    default = at[asdict(DEFAULTS)[parameter]] - 0.5
+    ax.add_patch(Rectangle((default, 0), 1, len(share), fill=False, **DEFAULT_LINE))
     ax.set_xlabel(AXIS_LABELS[parameter])
     ax.set_ylabel(scenario)
     ax.tick_params(axis="y", rotation=0)
@@ -303,13 +392,16 @@ def draw_columns(
     fsm: pd.Series,
     parameters: list[str],
 ) -> None:
-    """Fill `fig` with a column per parameter: the index on top, then each
-    school's intake with routes and without, the FSM strip closing both
-    intake rows, and the change in travel mode the routes induce at the foot.
+    """Fill `fig` with a column per parameter: the index on top, then who the
+    matching leaves unplaced, then each school's intake with routes and
+    without, the FSM strip closing both intake rows, and the change in travel
+    mode the routes induce at the foot.
 
-    The index panels share one y-axis, the intake panels one colour scale
-    and the mode panels one y-axis, so effects compare across columns.
-    Schools are ordered by their unrouted share, most disadvantaged first.
+    Every panel of a column shares one x-axis, drawn once at the foot, so the
+    column reads top to bottom at a value. Every line row shares one y-axis
+    and the intake panels one colour scale, so effects compare across
+    columns. Schools are ordered by their unrouted share, most disadvantaged
+    first.
 
     Args:
         fig (Figure): Figure to draw on, using constrained layout.
@@ -323,53 +415,87 @@ def draw_columns(
         fsm (pd.Series): As returned by `fsm_share`.
 
         parameters (list[str]): Keys of GRID, one per column.
+
+    Raises:
+        ValueError: If a frame carries a value its parameter does not sweep,
+        which the panels would otherwise drop without saying so.
     """
+    for parameter in parameters:
+        swept = set(positions(parameter).index)
+        for frame in (results, schools, modes):
+            stray = set(frame.loc[frame["parameter"] == parameter, "value"]) - swept
+            if stray:
+                raise ValueError(
+                    f"{parameter} carries values GRID does not sweep: {sorted(stray)}"
+                )
+
     schools = schools.assign(
         share=schools["disadvantaged"] / (schools["disadvantaged"] + schools["other"])
     )
     unrouted = schools[schools["scenario"] == "without routes"]
     order = unrouted.groupby("school")["share"].mean().sort_values(ascending=False)
     change = mode_change(modes)
+    unassigned = unassigned_rows(results)
 
     # The FSM strip takes a narrow last column of its own, so the intake
-    # panels stay in the columns of the index panels above them.
+    # panels stay in the columns of the line panels above them.
     grid = fig.subplots(
-        4,
+        5,
         len(parameters) + 1,
         squeeze=False,
         width_ratios=[*[1] * len(parameters), 0.12],
     )
     axes, strips = grid[:, :-1], grid[:, -1]
-    for row in (axes[0], axes[3]):
+    shared_rows = (0, 1, 4)
+    for row in (axes[i] for i in shared_rows):
         for ax in row[1:]:
             ax.sharey(row[0])
+    for column in axes.T:
+        for ax in column[1:]:
+            ax.sharex(column[0])
     for column, parameter in zip(axes.T, parameters):
         plot_parameter(
             column[0], results, parameter, "dissimilarity", "scenario", COLOURS
         )
-        for ax, scenario in zip(column[1:3], COLOURS):
+        plot_stack(column[1], unassigned, parameter)
+        for ax, scenario in zip(column[2:4], COLOURS):
             plot_intake(ax, schools, parameter, scenario, order.index)
-        plot_parameter(column[3], change, parameter, "change", "mode", MODE_COLOURS)
-        column[3].axhline(0, color="#898781", linewidth=1)
+        plot_parameter(column[4], change, parameter, "change", "mode", MODE_COLOURS)
+        column[4].axhline(0, color="#898781", linewidth=1)
+        # Last, so they replace the ticks the heatmaps set as they were drawn:
+        # a shared axis carries one locator, so the foot sets the whole column.
+        at = positions(parameter)
+        column[0].set_xlim(0, len(at))
+        column[4].set_xticks(
+            at.to_numpy(),
+            [f"{value:g}" for value in at.index],
+            rotation=45,
+            ha="right",
+            fontsize="small",
+        )
+        for ax in column[:-1]:
+            ax.set_xlabel("")
+            ax.tick_params(labelbottom=False)
     axes[0, 0].set_ylabel("Dissimilarity index")
-    axes[3, 0].set_ylabel("Change in students with routes")
-    strips[0].axis("off")
-    strips[3].axis("off")
-    for ax in strips[1:3]:
+    axes[1, 0].set_ylabel("Students left unassigned")
+    axes[4, 0].set_ylabel("Change in students with routes")
+    for row in shared_rows:
+        strips[row].axis("off")
+    for ax in strips[2:4]:
         plot_fsm(ax, fsm, order.index)
-    # Labels once per row and per column. The line panels keep their own
-    # axes, since they are numeric where the intake panels are categorical.
+    # Labels once per row and per column.
     for ax in axes[:, 1:].flat:
         ax.set_ylabel("")
         ax.tick_params(labelleft=False)
-    for ax in axes[1:3].flat:
-        ax.set_xlabel("")
-        ax.tick_params(labelbottom=False)
 
+    # The lines of the scenario panels and the patches the stacks are built
+    # from share the top band: the stacks take their hue from the scenario
+    # and their tone from the group.
     fig.legend(
-        handles=legend_handles(COLOURS),
+        handles=legend_handles(COLOURS)
+        + [Patch(color=colour, label=label) for label, colour in GROUP_COLOURS.items()],
         loc="outside upper center",
-        ncol=3,
+        ncol=4,
         frameon=False,
     )
     fig.legend(
@@ -379,8 +505,8 @@ def draw_columns(
         frameon=False,
     )
     fig.colorbar(
-        axes[1, 0].collections[0],
-        ax=grid[1:3].ravel().tolist(),
+        axes[2, 0].collections[0],
+        ax=grid[2:4].ravel().tolist(),
         label="Disadvantaged share of intake",
         fraction=0.04,
         pad=0.02,
@@ -407,11 +533,11 @@ def plot(
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
     for parameter in GRID:
         # A bare Figure draws without a display backend, which pyplot would need.
-        fig = Figure(figsize=(9, 15), layout="constrained")
+        fig = Figure(figsize=(9, 19), layout="constrained")
         draw_columns(fig, results, schools, modes, fsm, [parameter])
         fig.savefig(SWEEP_DIR / f"{parameter}.png", dpi=200)
 
-    fig = Figure(figsize=(4.5 * len(GRID), 16), layout="constrained")
+    fig = Figure(figsize=(4.5 * len(GRID), 20), layout="constrained")
     draw_columns(fig, results, schools, modes, fsm, list(GRID))
     fig.savefig(PLOT_PNG, dpi=200)
 
@@ -463,6 +589,16 @@ def main() -> None:
     )
     print("Change in students per mode with routes:")
     print(change.loc[list(GRID), MODES].round(1))
+    unassigned = unassigned_rows(results).pivot_table(
+        index=["parameter", "value"],
+        columns=["group", "scenario"],
+        values="unassigned",
+        aggfunc="mean",
+    )
+    print("Students of each group left unassigned:")
+    # Four columns under a two-level header fold at the default width.
+    with pd.option_context("display.width", 100):
+        print(unassigned.loc[list(GRID)].round(1))
     plot(results, schools, modes, fsm_share(secondary_schools))
     print(
         f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in {SWEEP_DIR}."

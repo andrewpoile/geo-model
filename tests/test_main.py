@@ -3,6 +3,7 @@ from dataclasses import asdict, replace
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.figure import Figure
 
 from geo_model import __main__ as sweep_main
 from geo_model import build_prefs as bp
@@ -107,9 +108,12 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch):
-    monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path / "out")
-    monkeypatch.setattr(sweep_main, "PLOT_PNG", tmp_path / "out" / "sweep.png")
+def synthetic_frames():
+    """Frames shaped like the ones `sweep` returns, covering every cell of GRID.
+
+    A school without an FSM figure is included, so the plots are exercised on
+    one that draws blank rather than failing.
+    """
     rng = np.random.default_rng(0)
     cells = [
         {
@@ -124,7 +128,15 @@ def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch):
         for scenario in ("with routes", "without routes")
     ]
     results = pd.DataFrame(
-        {**cell, "dissimilarity": rng.uniform(0, 1)} for cell in cells
+        {
+            **cell,
+            "dissimilarity": rng.uniform(0, 1),
+            "n_matched": 900,
+            "n_unmatched": 100,
+            "n_disadvantaged": 300,
+            "unassigned_disadvantaged": int(rng.integers(0, 100)),
+        }
+        for cell in cells
     )
     intake = pd.DataFrame(
         {
@@ -143,14 +155,99 @@ def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch):
         for mode in MODES
     )
 
-    # A school without an FSM figure draws blank rather than failing.
     fsm = pd.Series({"Alpha School": 0.4, "Beta School": np.nan, "Gamma School": 0.1})
+    return results, intake, modes, fsm
 
-    sweep_main.plot(results, intake, modes, fsm)
+
+def draw(parameters: list[str]) -> np.ndarray:
+    """Draw `parameters` on a bare figure and return its panels, row by row."""
+    results, intake, modes, fsm = synthetic_frames()
+    fig = Figure(figsize=(4.5 * len(parameters), 20), layout="constrained")
+    sweep_main.draw_columns(fig, results, intake, modes, fsm, parameters)
+    # The subplots come first and in row order; the colorbar follows them.
+    grid = np.array(fig.axes[: 5 * (len(parameters) + 1)]).reshape(5, -1)
+    return grid[:, :-1]  # the FSM strips take the last column
+
+
+def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch):
+    monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path / "out")
+    monkeypatch.setattr(sweep_main, "PLOT_PNG", tmp_path / "out" / "sweep.png")
+
+    sweep_main.plot(*synthetic_frames())
 
     for name in [*sweep_main.GRID, "sweep"]:
         png = sweep_main.SWEEP_DIR / f"{name}.png"
         assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
+
+
+def test_draw_columns_shares_one_x_axis_down_every_column():
+    parameters = list(sweep_main.GRID)
+
+    panels = draw(parameters)
+
+    for column, parameter in zip(panels.T, parameters):
+        at = sweep_main.positions(parameter)
+        shared = column[0].get_shared_x_axes()
+        assert all(shared.joined(column[0], ax) for ax in column[1:])
+        # One axis, so one set of limits and one set of ticks for the column.
+        for ax in column:
+            assert ax.get_xlim() == (0, len(at))
+            assert list(ax.get_xticks()) == list(at)
+        # Drawn once, at the foot of the column.
+        assert column[-1].get_xlabel() == sweep_main.AXIS_LABELS[parameter]
+        assert all(ax.get_xlabel() == "" for ax in column[:-1])
+        assert column[-1].xaxis.get_tick_params()["labelbottom"]
+        assert not any(ax.xaxis.get_tick_params()["labelbottom"] for ax in column[:-1])
+
+
+def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
+    results, intake, modes, fsm = synthetic_frames()
+    stray = results[results["parameter"] == "decile"].head(1).assign(value=-1)
+
+    with pytest.raises(ValueError, match="decile carries values GRID does not sweep"):
+        sweep_main.draw_columns(
+            Figure(), pd.concat([results, stray]), intake, modes, fsm, ["decile"]
+        )
+
+
+# --------------------------------------------------------------------------
+# positions
+# --------------------------------------------------------------------------
+
+
+def test_positions_centre_every_grid_value_on_its_heatmap_cell():
+    for parameter, cells in sweep_main.GRID.items():
+        at = sweep_main.positions(parameter)
+
+        assert list(at.index) == [getattr(cell, parameter) for cell in cells]
+        assert list(at) == [i + 0.5 for i in range(len(cells))]
+
+
+# --------------------------------------------------------------------------
+# unassigned_rows
+# --------------------------------------------------------------------------
+
+
+def test_unassigned_rows_splits_each_scenario_into_its_two_groups():
+    results = pd.DataFrame(
+        {
+            "scenario": ["with routes", "without routes"],
+            "n_matched": [900, 800],
+            "n_unmatched": [100, 200],
+            "n_disadvantaged": [400, 400],
+            "unassigned_disadvantaged": [40, 150],
+        }
+    )
+
+    rows = sweep_main.unassigned_rows(results).set_index("series")
+
+    assert set(rows.index) == set(sweep_main.GROUP_COLOURS)
+    # Every unplaced student falls in exactly one group of their scenario.
+    counts = rows["unassigned"]
+    assert counts["disadvantaged, with routes"] == 40
+    assert counts["other, with routes"] == 60
+    assert counts["disadvantaged, without routes"] == 150
+    assert counts["other, without routes"] == 50
 
 
 # --------------------------------------------------------------------------

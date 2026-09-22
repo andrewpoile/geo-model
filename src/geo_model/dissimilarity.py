@@ -200,7 +200,9 @@ def score_sample(
 
     Returns:
         tuple[list[dict], list[dict], list[dict]]: One row per scenario, with
-        keys "scenario", "dissimilarity", "n_matched" and "n_unmatched"; one
+        keys "scenario", "dissimilarity", "n_matched", "n_unmatched",
+        "n_disadvantaged" (students drawn from a disadvantaged district) and
+        "unassigned_disadvantaged" (those of them left without a place); one
         row per (scenario, school), with keys "scenario", "school" (the
         establishment name), "disadvantaged" and "other" (students seated);
         and one row per (scenario, mode), with keys "scenario", "mode" and
@@ -228,6 +230,10 @@ def score_sample(
                 ),
                 "n_matched": int((matched_school >= 0).sum()),
                 "n_unmatched": int((matched_school < 0).sum()),
+                "n_disadvantaged": int(disadvantaged.sum()),
+                "unassigned_disadvantaged": int(
+                    (disadvantaged & (matched_school < 0)).sum()
+                ),
             }
         )
         group_a, group_b = school_intake(matched_school, disadvantaged, n_schools)
@@ -317,9 +323,9 @@ def run(n_seeds: int) -> pd.DataFrame:
         n_seeds (int): Number of student samples to draw.
 
     Returns:
-        pd.DataFrame: One row per (seed, scenario), with columns "seed",
-        "scenario", "dissimilarity", "n_matched" and "n_unmatched". Also
-        written to RESULTS_CSV.
+        pd.DataFrame: One row per (seed, scenario), with column "seed" ahead
+        of the scenario-row keys `score_sample` returns. Also written to
+        RESULTS_CSV.
     """
     areas = load_areas()
     _, secondary_schools = load_schools()

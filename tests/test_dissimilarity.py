@@ -80,6 +80,14 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
     assert rows["dissimilarity"].between(0, 1).all()
     assert (rows["n_matched"] + rows["n_unmatched"] == len(student_xy)).all()
 
+    # The disadvantaged group is the sample's, not the matching's, so it is
+    # the same in both scenarios, and those of it without a place are a
+    # subset of both the group and the unmatched.
+    assert rows["n_disadvantaged"].nunique() == 1
+    assert 0 < rows["n_disadvantaged"].iloc[0] < len(student_xy)
+    assert (rows["unassigned_disadvantaged"] <= rows["n_unmatched"]).all()
+    assert (rows["unassigned_disadvantaged"] <= rows["n_disadvantaged"]).all()
+
     # Every school of both scenarios has its intake counted, and the counts
     # add up to the students seated in that scenario.
     assert len(intake) == 2 * len(schools)
@@ -87,6 +95,15 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
     seated = intake.groupby("scenario")[["disadvantaged", "other"]].sum().sum(axis=1)
     pd.testing.assert_series_equal(
         seated, rows.set_index("scenario")["n_matched"], check_names=False
+    )
+
+    # Every disadvantaged student is either seated somewhere or unassigned.
+    placed = intake.groupby("scenario")["disadvantaged"].sum()
+    indexed = rows.set_index("scenario")
+    pd.testing.assert_series_equal(
+        placed + indexed["unassigned_disadvantaged"],
+        indexed["n_disadvantaged"],
+        check_names=False,
     )
 
     # Every seated student travels by exactly one expected mode, and only
