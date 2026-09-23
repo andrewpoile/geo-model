@@ -8,6 +8,7 @@ from geo_model.build_routes import route_network, save_routes
 from geo_model.load_data import load_areas, load_schools
 from geo_model.utils import (
     cohort_capacity,
+    disadvantaged_students,
     district_index,
     rank_bundles,
     sample_students,
@@ -17,13 +18,21 @@ SEED = 20260907
 OUTPUT_NPZ = Path("temp/prefprio.npz")
 
 # Share of the secondary preference ranking driven by Progress 8 rather than
-# distance. At 0.3 one Progress 8 point is worth roughly 1.4km of extra travel.
+# distance, for students outside the disadvantaged districts. At 0.3 one
+# Progress 8 point is worth roughly 1.4km of extra travel.
 PERFORMANCE_WEIGHT = 0.3
 
-# Share of the travel a route takes out of the ranking of the school it serves.
-# At 0.5 a routed school ranks as if it stood half as far away, so a route is
-# worth taking but does not put every distant school ahead of the local one.
+# Share of the travel a route takes out of the ranking of the school it serves,
+# for students outside the disadvantaged districts. At 0.5 a routed school ranks
+# as if it stood half as far away, so a route is worth taking but does not put
+# every distant school ahead of the local one.
 ROUTE_DISCOUNT = 0.5
+
+# The same two shares for students in the disadvantaged districts. They default
+# to the other students' own, so the population is homogeneous until a sweep
+# moves one group away from the other.
+DISADVANTAGED_PERFORMANCE_WEIGHT = PERFORMANCE_WEIGHT
+DISADVANTAGED_ROUTE_DISCOUNT = ROUTE_DISCOUNT
 
 
 def cohort_sizes(areas: pd.DataFrame, phase: str) -> np.ndarray:
@@ -49,16 +58,21 @@ def secondary_instance(
     areas: pd.DataFrame,
     secondary_schools: gpd.GeoDataFrame,
     routes: pd.DataFrame | None,
+    disadvantaged: np.ndarray,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
+    disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
+    disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Rank one secondary student sample into an SCT instance.
 
     Progress 8 weights the preferences, and routes are offered when a route
     set is given. Without one the instance is a plain school choice problem
     on the same students, the baseline the transport scheme is measured
-    against. The two weights default to the model's constants, and are taken
-    as arguments so a sweep can vary them without rebinding the module.
+    against. Disadvantaged students rank with their own pair of weights and
+    the rest with theirs. The weights default to the model's constants, and
+    are taken as arguments so a sweep can vary them without rebinding the
+    module.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -76,13 +90,23 @@ def secondary_instance(
         routes (pd.DataFrame | None): The route set, as returned by
         `route_network`, or None for an instance without routes.
 
+        disadvantaged (np.ndarray): Whether each student lives in a
+        disadvantaged district, as `disadvantaged_students` gives it.
+
         performance_weight (float, optional): Share of the preference ranking
-        driven by Progress 8 rather than travel, in [0, 1]. Defaults to
-        PERFORMANCE_WEIGHT.
+        driven by Progress 8 rather than travel, in [0, 1], for students who
+        are not disadvantaged. Defaults to PERFORMANCE_WEIGHT.
 
         route_discount (float, optional): Share of the travel a route takes
-        out of the ranking of the school it serves, in [0, 1]. Defaults to
-        ROUTE_DISCOUNT.
+        out of the ranking of the school it serves, in [0, 1], for students
+        who are not disadvantaged. Defaults to ROUTE_DISCOUNT.
+
+        disadvantaged_performance_weight (float, optional): As
+        `performance_weight`, for disadvantaged students. Defaults to
+        DISADVANTAGED_PERFORMANCE_WEIGHT.
+
+        disadvantaged_route_discount (float, optional): As `route_discount`,
+        for disadvantaged students. Defaults to DISADVANTAGED_ROUTE_DISCOUNT.
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: Student
@@ -105,8 +129,12 @@ def secondary_instance(
         route_district,
         route_school,
         school_scores=secondary_schools["P8MEA"].to_numpy(),
-        performance_weight=performance_weight,
-        route_discount=route_discount,
+        performance_weight=np.where(
+            disadvantaged, disadvantaged_performance_weight, performance_weight
+        ),
+        route_discount=np.where(
+            disadvantaged, disadvantaged_route_discount, route_discount
+        ),
     )
     return preferences, priorities, cohort_capacity(secondary_schools), route_capacities
 
@@ -164,6 +192,7 @@ def main() -> None:
         geo_soton,
         secondary_schools,
         secondary_routes,
+        disadvantaged_students(secondary_student_lsoa, geo_soton),
     )
 
     # The register publishes capacity across every year group a school teaches,

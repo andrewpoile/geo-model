@@ -10,6 +10,8 @@ import seaborn as sns
 from matplotlib.figure import Figure
 
 from geo_model.build_prefs import (
+    DISADVANTAGED_PERFORMANCE_WEIGHT,
+    DISADVANTAGED_ROUTE_DISCOUNT,
     PERFORMANCE_WEIGHT,
     ROUTE_DISCOUNT,
     SEED,
@@ -28,6 +30,7 @@ from geo_model.load_data import load_areas, load_nts_mode_shares, load_schools
 from geo_model.matching import fast_DAT
 from geo_model.utils import (
     CIRCUITY,
+    disadvantaged_students,
     dissimilarity_index,
     dissimilarity_terms,
     expected_modes,
@@ -51,30 +54,11 @@ class Settings:
     local_radius: float = LOCAL_RADIUS
     performance_weight: float = PERFORMANCE_WEIGHT
     route_discount: float = ROUTE_DISCOUNT
+    disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT
+    disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT
 
 
 DEFAULTS = Settings()
-
-
-def disadvantaged_students(
-    student_lsoa: np.ndarray, areas: pd.DataFrame, decile: int = DISADVANTAGED_DECILE
-) -> np.ndarray:
-    """Whether each student lives in a disadvantaged district.
-
-    Args:
-        student_lsoa (np.ndarray): Positional index into `areas` of the
-        district each student was sampled in.
-
-        areas (pd.DataFrame): Districts carrying an "IMD Decile" column, in
-        the order students were sampled from.
-
-        decile (int, optional): Districts at or below this IMD decile are
-        disadvantaged. Defaults to DISADVANTAGED_DECILE.
-
-    Returns:
-        np.ndarray: Boolean, one per student.
-    """
-    return areas["IMD Decile"].to_numpy()[student_lsoa] <= decile
 
 
 def student_samples(
@@ -106,8 +90,11 @@ def match_sample(
     areas: pd.DataFrame,
     secondary_schools: gpd.GeoDataFrame,
     routes: pd.DataFrame,
+    disadvantaged: np.ndarray,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
+    disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
+    disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
 ) -> Iterator[tuple[str, np.ndarray]]:
     """Match one student sample with and without routes.
 
@@ -128,11 +115,19 @@ def match_sample(
 
         routes (pd.DataFrame): The route set, as returned by `route_network`.
 
+        disadvantaged (np.ndarray): Passed to `secondary_instance`.
+
         performance_weight (float, optional): Passed to `secondary_instance`.
         Defaults to PERFORMANCE_WEIGHT.
 
         route_discount (float, optional): Passed to `secondary_instance`.
         Defaults to ROUTE_DISCOUNT.
+
+        disadvantaged_performance_weight (float, optional): Passed to
+        `secondary_instance`. Defaults to DISADVANTAGED_PERFORMANCE_WEIGHT.
+
+        disadvantaged_route_discount (float, optional): Passed to
+        `secondary_instance`. Defaults to DISADVANTAGED_ROUTE_DISCOUNT.
 
     Yields:
         tuple[str, np.ndarray]: The scenario, "with routes" then "without
@@ -145,8 +140,11 @@ def match_sample(
             areas,
             secondary_schools,
             route_set,
+            disadvantaged,
             performance_weight,
             route_discount,
+            disadvantaged_performance_weight,
+            disadvantaged_route_discount,
         )
         yield scenario, fast_DAT(*instance)
 
@@ -162,6 +160,8 @@ def score_sample(
     decile: int = DISADVANTAGED_DECILE,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
+    disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
+    disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
     circuity: float = CIRCUITY,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Match one student sample with and without routes and score both.
@@ -191,14 +191,20 @@ def score_sample(
         as returned by `load_nts_mode_shares`.
 
         decile (int, optional): Districts at or below this IMD decile are the
-        disadvantaged group the index measures. Defaults to
-        DISADVANTAGED_DECILE.
+        disadvantaged group the index measures and that ranks with its own
+        weights. Defaults to DISADVANTAGED_DECILE.
 
         performance_weight (float, optional): Passed to `secondary_instance`.
         Defaults to PERFORMANCE_WEIGHT.
 
         route_discount (float, optional): Passed to `secondary_instance`.
         Defaults to ROUTE_DISCOUNT.
+
+        disadvantaged_performance_weight (float, optional): Passed to
+        `secondary_instance`. Defaults to DISADVANTAGED_PERFORMANCE_WEIGHT.
+
+        disadvantaged_route_discount (float, optional): Passed to
+        `secondary_instance`. Defaults to DISADVANTAGED_ROUTE_DISCOUNT.
 
         circuity (float, optional): Passed to `expected_modes`. Defaults to
         CIRCUITY.
@@ -225,8 +231,11 @@ def score_sample(
         areas,
         secondary_schools,
         routes,
+        disadvantaged,
         performance_weight,
         route_discount,
+        disadvantaged_performance_weight,
+        disadvantaged_route_discount,
     ):
         matched_school = matching[:, 0]
         rows.append(
@@ -325,6 +334,8 @@ def score_settings(
             decile=settings.decile,
             performance_weight=settings.performance_weight,
             route_discount=settings.route_discount,
+            disadvantaged_performance_weight=settings.disadvantaged_performance_weight,
+            disadvantaged_route_discount=settings.disadvantaged_route_discount,
             circuity=circuity,
         )
         rows += [{"seed": seed, "n_routes": len(routes), **r} for r in scenario_rows]

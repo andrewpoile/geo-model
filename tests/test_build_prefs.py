@@ -102,7 +102,14 @@ def test_secondary_instance_ranks_nearest_first_without_performance_weight():
     )
 
     preferences, _, _, _ = bp.secondary_instance(
-        student_xy, student_lsoa, areas, schools, None, performance_weight=0.0
+        student_xy,
+        student_lsoa,
+        areas,
+        schools,
+        None,
+        bp.disadvantaged_students(student_lsoa, areas),
+        performance_weight=0.0,
+        disadvantaged_performance_weight=0.0,
     )
 
     school_xy = schools[["Easting", "Northing"]].to_numpy()
@@ -110,6 +117,49 @@ def test_secondary_instance_ranks_nearest_first_without_performance_weight():
         np.linalg.norm(student_xy[:, None] - school_xy[None], axis=2), axis=1
     )
     np.testing.assert_array_equal(preferences[:, 0, 0], nearest)
+
+
+@pytestmark_data
+def test_secondary_instance_ranks_each_group_on_its_own_weights():
+    areas = ld.load_areas()
+    _, schools = ld.load_schools()
+    student_xy, student_lsoa = bp.sample_students(
+        areas["Borders"],
+        areas["Centroids"],
+        bp.cohort_sizes(areas, "secondary"),
+        np.random.default_rng(0),
+    )
+    routes = br.route_network(
+        areas,
+        schools[["Easting", "Northing"]].to_numpy(),
+        schools["P8MEA"].to_numpy(),
+    )
+    disadvantaged = bp.disadvantaged_students(student_lsoa, areas)
+    assert disadvantaged.any() and not disadvantaged.all()
+
+    def instance(other, own):
+        return bp.secondary_instance(
+            student_xy,
+            student_lsoa,
+            areas,
+            schools,
+            routes,
+            disadvantaged,
+            *other,
+            *own,
+        )
+
+    mixed = instance((0.1, 0.2), (0.7, 0.9))
+    other = instance((0.1, 0.2), (0.1, 0.2))
+    own = instance((0.7, 0.9), (0.7, 0.9))
+
+    # The two settings rank the disadvantaged differently, so their rows show
+    # whose weights they were ranked on.
+    assert not np.array_equal(other[0][disadvantaged], own[0][disadvantaged])
+    np.testing.assert_array_equal(mixed[0][~disadvantaged], other[0][~disadvantaged])
+    np.testing.assert_array_equal(mixed[0][disadvantaged], own[0][disadvantaged])
+    # School priorities do not depend on how students weigh schools.
+    np.testing.assert_array_equal(mixed[1], other[1])
 
 
 @pytestmark_data

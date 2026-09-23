@@ -60,7 +60,15 @@ GRID = {
     "performance_weight": [
         replace(DEFAULTS, performance_weight=w / 10) for w in range(11)
     ],
-    "route_discount": [replace(DEFAULTS, route_discount=d / 10) for d in range(11)],
+    "disadvantaged_performance_weight": [
+        replace(DEFAULTS, disadvantaged_performance_weight=w / 10) for w in range(11)
+    ],
+    # Routes leave only the districts at or below the decile that makes a student
+    # disadvantaged, so no other student is offered one and their route discount
+    # is inert. Only the disadvantaged students' discount is swept.
+    "disadvantaged_route_discount": [
+        replace(DEFAULTS, disadvantaged_route_discount=d / 10) for d in range(11)
+    ],
 }
 
 AXIS_LABELS = {
@@ -69,8 +77,9 @@ AXIS_LABELS = {
     "capacity": "Route capacity (seats)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
     "local_radius": "Local performance radius (m)",
-    "performance_weight": "Performance weight",
-    "route_discount": "Route discount",
+    "performance_weight": "Performance weight, other students",
+    "disadvantaged_performance_weight": "Performance weight, disadvantaged students",
+    "disadvantaged_route_discount": "Route discount, disadvantaged students",
 }
 
 COLOURS = {"with routes": "#2a78d6", "without routes": "#52514e"}

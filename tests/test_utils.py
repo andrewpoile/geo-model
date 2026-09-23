@@ -4,12 +4,14 @@ import pandas as pd
 import pytest
 import shapely
 
+from geo_model.build_routes import DISADVANTAGED_DECILE
 from geo_model.load_data import NTS_BANDS
 from geo_model.utils import (
     MILE,
     MODES,
     _spread,
     cohort_capacity,
+    disadvantaged_students,
     dissimilarity_index,
     dissimilarity_terms,
     district_index,
@@ -226,6 +228,27 @@ def test_rank_bundles_full_performance_weight_ranks_on_score_alone():
     np.testing.assert_array_equal(preferences[:, :, 0], [[1, 2, 0], [1, 2, 0]])
 
 
+def test_rank_bundles_ranks_each_student_on_its_own_weights():
+    scores = np.array([0.0, 1.0])
+    mixed, _ = rank_two_districts(
+        school_scores=scores,
+        performance_weight=np.array([0.0, 0.3]),
+        route_discount=np.array([0.0, 1.0]),
+    )
+    first, _ = rank_two_districts(
+        school_scores=scores, performance_weight=0.0, route_discount=0.0
+    )
+    second, _ = rank_two_districts(
+        school_scores=scores, performance_weight=0.3, route_discount=1.0
+    )
+
+    # The two settings rank the second student differently, so its row shows
+    # whose weights it was ranked on.
+    assert not np.array_equal(first[1], second[1])
+    np.testing.assert_array_equal(mixed[0], first[0])
+    np.testing.assert_array_equal(mixed[1], second[1])
+
+
 def test_rank_bundles_noise_perturbs_preferences_but_not_priorities():
     rng = np.random.default_rng(3)
     student_xy = rng.normal(size=(40, 2)) * 1000
@@ -264,6 +287,9 @@ def test_rank_bundles_noise_perturbs_preferences_but_not_priorities():
         ({"performance_weight": -0.1}, "performance_weight must lie"),
         ({"route_discount": 2.0}, "route_discount must lie"),
         ({"route_discount": -1.0}, "route_discount must lie"),
+        ({"performance_weight": np.array([0.2, 1.5])}, "performance_weight must lie"),
+        ({"route_discount": np.array([-0.1, 0.5])}, "route_discount must lie"),
+        ({"route_discount": np.array([0.1, 0.2, 0.3])}, "requested shape"),
         ({"performance_weight": 0.5}, "school_scores is required"),
         (
             {"performance_weight": 0.5, "school_scores": np.array([1.0, 2.0, 3.0])},
@@ -411,6 +437,30 @@ def test_cohort_capacity_rejects_a_cohort_of_less_than_one_seat():
     schools = make_schools([3.0], [11.0], [18.0], ["Tiny"])
     with pytest.raises(ValueError, match="fewer than one seat"):
         cohort_capacity(schools)
+
+
+# --------------------------------------------------------------------------
+# disadvantaged_students
+# --------------------------------------------------------------------------
+
+
+def test_disadvantaged_students_labels_each_student_by_its_own_district():
+    areas = pd.DataFrame({"IMD Decile": [1, 5, 3]})
+    student_lsoa = np.array([0, 1, 1, 2, 0])
+
+    labels = disadvantaged_students(student_lsoa, areas, decile=3)
+
+    np.testing.assert_array_equal(labels, [True, False, False, True, True])
+
+
+def test_disadvantaged_students_defaults_to_the_route_decile():
+    areas = pd.DataFrame(
+        {"IMD Decile": [DISADVANTAGED_DECILE, DISADVANTAGED_DECILE + 1]}
+    )
+
+    np.testing.assert_array_equal(
+        disadvantaged_students(np.array([0, 1]), areas), [True, False]
+    )
 
 
 # --------------------------------------------------------------------------

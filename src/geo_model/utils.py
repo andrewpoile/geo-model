@@ -5,6 +5,7 @@ from numpy.typing import ArrayLike
 from scipy.spatial import distance as spdist
 from shapely.geometry.base import BaseGeometry
 
+from geo_model.build_routes import DISADVANTAGED_DECILE
 from geo_model.load_data import NTS_BANDS, NTS_MODES
 
 MILE = 1609.344  # metres
@@ -137,8 +138,8 @@ def rank_bundles(
     route_district: np.ndarray,
     route_school: np.ndarray,
     school_scores: np.ndarray | None = None,
-    performance_weight: float = 0.0,
-    route_discount: float = 0.0,
+    performance_weight: ArrayLike = 0.0,
+    route_discount: ArrayLike = 0.0,
     noise_scale: float = 0.0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -155,10 +156,11 @@ def rank_bundles(
 
     Distances and scores are each divided by their own standard deviation before
     being combined, so `performance_weight` is a unit-free share rather than a
-    metres-per-score-point rate. Bundle cost is
+    metres-per-score-point rate. The cost of a bundle to student i is
 
-        (1 - w) * (1 - discount) * distance / sd(distance) - w * score / sd(score)
+        (1 - w_i) * (1 - d_i) * distance / sd(distance) - w_i * score / sd(score)
 
+    with w_i and d_i the student's own performance weight and route discount,
     ranked ascending, so nearer and higher-scoring schools come first. The
     discount scales the travel term alone rather than the whole cost, which runs
     negative for a school scoring above average and would turn a route into a
@@ -194,15 +196,17 @@ def rank_bundles(
         school, aligned with `school_xy`, higher being better. Required when
         `performance_weight` > 0. Defaults to None.
 
-        performance_weight (float, optional): Share of the preference ranking
-        driven by performance rather than travel, in [0, 1]. 0 gives
-        nearest-first ordering, 1 ranks on performance alone. School priorities
-        are unaffected either way. Defaults to 0.0.
+        performance_weight (ArrayLike, optional): Share of the preference
+        ranking driven by performance rather than travel, in [0, 1], one for
+        every student or one per student. 0 gives nearest-first ordering, 1
+        ranks on performance alone. School priorities are unaffected either
+        way. Defaults to 0.0.
 
-        route_discount (float, optional): Share of the travel a route takes out
-        of the ranking of the school it serves, in [0, 1]. 0 leaves a bundle
-        tied with the same school without a route, 1 ranks it as if the school
-        were next door. School priorities are unaffected. Defaults to 0.0.
+        route_discount (ArrayLike, optional): Share of the travel a route
+        takes out of the ranking of the school it serves, in [0, 1], one for
+        every student or one per student. 0 leaves a bundle tied with the
+        same school without a route, 1 ranks it as if the school were next
+        door. School priorities are unaffected. Defaults to 0.0.
 
         noise_scale (float, optional): Standard deviation of Gaussian noise
         added to the combined preference cost, measured in units of that cost
@@ -222,15 +226,26 @@ def rank_bundles(
         (student, route) bundle. Routeless bundles sit last on the route axis,
         where the mechanism's index of -1 lands.
     """
-    if not 0.0 <= performance_weight <= 1.0:
-        raise ValueError(
-            f"performance_weight must lie in [0, 1], got {performance_weight}."
-        )
-    if not 0.0 <= route_discount <= 1.0:
-        raise ValueError(f"route_discount must lie in [0, 1], got {route_discount}.")
-
     n_students = len(student_xy)
     n_schools = len(school_xy)
+    # A scalar is every student's value; an array must hold one per student.
+    performance_weight = np.broadcast_to(
+        np.asarray(performance_weight, dtype=float), (n_students,)
+    )
+    route_discount = np.broadcast_to(
+        np.asarray(route_discount, dtype=float), (n_students,)
+    )
+    if not ((0.0 <= performance_weight) & (performance_weight <= 1.0)).all():
+        raise ValueError(
+            f"performance_weight must lie in [0, 1], got values from "
+            f"{performance_weight.min()} to {performance_weight.max()}."
+        )
+    if not ((0.0 <= route_discount) & (route_discount <= 1.0)).all():
+        raise ValueError(
+            f"route_discount must lie in [0, 1], got values from "
+            f"{route_discount.min()} to {route_discount.max()}."
+        )
+
     student_district = np.asarray(student_district, dtype=np.int64)
     school_district = np.asarray(school_district, dtype=np.int64)
     route_district = np.asarray(route_district, dtype=np.int64)
@@ -258,10 +273,12 @@ def rank_bundles(
         )
 
     distances = spdist.cdist(student_xy, school_xy)
-    travel = (1 - performance_weight) * distances / _spread(distances, "Distances")
-    merit = np.zeros(n_schools)
+    travel = (
+        (1 - performance_weight)[:, None] * distances / _spread(distances, "Distances")
+    )
+    merit = np.zeros((n_students, n_schools))
 
-    if performance_weight > 0:
+    if (performance_weight > 0).any():
         if school_scores is None:
             raise ValueError("school_scores is required when performance_weight > 0.")
         scores = np.asarray(school_scores, dtype=float)
@@ -272,7 +289,7 @@ def rank_bundles(
             )
         if not np.isfinite(scores).all():
             raise ValueError("school_scores holds non-finite values.")
-        merit = -performance_weight * scores / _spread(scores, "School scores")
+        merit = -performance_weight[:, None] * scores / _spread(scores, "School scores")
 
     noise_rng = (rng or np.random.default_rng()) if noise_scale > 0 else None
 
@@ -291,9 +308,9 @@ def rank_bundles(
         options = np.vstack((routeless, np.column_stack((schools, routes))))
         cost = np.hstack(
             (
-                travel[students] + merit,
-                (1 - route_discount) * travel[np.ix_(students, schools)]
-                + merit[schools],
+                travel[students] + merit[students],
+                (1 - route_discount[students, None]) * travel[np.ix_(students, schools)]
+                + merit[np.ix_(students, schools)],
             )
         )
         if noise_rng is not None:
@@ -413,6 +430,27 @@ def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
             + ", ".join(schools.loc[capacity < 1, "EstablishmentName"])
         )
     return capacity.astype(np.int32)
+
+
+def disadvantaged_students(
+    student_lsoa: np.ndarray, areas: pd.DataFrame, decile: int = DISADVANTAGED_DECILE
+) -> np.ndarray:
+    """Whether each student lives in a disadvantaged district.
+
+    Args:
+        student_lsoa (np.ndarray): Positional index into `areas` of the
+        district each student was sampled in.
+
+        areas (pd.DataFrame): Districts carrying an "IMD Decile" column, in
+        the order students were sampled from.
+
+        decile (int, optional): Districts at or below this IMD decile are
+        disadvantaged. Defaults to DISADVANTAGED_DECILE.
+
+    Returns:
+        np.ndarray: Boolean, one per student.
+    """
+    return areas["IMD Decile"].to_numpy()[student_lsoa] <= decile
 
 
 def school_intake(

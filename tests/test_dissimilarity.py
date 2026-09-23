@@ -12,30 +12,6 @@ DATA = ld.POPULATION_XLSX.parent.parent
 
 
 # --------------------------------------------------------------------------
-# disadvantaged_students
-# --------------------------------------------------------------------------
-
-
-def test_disadvantaged_students_labels_each_student_by_its_own_district():
-    areas = pd.DataFrame({"IMD Decile": [1, 5, 3]})
-    student_lsoa = np.array([0, 1, 1, 2, 0])
-
-    labels = ds.disadvantaged_students(student_lsoa, areas, decile=3)
-
-    np.testing.assert_array_equal(labels, [True, False, False, True, True])
-
-
-def test_disadvantaged_students_defaults_to_the_route_decile():
-    areas = pd.DataFrame(
-        {"IMD Decile": [br.DISADVANTAGED_DECILE, br.DISADVANTAGED_DECILE + 1]}
-    )
-
-    np.testing.assert_array_equal(
-        ds.disadvantaged_students(np.array([0, 1]), areas), [True, False]
-    )
-
-
-# --------------------------------------------------------------------------
 # student_samples and score_sample: against the real data folder
 # --------------------------------------------------------------------------
 

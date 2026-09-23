@@ -3,7 +3,7 @@ The simulation uses real data found in "C:\Users\aejp1u19\geo-model\data."
 
 load_data.py reads in the geospacial and statistical data from the data folder and merges them into dataframes.
 
-build_prefs.py samples points (students) from a bivariate normal distribution centred on the population centroids for each LSOA and truncated by the LSOA boundary. It uses the distance between students and schools to build their preferences and priorities, respectively.
+build_prefs.py samples points (students) from a bivariate normal distribution centred on the population centroids for each LSOA and truncated by the LSOA boundary. It uses the distance between students and schools to build their preferences and priorities, respectively. Students from disadvantaged districts rank with their own performance weight and route discount.
 
 matching.py contains the Deferred Acceptance with Transport (DAT) matching mechanism. It takes student preferences, school priorities, school capacities, and route capacities as input and outputs a stable matching.
 matching.md contains more information relevant to the matching paradigm.
