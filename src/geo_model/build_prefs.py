@@ -166,6 +166,8 @@ def main() -> None:
         geo_soton,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
         secondary_schools["P8MEA"].to_numpy(),
+        secondary_schools["PAN"].to_numpy(),
+        cohort_sizes(geo_soton, "secondary"),
     )
     save_routes(secondary_routes)
 

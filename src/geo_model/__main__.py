@@ -14,6 +14,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
 from geo_model.build_prefs import cohort_sizes
+from geo_model.build_routes import ROUND_UP_SEATS
 from geo_model.dissimilarity import (
     DEFAULTS,
     N_SEEDS,
@@ -44,8 +45,13 @@ GRID = {
     "min_distance": [
         replace(DEFAULTS, min_distance=m) for m in (0, 1609, 3218, 4828, 6437, 8047)
     ],
-    # The largest disadvantaged cohort is 40 students, so 40 seats never bind.
-    "capacity": [replace(DEFAULTS, capacity=c) for c in (1, 2, 5, 10, 20, 30, 40)],
+    # 1 is the fair share of the PAN. The smallest PAN is 120 and the city's
+    # cohort 2918, so from 2918 / 120 = 24.3 every route holds its district's
+    # whole cohort and no route capacity binds.
+    "capacity_scale": [
+        replace(DEFAULTS, capacity_scale=k)
+        for k in (1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 25.0)
+    ],
     # P8MEA runs from -0.99 to 0.82 over the 12 secondary schools. At -0.72 or
     # below every disadvantaged district has a school above the threshold within
     # the radius and the route set empties, so the grid starts at -0.5; above
@@ -74,7 +80,7 @@ GRID = {
 AXIS_LABELS = {
     "decile": "Disadvantaged at or below IMD decile",
     "min_distance": "Minimum route distance (m)",
-    "capacity": "Route capacity (seats)",
+    "capacity_scale": "Route capacity scale (× fair share of PAN)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
     "local_radius": "Local performance radius (m)",
     "performance_weight": "Performance weight, other students",
@@ -126,6 +132,7 @@ def sweep(
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
     workers: int = 1,
+    round_up: bool = ROUND_UP_SEATS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score every cell of GRID on the same samples.
 
@@ -154,6 +161,9 @@ def sweep(
         3x faster, and 16 ran out of memory. Threads were slower than one
         process. Defaults to 1, which scores in this process.
 
+        round_up (bool, optional): Passed to `score_settings`. Defaults to
+        ROUND_UP_SEATS.
+
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: The scenario rows,
         one per (parameter, value, seed, scenario), the school rows, one per
@@ -170,6 +180,7 @@ def sweep(
         secondary_schools=secondary_schools,
         shares=shares,
         circuity=circuity,
+        round_up=round_up,
     )
     if workers == 1:
         scored = [score(settings) for _, settings in cells]
@@ -698,6 +709,13 @@ def main() -> None:
         help="road distance per straight-line metre, applied before banding",
     )
     parser.add_argument(
+        "--round-up-seats",
+        action=argparse.BooleanOptionalAction,
+        default=ROUND_UP_SEATS,
+        help="round route seats up, so every route keeps one, rather than to "
+        "the nearest seat, which leaves a route rounding to none unbuilt",
+    )
+    parser.add_argument(
         "--intake",
         choices=list(INTAKE_MEASURES),
         default="dissimilarity",
@@ -712,7 +730,13 @@ def main() -> None:
     shares = load_nts_mode_shares(args.years)
 
     results, schools, modes = sweep(
-        samples, areas, secondary_schools, shares, args.circuity, args.workers
+        samples,
+        areas,
+        secondary_schools,
+        shares,
+        args.circuity,
+        args.workers,
+        args.round_up_seats,
     )
     summary = results.pivot_table(
         index=["parameter", "value"],

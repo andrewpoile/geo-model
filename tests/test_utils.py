@@ -645,7 +645,7 @@ def test_expected_modes_counts_routed_routeless_and_drops_unseated():
 def test_mode_change_subtracts_the_unrouted_count_within_every_key():
     results = pd.DataFrame(
         {
-            "parameter": ["capacity"] * 4,
+            "parameter": ["capacity_scale"] * 4,
             "value": [1, 1, 1, 1],
             "seed": [0, 0, 0, 0],
             "scenario": ["with routes", "without routes"] * 2,

@@ -23,7 +23,8 @@ from geo_model.build_routes import (
     LOCAL_RADIUS,
     MAX_LOCAL_P8,
     MIN_ROUTE_DISTANCE,
-    ROUTE_CAPACITY,
+    ROUND_UP_SEATS,
+    ROUTE_CAPACITY_SCALE,
     route_network,
 )
 from geo_model.load_data import load_areas, load_nts_mode_shares, load_schools
@@ -49,7 +50,7 @@ class Settings:
 
     decile: int = DISADVANTAGED_DECILE
     min_distance: float = MIN_ROUTE_DISTANCE
-    capacity: int = ROUTE_CAPACITY
+    capacity_scale: float = ROUTE_CAPACITY_SCALE
     max_local_p8: float = MAX_LOCAL_P8
     local_radius: float = LOCAL_RADIUS
     performance_weight: float = PERFORMANCE_WEIGHT
@@ -283,6 +284,7 @@ def score_settings(
     secondary_schools: gpd.GeoDataFrame,
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
+    round_up: bool = ROUND_UP_SEATS,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Score every sample at one setting of the parameters.
 
@@ -306,6 +308,9 @@ def score_settings(
         circuity (float, optional): Passed to `score_sample`. Defaults to
         CIRCUITY.
 
+        round_up (bool, optional): Passed to `route_network`. Defaults to
+        ROUND_UP_SEATS.
+
     Returns:
         tuple[list[dict], list[dict], list[dict]]: The scenario, school and
         mode rows `score_sample` returns for every sample, each tagged with
@@ -316,11 +321,14 @@ def score_settings(
         areas,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
         secondary_schools["P8MEA"].to_numpy(),
+        secondary_schools["PAN"].to_numpy(),
+        cohort_sizes(areas, "secondary"),
         decile=settings.decile,
         min_distance=settings.min_distance,
-        capacity=settings.capacity,
+        capacity_scale=settings.capacity_scale,
         max_local_p8=settings.max_local_p8,
         local_radius=settings.local_radius,
+        round_up=round_up,
     )
     rows, school_rows, mode_rows = [], [], []
     for seed, (student_xy, student_lsoa) in enumerate(samples):
@@ -364,6 +372,8 @@ def run(n_seeds: int) -> pd.DataFrame:
         areas,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
         secondary_schools["P8MEA"].to_numpy(),
+        secondary_schools["PAN"].to_numpy(),
+        sizes,
     )
     shares = load_nts_mode_shares()
 

@@ -44,9 +44,9 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
         sweep_main,
         "GRID",
         {
-            "capacity": [
-                replace(sweep_main.DEFAULTS, capacity=1),
+            "capacity_scale": [
                 sweep_main.DEFAULTS,
+                replace(sweep_main.DEFAULTS, capacity_scale=25.0),
             ],
             "decile": [sweep_main.DEFAULTS],
         },
@@ -96,11 +96,13 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     unrouted = results[results["scenario"] == "without routes"]
     assert unrouted["dissimilarity"].nunique() == 1
     routed = results[results["scenario"] == "with routes"]
-    assert routed.groupby("parameter")["dissimilarity"].nunique()["capacity"] == 2
+    scales = routed.groupby("parameter")["dissimilarity"].nunique()
+    assert scales["capacity_scale"] == 2
     # More seats on every route carry more students by route.
     riders = modes[(modes["scenario"] == "with routes") & (modes["mode"] == "route")]
-    riders = riders[riders["parameter"] == "capacity"].set_index("value")["students"]
-    assert riders[1] < riders[sweep_main.DEFAULTS.capacity]
+    riders = riders[riders["parameter"] == "capacity_scale"]
+    riders = riders.set_index("value")["students"]
+    assert riders[sweep_main.DEFAULTS.capacity_scale] < riders[25.0]
 
 
 # --------------------------------------------------------------------------

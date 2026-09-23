@@ -63,6 +63,8 @@ def run(
         areas,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
         secondary_schools["P8MEA"].to_numpy(),
+        secondary_schools["PAN"].to_numpy(),
+        sizes,
     )
     shares = load_nts_mode_shares(years)
 

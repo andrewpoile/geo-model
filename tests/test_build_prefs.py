@@ -133,6 +133,8 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights():
         areas,
         schools[["Easting", "Northing"]].to_numpy(),
         schools["P8MEA"].to_numpy(),
+        schools["PAN"].to_numpy(),
+        bp.cohort_sizes(areas, "secondary"),
     )
     disadvantaged = bp.disadvantaged_students(student_lsoa, areas)
     assert disadvantaged.any() and not disadvantaged.all()

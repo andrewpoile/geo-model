@@ -15,6 +15,9 @@ SCHOOL_XY = np.array([[0.0, 0.0], [10_000.0, 0.0]])
 # passes every district unless a test raises a score itself.
 SCHOOL_P8 = np.array([-0.5, -0.5])
 
+# Seats a route would hold between every pair, for `build_routes` directly.
+SEATS = np.full((2, 2), 30, dtype=np.int32)
+
 
 def make_areas(deciles, spacing=10_000.0, index=None):
     """Districts on a line, one every `spacing` metres, in the given deciles."""
@@ -28,6 +31,16 @@ def make_areas(deciles, spacing=10_000.0, index=None):
         index=index,
     )
     return frame.rename_geometry("Centroids")
+
+
+def network(areas, school_xy=SCHOOL_XY, school_scores=SCHOOL_P8, **kwargs):
+    """`route_network` with every school admitting 100 and every district
+    holding 10 students, unless a test passes its own."""
+    school_pan = kwargs.pop("school_pan", np.full(len(school_xy), 100))
+    district_cohort = kwargs.pop("district_cohort", np.full(len(areas), 10))
+    return br.route_network(
+        areas, school_xy, school_scores, school_pan, district_cohort, **kwargs
+    )
 
 
 # --------------------------------------------------------------------------
@@ -51,7 +64,7 @@ def test_centroid_xy_reads_the_population_centroid_of_every_district():
 def test_build_routes_joins_every_district_to_the_schools_beyond_the_threshold():
     # Distances are district 0: [0, 10000] and district 1: [10000, 0].
     districts = make_areas([1, 1])
-    routes = br.build_routes(districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, 30)
+    routes = br.build_routes(districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, SEATS)
 
     pd.testing.assert_frame_equal(
         routes,
@@ -71,7 +84,7 @@ def test_build_routes_keeps_the_district_frame_index_as_district_idx():
     # The frame handed over is a disadvantaged subset, so its index labels are
     # positions in the full area frame and must survive unrenumbered.
     districts = make_areas([1, 1], index=[4, 7])
-    routes = br.build_routes(districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, 30)
+    routes = br.build_routes(districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, SEATS)
 
     np.testing.assert_array_equal(routes["district_idx"], [4, 7])
     np.testing.assert_array_equal(routes["route_id"], [0, 1])  # contiguous from 0
@@ -79,7 +92,7 @@ def test_build_routes_keeps_the_district_frame_index_as_district_idx():
 
 def test_build_routes_returns_nothing_when_every_school_is_within_reach():
     districts = make_areas([1, 1])
-    routes = br.build_routes(districts, SCHOOL_XY, 50_000, 30)
+    routes = br.build_routes(districts, SCHOOL_XY, 50_000, SEATS)
     assert routes.empty
 
 
@@ -88,9 +101,24 @@ def test_build_routes_measures_from_the_population_centroid():
     # not, so the cut is made on the centroid distance and nothing else.
     districts = make_areas([1, 1], spacing=1.0)
     districts["Centroids"] = gpd.points_from_xy([3_000.0, 4_000.0], [0.0, 0.0])
-    routes = br.build_routes(districts, np.array([[0.0, 0.0]]), 3218, 30)
+    routes = br.build_routes(districts, np.array([[0.0, 0.0]]), 3218, SEATS[:, :1])
 
     np.testing.assert_array_equal(routes["district_idx"], [1])
+
+
+def test_build_routes_leaves_a_pair_holding_no_seat_unrouted(capsys):
+    # Both pairs lie beyond the threshold, but the first holds no seat, so only
+    # the second is routed and route_id still runs contiguously from 0.
+    districts = make_areas([1, 1])
+    seats = np.array([[30, 0], [30, 30]], dtype=np.int32)
+    routes = br.build_routes(districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, seats)
+
+    np.testing.assert_array_equal(routes["district_idx"], [1])
+    np.testing.assert_array_equal(routes["school_idx"], [0])
+    np.testing.assert_array_equal(routes["route_id"], [0])
+    assert (
+        "1 of the 2 routes beyond 3218m would hold no seat" in capsys.readouterr().out
+    )
 
 
 # --------------------------------------------------------------------------
@@ -100,13 +128,12 @@ def test_build_routes_measures_from_the_population_centroid():
 
 def test_route_network_routes_only_the_disadvantaged_districts(capsys):
     areas = make_areas([5, 2, 1])
-    routes = br.route_network(areas, SCHOOL_XY, SCHOOL_P8, decile=3, capacity=30)
+    routes = network(areas, decile=3)
 
     # District 0 is not disadvantaged. District 1 sits on the second school and
     # is routed to the first; district 2 is beyond both.
     np.testing.assert_array_equal(routes["district_idx"], [1, 2, 2])
     np.testing.assert_array_equal(routes["school_idx"], [0, 0, 1])
-    assert (routes["capacity"] == 30).all()
     assert "2 disadvantaged districts at IMD decile 3" in capsys.readouterr().out
 
 
@@ -114,7 +141,7 @@ def test_route_network_names_a_district_left_without_any_route(capsys):
     # District 0 sits on top of the only school, so nothing is far enough away.
     areas = make_areas([1, 1], spacing=1.0)
     areas["Centroids"] = gpd.points_from_xy([0.0, 100_000.0], [0.0, 0.0])
-    routes = br.route_network(areas, np.array([[0.0, 0.0]]), SCHOOL_P8[:1], decile=3)
+    routes = network(areas, np.array([[0.0, 0.0]]), SCHOOL_P8[:1], decile=3)
 
     assert 0 not in set(routes["district_idx"])
     assert "E00000000" in capsys.readouterr().out
@@ -122,9 +149,11 @@ def test_route_network_names_a_district_left_without_any_route(capsys):
 
 def test_route_network_uses_the_module_defaults():
     areas = make_areas([1, 1, 1])
-    routes = br.route_network(areas, SCHOOL_XY, SCHOOL_P8)
+    routes = network(areas)
 
-    assert (routes["capacity"] == br.ROUTE_CAPACITY).all()
+    # At the default scale a route holds that multiple of its fair share,
+    # rounded to the nearest seat.
+    assert (routes["capacity"] == 167).all()  # rint(5 * 100 * 10 / 30)
     # 3218m is the threshold, so the school a district sits on is never routed.
     assert not ((routes["district_idx"] == 1) & (routes["school_idx"] == 1)).any()
     # Neither school scores above the default P8, so every district is eligible.
@@ -134,7 +163,7 @@ def test_route_network_uses_the_module_defaults():
 @pytest.mark.parametrize("decile", [0, 11, -1])
 def test_route_network_rejects_a_decile_outside_one_to_ten(decile):
     with pytest.raises(ValueError, match="must be an IMD decile"):
-        br.route_network(make_areas([1, 2]), SCHOOL_XY, SCHOOL_P8, decile=decile)
+        network(make_areas([1, 2]), decile=decile)
 
 
 def test_route_network_rejects_an_area_frame_that_is_not_positionally_indexed():
@@ -142,24 +171,24 @@ def test_route_network_rejects_an_area_frame_that_is_not_positionally_indexed():
     # relabelled frame would silently misalign district_idx.
     areas = make_areas([1, 1], index=[3, 9])
     with pytest.raises(ValueError, match="not positionally indexed"):
-        br.route_network(areas, SCHOOL_XY, SCHOOL_P8)
+        network(areas)
 
 
 def test_route_network_rejects_an_instance_with_no_disadvantaged_district():
     with pytest.raises(ValueError, match="No LSOA sits at or below"):
-        br.route_network(make_areas([8, 9, 10]), SCHOOL_XY, SCHOOL_P8, decile=3)
+        network(make_areas([8, 9, 10]), decile=3)
 
 
 def test_route_network_rejects_an_empty_route_set():
     with pytest.raises(ValueError, match="so the route set is"):
-        br.route_network(make_areas([1, 1]), SCHOOL_XY, SCHOOL_P8, min_distance=50_000)
+        network(make_areas([1, 1]), min_distance=50_000)
 
 
 def test_route_network_drops_a_district_a_high_scoring_school_already_serves():
     # District 0 sits on the first school, which scores above the threshold, so
     # it is served already. The others are 10km and 20km off and stay eligible.
     areas = make_areas([1, 1, 1])
-    routes = br.route_network(areas, SCHOOL_XY, np.array([1.0, -0.5]))
+    routes = network(areas, school_scores=np.array([1.0, -0.5]))
 
     assert set(routes["district_idx"]) == {1, 2}
 
@@ -168,7 +197,7 @@ def test_route_network_keeps_a_district_whose_local_school_is_not_above_the_thre
     # A school scoring exactly the threshold is not above it, so it serves
     # nobody and district 0 keeps its routes.
     areas = make_areas([1, 1, 1])
-    routes = br.route_network(areas, SCHOOL_XY, np.array([0.0, -0.5]), max_local_p8=0.0)
+    routes = network(areas, school_scores=np.array([0.0, -0.5]), max_local_p8=0.0)
 
     assert 0 in set(routes["district_idx"])
 
@@ -178,24 +207,80 @@ def test_route_network_takes_a_school_on_the_radius_as_local():
     # so the cut is made on the centroid distance and nothing else.
     areas = make_areas([1, 1], spacing=1.0)
     areas["Centroids"] = gpd.points_from_xy([3_218.0, 3_219.0], [0.0, 0.0])
-    routes = br.route_network(
-        areas, np.array([[0.0, 0.0]]), np.array([1.0]), local_radius=3218
-    )
+    routes = network(areas, np.array([[0.0, 0.0]]), np.array([1.0]), local_radius=3218)
 
     assert set(routes["district_idx"]) == {1}
 
 
 def test_route_network_rejects_an_instance_with_no_route_eligible_district():
     with pytest.raises(ValueError, match="no district is route-eligible"):
-        br.route_network(
-            make_areas([1, 1]), SCHOOL_XY, np.array([1.0, 1.0]), local_radius=50_000
+        network(
+            make_areas([1, 1]), school_scores=np.array([1.0, 1.0]), local_radius=50_000
         )
 
 
 def test_route_network_rejects_school_scores_that_do_not_align_with_the_coordinates():
     # Misaligned scores would gate on the wrong schools, plausibly and silently.
     with pytest.raises(ValueError, match="school_scores must align"):
-        br.route_network(make_areas([1, 1]), SCHOOL_XY, np.array([0.0]))
+        network(make_areas([1, 1]), school_scores=np.array([0.0]))
+
+
+def test_route_network_rejects_admission_numbers_that_do_not_align_with_the_schools():
+    with pytest.raises(ValueError, match="school_pan must align"):
+        network(make_areas([1, 1]), school_pan=np.array([100]))
+
+
+def test_route_network_rejects_cohorts_that_do_not_align_with_the_areas():
+    with pytest.raises(ValueError, match="district_cohort must align"):
+        network(make_areas([1, 1]), district_cohort=np.array([10]))
+
+
+@pytest.mark.parametrize("scale", [0.0, -1.0])
+def test_route_network_rejects_a_capacity_scale_that_is_not_positive(scale):
+    with pytest.raises(ValueError, match="capacity_scale must be positive"):
+        network(make_areas([1, 1]), capacity_scale=scale)
+
+
+def test_route_network_seats_every_route_on_its_fair_share_of_the_pan():
+    # 100 students in the city, district 2 is not disadvantaged, and the
+    # schools admit 100 and 200: a route holds k * PAN * n_d / 100 seats.
+    areas = make_areas([1, 1, 5])
+    routes = network(
+        areas,
+        school_pan=np.array([100, 200]),
+        district_cohort=np.array([20, 30, 50]),
+        capacity_scale=1.5,
+    )
+
+    # District 0 sits on school 0 and district 1 on school 1.
+    np.testing.assert_array_equal(routes["district_idx"], [0, 1])
+    np.testing.assert_array_equal(routes["school_idx"], [1, 0])
+    np.testing.assert_array_equal(routes["capacity"], [60, 45])  # 1.5*200*20/100
+
+
+def test_route_network_drops_a_route_rounding_to_no_seat_unless_rounding_up(capsys):
+    # District 0 takes 0.4 of a seat at school 1 and district 1 takes 1.2 at
+    # school 0, so rounding to the nearest seat leaves district 0 unrouted.
+    areas = make_areas([1, 1, 5])
+    kwargs = {
+        "school_pan": np.array([12, 4]),
+        "district_cohort": np.array([10, 10, 80]),
+        "capacity_scale": 1.0,
+    }
+
+    nearest = network(areas, **kwargs)
+    assert "No secondary school beyond 3218m holds a seat" in capsys.readouterr().out
+    np.testing.assert_array_equal(nearest["district_idx"], [1])
+    np.testing.assert_array_equal(nearest["capacity"], [1])
+
+    up = network(areas, round_up=True, **kwargs)
+    np.testing.assert_array_equal(up["district_idx"], [0, 1])
+    np.testing.assert_array_equal(up["capacity"], [1, 2])
+
+
+def test_route_network_rejects_a_route_set_holding_no_seat():
+    with pytest.raises(ValueError, match="so the route set is"):
+        network(make_areas([1, 1, 9]), district_cohort=np.array([1, 1, 1_000_000]))
 
 
 def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrouted(
@@ -206,11 +291,11 @@ def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrou
     # confuse the two conditions.
     areas = make_areas([1, 1], spacing=1.0)
     areas["Centroids"] = gpd.points_from_xy([0.0, 100_000.0], [0.0, 0.0])
-    routes = br.route_network(areas, np.array([[0.0, 0.0]]), np.array([1.0]))
+    routes = network(areas, np.array([[0.0, 0.0]]), np.array([1.0]))
 
     assert set(routes["district_idx"]) == {1}
     out = capsys.readouterr().out
-    assert "Every secondary school is within" not in out
+    assert "No secondary school beyond" not in out
     assert "2 disadvantaged districts at IMD decile 3 or below, 1 of them" in out
 
 
@@ -222,7 +307,9 @@ def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrou
 def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path, monkeypatch):
     monkeypatch.setattr(br, "ROUTES_CSV", tmp_path / "out" / "routes.csv")
     monkeypatch.setattr(br, "ROUTES_NPZ", tmp_path / "out" / "routes.npz")
-    routes = br.build_routes(make_areas([1, 1]), SCHOOL_XY, br.MIN_ROUTE_DISTANCE, 30)
+    routes = br.build_routes(
+        make_areas([1, 1]), SCHOOL_XY, br.MIN_ROUTE_DISTANCE, SEATS
+    )
 
     br.save_routes(routes)
 

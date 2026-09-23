@@ -42,14 +42,15 @@ def test_student_samples_draws_one_reproducible_sample_per_seed(secondary):
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
     areas, schools = secondary
+    sizes = bp.cohort_sizes(areas, "secondary")
     routes = br.route_network(
         areas,
         schools[["Easting", "Northing"]].to_numpy(),
         schools["P8MEA"].to_numpy(),
+        schools["PAN"].to_numpy(),
+        sizes,
     )
-    student_xy, student_lsoa = next(
-        ds.student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1)
-    )
+    student_xy, student_lsoa = next(ds.student_samples(areas, sizes, 1))
 
     rows, school_rows, mode_rows = ds.score_sample(
         student_xy, student_lsoa, areas, schools, routes, ld.load_nts_mode_shares()
