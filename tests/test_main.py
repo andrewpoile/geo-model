@@ -148,6 +148,14 @@ def synthetic_frames():
         for cell in cells
         for school in ("Alpha School", "Beta School", "Gamma School")
     )
+    # Each school's term of its matching's index, as `score_sample` gives it.
+    totals = intake.groupby(["parameter", "value", "seed", "scenario"])[
+        ["disadvantaged", "other"]
+    ].transform("sum")
+    intake["dissimilarity_term"] = (
+        intake["disadvantaged"] / totals["disadvantaged"]
+        - intake["other"] / totals["other"]
+    )
 
     modes = pd.DataFrame(
         {**cell, "mode": mode, "students": rng.uniform(0, 500)}
@@ -169,11 +177,12 @@ def draw(parameters: list[str]) -> np.ndarray:
     return grid[:, :-1]  # the FSM strips take the last column
 
 
-def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch):
+@pytest.mark.parametrize("measure", list(sweep_main.INTAKE_MEASURES))
+def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch, measure):
     monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path / "out")
     monkeypatch.setattr(sweep_main, "PLOT_PNG", tmp_path / "out" / "sweep.png")
 
-    sweep_main.plot(*synthetic_frames())
+    sweep_main.plot(*synthetic_frames(), measure)
 
     for name in [*sweep_main.GRID, "sweep"]:
         png = sweep_main.SWEEP_DIR / f"{name}.png"
@@ -198,6 +207,30 @@ def test_draw_columns_shares_one_x_axis_down_every_column():
         assert all(ax.get_xlabel() == "" for ax in column[:-1])
         assert column[-1].xaxis.get_tick_params()["labelbottom"]
         assert not any(ax.xaxis.get_tick_params()["labelbottom"] for ax in column[:-1])
+
+
+@pytest.mark.parametrize("measure", list(sweep_main.INTAKE_MEASURES))
+def test_draw_columns_puts_the_intake_panels_and_fsm_strip_on_one_scale(measure):
+    results, intake, modes, fsm = synthetic_frames()
+    fig = Figure(figsize=(9, 20), layout="constrained")
+
+    sweep_main.draw_columns(fig, results, intake, modes, fsm, ["decile"], measure)
+
+    grid = np.array(fig.axes[:10]).reshape(5, 2)
+    norms = [ax.collections[0].norm for ax in grid[2:4].flat]
+    assert len({(norm.vmin, norm.vmax) for norm in norms}) == 1
+    norm = norms[0]
+    if measure == "share":
+        assert (norm.vmin, norm.vmax) == (0, 1)
+    else:
+        # Centred on 0 and reaching the largest seed-mean term of any
+        # parameter, not only the one drawn.
+        keys = ["parameter", "value", "scenario", "school"]
+        largest = intake.groupby(keys)["dissimilarity_term"].mean().abs().max()
+        assert norm.vmin == -norm.vmax
+        assert norm.vmax == pytest.approx(max(largest, fsm.abs().max()))
+    label = fig.axes[-1].get_ylabel()
+    assert label == sweep_main.INTAKE_MEASURES[measure]["label"]
 
 
 def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
@@ -268,3 +301,41 @@ def test_fsm_share_scales_the_register_percentage_and_names_a_missing_one(capsys
     assert fsm["Alpha School"] == pytest.approx(0.557)
     assert np.isnan(fsm["Beta School"])
     assert "drawn blank: Beta School" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# fsm_term
+# --------------------------------------------------------------------------
+
+
+def test_fsm_term_takes_the_register_counts_over_the_schools_holding_them(capsys):
+    # Alpha takes its 50% over 40 of its 60 pupils, as a school with a sixth
+    # form does, so 20 are eligible and 20 are not; Gamma has 10 of 40.
+    schools = pd.DataFrame(
+        {
+            "EstablishmentName": ["Alpha School", "Beta School", "Gamma School"],
+            "FSM": [20, np.nan, 10],
+            "PercentageFSM": [50.0, np.nan, 25.0],
+        }
+    )
+
+    terms = sweep_main.fsm_term(schools)
+
+    # 30 eligible and 50 not over Alpha and Gamma alone: Beta holds no figures.
+    assert terms["Alpha School"] == pytest.approx(20 / 30 - 20 / 50)
+    assert terms["Gamma School"] == pytest.approx(10 / 30 - 30 / 50)
+    assert np.isnan(terms["Beta School"])
+    assert "left out of the FSM totals: Beta School" in capsys.readouterr().out
+
+
+def test_fsm_term_rejects_a_school_recording_no_pupil_eligible():
+    schools = pd.DataFrame(
+        {
+            "EstablishmentName": ["Alpha School", "Beta School"],
+            "FSM": [20, 0],
+            "PercentageFSM": [50.0, 0.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="cannot be recovered: Beta School"):
+        sweep_main.fsm_term(schools)

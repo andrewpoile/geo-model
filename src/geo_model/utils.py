@@ -458,6 +458,38 @@ def school_intake(
     )
 
 
+def dissimilarity_terms(group_a: ArrayLike, group_b: ArrayLike) -> np.ndarray:
+    """Each school's term of the dissimilarity index.
+
+    With a_c and b_c students of each group at school c, out of A and B in
+    all, the term is a_c / A - b_c / B: positive where the school holds more
+    than its share of group a, negative where it holds less. The terms sum to
+    0, and half the sum of their absolute values is the index.
+
+    Args:
+        group_a (ArrayLike): Students of the first group at each school,
+        shape (n_schools,).
+
+        group_b (ArrayLike): Students of the second group at each school,
+        shape (n_schools,).
+
+    Returns:
+        np.ndarray: The term of each school, shape (n_schools,).
+    """
+    group_a = np.asarray(group_a, dtype=np.float64)
+    group_b = np.asarray(group_b, dtype=np.float64)
+    if group_a.shape != group_b.shape:
+        raise ValueError(
+            f"group_a and group_b must align: got {group_a.shape} and {group_b.shape}."
+        )
+    if group_a.sum() == 0 or group_b.sum() == 0:
+        raise ValueError(
+            f"{group_a.sum():g} and {group_b.sum():g} students of the two groups "
+            "hold a seat, so the index is undefined."
+        )
+    return group_a / group_a.sum() - group_b / group_b.sum()
+
+
 def dissimilarity_index(
     matched_school: ArrayLike,
     disadvantaged: ArrayLike,
@@ -488,13 +520,10 @@ def dissimilarity_index(
     Returns:
         float: The index, in [0, 1].
     """
-    group_a, group_b = school_intake(matched_school, disadvantaged, n_schools)
-    if group_a.sum() == 0 or group_b.sum() == 0:
-        raise ValueError(
-            f"{group_a.sum()} disadvantaged and {group_b.sum()} other students hold "
-            "a seat, so the index is undefined."
-        )
-    return 0.5 * float(np.abs(group_a / group_a.sum() - group_b / group_b.sum()).sum())
+    terms = dissimilarity_terms(
+        *school_intake(matched_school, disadvantaged, n_schools)
+    )
+    return 0.5 * float(np.abs(terms).sum())
 
 
 def trip_band(distance_m: ArrayLike, circuity: float = CIRCUITY) -> np.ndarray:

@@ -26,7 +26,7 @@ from geo_model.load_data import (
     load_nts_mode_shares,
     load_schools,
 )
-from geo_model.utils import CIRCUITY, MODES, mode_change
+from geo_model.utils import CIRCUITY, MODES, dissimilarity_terms, mode_change
 
 SWEEP_DIR = Path("temp/sweep")
 RESULTS_CSV = SWEEP_DIR / "sweep.csv"
@@ -93,8 +93,21 @@ GROUP_COLOURS = {
     "other, without routes": "#a5a49f",
 }
 DEFAULT_LINE = {"color": "#898781", "linestyle": "--", "linewidth": 1}
-# One hue, light to dark, for the share of a school's intake that is disadvantaged.
-SHARE_CMAP = "Blues"
+# What the intake panels and the FSM strip show of each school: its term of the
+# dissimilarity index, diverging either side of the city-wide mix, or the
+# disadvantaged share of its intake, in one hue from light to dark.
+INTAKE_MEASURES = {
+    "dissimilarity": {
+        "column": "dissimilarity_term",
+        "cmap": "RdBu_r",
+        "label": "Share of disadvantaged less share of other students",
+    },
+    "share": {
+        "column": "share",
+        "cmap": "Blues",
+        "label": "Disadvantaged share of intake",
+    },
+}
 
 
 def sweep(
@@ -274,6 +287,51 @@ def fsm_share(secondary_schools: pd.DataFrame) -> pd.Series:
     return fsm
 
 
+def fsm_term(secondary_schools: pd.DataFrame) -> pd.Series:
+    """Each school's term of the dissimilarity index, pupils eligible for free
+    school meals against the rest, as the register counts them.
+
+    The register's own measure of how a school's intake departs from the
+    city's, on the scale of the terms the model seats, though not the same
+    measure: the model counts students by the deprivation decile of their
+    district, the register counts pupils by their own eligibility. The
+    register takes "PercentageFSM" over fewer pupils than "NumberOfPupils"
+    at schools with a sixth form, so the pupils it was taken over are
+    recovered as FSM * 100 / PercentageFSM, to within the percentage's
+    rounding.
+
+    Args:
+        secondary_schools (pd.DataFrame): Schools carrying
+        "EstablishmentName", "FSM" and "PercentageFSM".
+
+    Returns:
+        pd.Series: The term, indexed by establishment name. A school the
+        register holds no figures for is named, left NaN and left out of the
+        totals the other terms are taken over.
+
+    Raises:
+        ValueError: If a school records no pupil eligible, from which the
+        pupils the percentage was taken over cannot be recovered.
+    """
+    fsm = secondary_schools.set_index("EstablishmentName")[["FSM", "PercentageFSM"]]
+    missing = fsm.isna().any(axis=1)
+    if missing.any():
+        print(
+            "No FSM count recorded, so drawn blank and left out of the FSM "
+            "totals: " + ", ".join(fsm.index[missing])
+        )
+    held = fsm[~missing]
+    if (held["PercentageFSM"] == 0).any():
+        raise ValueError(
+            "No pupil recorded eligible, so the pupils the percentage was taken "
+            "over cannot be recovered: "
+            + ", ".join(held.index[held["PercentageFSM"] == 0])
+        )
+    assessed = held["FSM"] * 100 / held["PercentageFSM"]
+    terms = dissimilarity_terms(held["FSM"], assessed - held["FSM"])
+    return pd.Series(terms, index=held.index).reindex(fsm.index)
+
+
 def plot_stack(ax: Axes, rows: pd.DataFrame, parameter: str) -> None:
     """Draw one parameter's unassigned panel: a bar per scenario at every
     value, stacked by the group the unplaced students belong to.
@@ -342,54 +400,82 @@ def unassigned_rows(results: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_intake(
-    ax: Axes, schools: pd.DataFrame, parameter: str, scenario: str, order: pd.Index
+    ax: Axes,
+    schools: pd.DataFrame,
+    parameter: str,
+    scenario: str,
+    order: pd.Index,
+    measure: str,
+    limits: tuple[float, float],
 ) -> None:
-    """Draw one scenario's intake panel: the disadvantaged share of each
-    school's intake, averaged over seeds, as a gradient over the values.
+    """Draw one scenario's intake panel: `measure` of each school's intake,
+    averaged over seeds, as a gradient over the values.
 
     Args:
         ax (Axes): Axis to draw on.
 
-        schools (pd.DataFrame): The school rows `sweep` returns, carrying a
-        "share" column.
+        schools (pd.DataFrame): The school rows `sweep` returns, carrying the
+        measure's column.
 
         parameter (str): A key of GRID.
 
         scenario (str): A key of COLOURS.
 
         order (pd.Index): School names, top to bottom.
+
+        measure (str): A key of INTAKE_MEASURES.
+
+        limits (tuple[float, float]): The values the colour scale ends at.
     """
     cell = schools[
         (schools["parameter"] == parameter) & (schools["scenario"] == scenario)
     ]
     at = positions(parameter)
-    share = cell.pivot_table(index="school", columns="value", values="share")
-    share = share.reindex(index=order, columns=at.index)
-    sns.heatmap(share, vmin=0, vmax=1, cmap=SHARE_CMAP, cbar=False, ax=ax)
+    intake = cell.pivot_table(
+        index="school", columns="value", values=INTAKE_MEASURES[measure]["column"]
+    )
+    intake = intake.reindex(index=order, columns=at.index)
+    vmin, vmax = limits
+    sns.heatmap(
+        intake,
+        vmin=vmin,
+        vmax=vmax,
+        cmap=INTAKE_MEASURES[measure]["cmap"],
+        cbar=False,
+        ax=ax,
+    )
     # The cell's left edge, since the position is its centre.
     default = at[asdict(DEFAULTS)[parameter]] - 0.5
-    ax.add_patch(Rectangle((default, 0), 1, len(share), fill=False, **DEFAULT_LINE))
+    ax.add_patch(Rectangle((default, 0), 1, len(intake), fill=False, **DEFAULT_LINE))
     ax.set_xlabel(AXIS_LABELS[parameter])
     ax.set_ylabel(scenario)
     ax.tick_params(axis="y", rotation=0)
 
 
-def plot_fsm(ax: Axes, fsm: pd.Series, order: pd.Index) -> None:
-    """Draw the FSM strip: the register's share for each school, on the
+def plot_fsm(
+    ax: Axes, fsm: pd.Series, order: pd.Index, measure: str, limits: tuple[float, float]
+) -> None:
+    """Draw the FSM strip: the register's measure for each school, on the
     intake panels' scale, as the fixed point of comparison for both.
 
     Args:
         ax (Axes): Axis to draw on.
 
-        fsm (pd.Series): As returned by `fsm_share`.
+        fsm (pd.Series): As returned by `fsm_term` or `fsm_share`, whichever
+        `measure` is.
 
         order (pd.Index): School names, top to bottom.
+
+        measure (str): A key of INTAKE_MEASURES.
+
+        limits (tuple[float, float]): The values the colour scale ends at.
     """
+    vmin, vmax = limits
     sns.heatmap(
         fsm.reindex(order).to_frame("FSM"),
-        vmin=0,
-        vmax=1,
-        cmap=SHARE_CMAP,
+        vmin=vmin,
+        vmax=vmax,
+        cmap=INTAKE_MEASURES[measure]["cmap"],
         cbar=False,
         yticklabels=False,
         ax=ax,
@@ -404,6 +490,7 @@ def draw_columns(
     modes: pd.DataFrame,
     fsm: pd.Series,
     parameters: list[str],
+    measure: str = "dissimilarity",
 ) -> None:
     """Fill `fig` with a column per parameter: the index on top, then who the
     matching leaves unplaced, then each school's intake with routes and
@@ -413,8 +500,10 @@ def draw_columns(
     Every panel of a column shares one x-axis, drawn once at the foot, so the
     column reads top to bottom at a value. Every line row shares one y-axis
     and the intake panels one colour scale, so effects compare across
-    columns. Schools are ordered by their unrouted share, most disadvantaged
-    first.
+    columns. The dissimilarity scale is centred on 0 and reaches the largest
+    term of any parameter or of the FSM strip, so every figure drawn from
+    the same frames shares it too. Schools are ordered by their mean
+    unrouted value, highest first.
 
     Args:
         fig (Figure): Figure to draw on, using constrained layout.
@@ -425,9 +514,13 @@ def draw_columns(
 
         modes (pd.DataFrame): The mode rows `sweep` returns.
 
-        fsm (pd.Series): As returned by `fsm_share`.
+        fsm (pd.Series): As returned by `fsm_term` or `fsm_share`, whichever
+        `measure` is.
 
         parameters (list[str]): Keys of GRID, one per column.
+
+        measure (str, optional): A key of INTAKE_MEASURES, what the intake
+        panels and the FSM strip show. Defaults to "dissimilarity".
 
     Raises:
         ValueError: If a frame carries a value its parameter does not sweep,
@@ -445,8 +538,15 @@ def draw_columns(
     schools = schools.assign(
         share=schools["disadvantaged"] / (schools["disadvantaged"] + schools["other"])
     )
+    shown = INTAKE_MEASURES[measure]["column"]
     unrouted = schools[schools["scenario"] == "without routes"]
-    order = unrouted.groupby("school")["share"].mean().sort_values(ascending=False)
+    order = unrouted.groupby("school")[shown].mean().sort_values(ascending=False)
+    if measure == "share":
+        limits = (0.0, 1.0)
+    else:
+        means = schools.groupby(["parameter", "value", "scenario", "school"])[shown]
+        bound = max(means.mean().abs().max(), fsm.abs().max())
+        limits = (-bound, bound)
     change = mode_change(modes)
     unassigned = unassigned_rows(results)
 
@@ -472,7 +572,7 @@ def draw_columns(
         )
         plot_stack(column[1], unassigned, parameter)
         for ax, scenario in zip(column[2:4], COLOURS):
-            plot_intake(ax, schools, parameter, scenario, order.index)
+            plot_intake(ax, schools, parameter, scenario, order.index, measure, limits)
         plot_parameter(column[4], change, parameter, "change", "mode", MODE_COLOURS)
         column[4].axhline(0, color="#898781", linewidth=1)
         # Last, so they replace the ticks the heatmaps set as they were drawn:
@@ -495,7 +595,7 @@ def draw_columns(
     for row in shared_rows:
         strips[row].axis("off")
     for ax in strips[2:4]:
-        plot_fsm(ax, fsm, order.index)
+        plot_fsm(ax, fsm, order.index, measure, limits)
     # Labels once per row and per column.
     for ax in axes[:, 1:].flat:
         ax.set_ylabel("")
@@ -520,14 +620,18 @@ def draw_columns(
     fig.colorbar(
         axes[2, 0].collections[0],
         ax=grid[2:4].ravel().tolist(),
-        label="Disadvantaged share of intake",
+        label=INTAKE_MEASURES[measure]["label"],
         fraction=0.04,
         pad=0.02,
     )
 
 
 def plot(
-    results: pd.DataFrame, schools: pd.DataFrame, modes: pd.DataFrame, fsm: pd.Series
+    results: pd.DataFrame,
+    schools: pd.DataFrame,
+    modes: pd.DataFrame,
+    fsm: pd.Series,
+    measure: str = "dissimilarity",
 ) -> None:
     """Plot every parameter on its own and all of them side by side.
 
@@ -541,17 +645,21 @@ def plot(
 
         modes (pd.DataFrame): The mode rows `sweep` returns.
 
-        fsm (pd.Series): As returned by `fsm_share`.
+        fsm (pd.Series): As returned by `fsm_term` or `fsm_share`, whichever
+        `measure` is.
+
+        measure (str, optional): Passed to `draw_columns`. Defaults to
+        "dissimilarity".
     """
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
     for parameter in GRID:
         # A bare Figure draws without a display backend, which pyplot would need.
         fig = Figure(figsize=(9, 19), layout="constrained")
-        draw_columns(fig, results, schools, modes, fsm, [parameter])
+        draw_columns(fig, results, schools, modes, fsm, [parameter], measure)
         fig.savefig(SWEEP_DIR / f"{parameter}.png", dpi=200)
 
     fig = Figure(figsize=(4.5 * len(GRID), 20), layout="constrained")
-    draw_columns(fig, results, schools, modes, fsm, list(GRID))
+    draw_columns(fig, results, schools, modes, fsm, list(GRID), measure)
     fig.savefig(PLOT_PNG, dpi=200)
 
 
@@ -579,6 +687,13 @@ def main() -> None:
         type=float,
         default=CIRCUITY,
         help="road distance per straight-line metre, applied before banding",
+    )
+    parser.add_argument(
+        "--intake",
+        choices=list(INTAKE_MEASURES),
+        default="dissimilarity",
+        help="what the intake panels show of each school: its term of the "
+        "dissimilarity index, or the disadvantaged share of its intake",
     )
     args = parser.parse_args()
 
@@ -612,7 +727,8 @@ def main() -> None:
     # Four columns under a two-level header fold at the default width.
     with pd.option_context("display.width", 100):
         print(unassigned.loc[list(GRID)].round(1))
-    plot(results, schools, modes, fsm_share(secondary_schools))
+    fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
+    plot(results, schools, modes, fsm(secondary_schools), args.intake)
     print(
         f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in {SWEEP_DIR}."
     )

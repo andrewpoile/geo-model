@@ -110,6 +110,16 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
         check_names=False,
     )
 
+    # The schools' terms are the index taken apart: they cancel out, and
+    # half their absolute sum is the scenario's index.
+    terms = intake.groupby("scenario")["dissimilarity_term"]
+    assert terms.sum().abs().max() < 1e-12
+    pd.testing.assert_series_equal(
+        0.5 * terms.apply(lambda t: t.abs().sum()),
+        indexed["dissimilarity"],
+        check_names=False,
+    )
+
     # Every seated student travels by exactly one expected mode, and only
     # the routed scenario seats anyone on a route.
     assert len(modes) == 2 * len(MODES)

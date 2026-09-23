@@ -11,6 +11,7 @@ from geo_model.utils import (
     _spread,
     cohort_capacity,
     dissimilarity_index,
+    dissimilarity_terms,
     district_index,
     expected_modes,
     mode_change,
@@ -435,6 +436,41 @@ def test_school_intake_rejects_misaligned_inputs():
 def test_school_intake_rejects_a_school_beyond_the_count():
     with pytest.raises(ValueError, match="beyond the 2 schools"):
         school_intake([0, 2], [True, False], 2)
+
+
+# --------------------------------------------------------------------------
+# dissimilarity_terms
+# --------------------------------------------------------------------------
+
+
+def test_dissimilarity_terms_match_a_hand_worked_case():
+    # a = [3, 1] of 4, b = [1, 3] of 4: 3/4 - 1/4 and 1/4 - 3/4.
+    terms = dissimilarity_terms([3, 1], [1, 3])
+
+    np.testing.assert_allclose(terms, [0.5, -0.5])
+
+
+def test_dissimilarity_terms_cancel_and_their_half_absolute_sum_is_the_index():
+    matched = [0, 0, 0, 1, 0, 1, 1, 2, 2]
+    disadvantaged = [True, True, True, True, False, False, False, True, False]
+
+    terms = dissimilarity_terms(*school_intake(matched, disadvantaged, 3))
+
+    assert terms.sum() == pytest.approx(0)
+    assert 0.5 * np.abs(terms).sum() == pytest.approx(
+        dissimilarity_index(matched, disadvantaged, 3)
+    )
+
+
+@pytest.mark.parametrize("groups", [([0, 0], [1, 2]), ([1, 2], [0, 0])])
+def test_dissimilarity_terms_reject_an_empty_group(groups):
+    with pytest.raises(ValueError, match="hold a seat, so the index is undefined"):
+        dissimilarity_terms(*groups)
+
+
+def test_dissimilarity_terms_reject_misaligned_inputs():
+    with pytest.raises(ValueError, match="must align"):
+        dissimilarity_terms([1, 2], [1])
 
 
 # --------------------------------------------------------------------------

@@ -260,7 +260,7 @@ def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
         well. A secondary school without a Progress 8 score cannot be ranked
         on performance, so it is dropped from the secondary frame.
     """
-    # Only 13 of the register's 135 columns are used, and reading the rest costs
+    # Only 14 of the register's 135 columns are used, and reading the rest costs
     # more than everything the register is used for.
     schools = pd.read_csv(
         REGISTER_CSV,
@@ -279,6 +279,7 @@ def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
             "StatutoryHighAge",
             "SchoolCapacity",
             "PercentageFSM",
+            "FSM",
             "Easting",
             "Northing",
         ],
@@ -315,6 +316,7 @@ def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
             "StatutoryHighAge",
             "SchoolCapacity",
             "PercentageFSM",
+            "FSM",
             "Easting",
             "Northing",
         ]

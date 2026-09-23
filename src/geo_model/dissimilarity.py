@@ -29,6 +29,7 @@ from geo_model.matching import fast_DAT
 from geo_model.utils import (
     CIRCUITY,
     dissimilarity_index,
+    dissimilarity_terms,
     expected_modes,
     sample_students,
     school_intake,
@@ -208,7 +209,9 @@ def score_sample(
         "n_disadvantaged" (students drawn from a disadvantaged district) and
         "unassigned_disadvantaged" (those of them left without a place); one
         row per (scenario, school), with keys "scenario", "school" (the
-        establishment name), "disadvantaged" and "other" (students seated);
+        establishment name), "disadvantaged" and "other" (students seated)
+        and "dissimilarity_term" (the school's term of the index, as
+        `dissimilarity_terms` gives it);
         and one row per (scenario, mode), with keys "scenario", "mode" and
         "students" (expected).
     """
@@ -242,9 +245,18 @@ def score_sample(
         )
         group_a, group_b = school_intake(matched_school, disadvantaged, n_schools)
         school_rows += [
-            {"scenario": scenario, "school": name, "disadvantaged": a, "other": b}
-            for name, a, b in zip(
-                secondary_schools["EstablishmentName"], group_a, group_b
+            {
+                "scenario": scenario,
+                "school": name,
+                "disadvantaged": a,
+                "other": b,
+                "dissimilarity_term": term,
+            }
+            for name, a, b, term in zip(
+                secondary_schools["EstablishmentName"],
+                group_a,
+                group_b,
+                dissimilarity_terms(group_a, group_b),
             )
         ]
         modes = expected_modes(matching, student_xy, school_xy, shares, circuity)
