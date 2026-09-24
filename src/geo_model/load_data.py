@@ -11,7 +11,9 @@ SECONDARY_PHASES = ["All-through", "Middle deemed secondary", "Secondary"]
 
 POPULATION_XLSX = Path("data/student_data/sapelsoasyoa20222024.xlsx")
 POPULATION_CACHE = Path("temp/population_lsoa.pkl")
-IMD_CSV = Path("data/student_data/File_1_IoD2025 Index of Multiple Deprivation.csv")
+IDACI_CSV = Path(
+    "data/student_data/File_3_IoD2025 Supplementary Indices_IDACI and IDAOPI.csv"
+)
 BOUNDARIES_DIR = Path("data/student_data/LSOA_Boundaries_geospacial_data_2021")
 CENTROIDS_DIR = Path("data/student_data/LSOA_PopCentroids_geospatial_data_2021")
 REGISTER_CSV = Path("data/school_data/edubasealldata20260225.csv")
@@ -184,18 +186,18 @@ def load_areas() -> gpd.GeoDataFrame:
 
     Returns:
         gpd.GeoDataFrame: One row per LSOA, positionally indexed, carrying
-        "LSOA21CD", "LSOA21NM", "IMD", "IMD Decile", "Total", "F4", "F11",
+        "LSOA21CD", "LSOA21NM", "IDACI", "IDACI Decile", "Total", "F4", "F11",
         "M4", "M11", a "Centroids" point and a "Borders" polygon.
     """
     population = load_population()
 
-    # Import data on deprivation, necessary for determining route eligibility and measuring dissimilarity.
-    index_multi_depra = pd.read_csv(IMD_CSV)
-    index_multi_depra.rename(
+    # Import the Income Deprivation Affecting Children Index, necessary for determining route eligibility and measuring dissimilarity.
+    idaci = pd.read_csv(IDACI_CSV)
+    idaci.rename(
         columns={
             "LSOA code (2021)": "LSOA21CD",
-            "Index of Multiple Deprivation (IMD) Rank (where 1 is most deprived)": "IMD",
-            r"Index of Multiple Deprivation (IMD) Decile (where 1 is most deprived 10% of LSOAs)": "IMD Decile",
+            "Income Deprivation Affecting Children Index (IDACI) Rank (where 1 is most deprived)": "IDACI",
+            "Income Deprivation Affecting Children Index (IDACI) Decile (where 1 is most deprived 10% of LSOAs)": "IDACI Decile",
         },
         inplace=True,
     )
@@ -231,14 +233,14 @@ def load_areas() -> gpd.GeoDataFrame:
     geomerge = geomerge.merge(population, "inner", "LSOA21CD")
     # Merges deprivation data with spacial data.
     geomerge = geomerge.merge(
-        index_multi_depra[["LSOA21CD", "IMD", "IMD Decile"]], "inner", "LSOA21CD"
+        idaci[["LSOA21CD", "IDACI", "IDACI Decile"]], "inner", "LSOA21CD"
     )
     return geomerge[
         [
             "LSOA21CD",
             "LSOA21NM",
-            "IMD",
-            "IMD Decile",
+            "IDACI",
+            "IDACI Decile",
             "Total",
             "F4",
             "F11",

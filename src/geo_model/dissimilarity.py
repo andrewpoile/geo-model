@@ -191,7 +191,7 @@ def score_sample(
         shares (pd.DataFrame): NTS mode share within each trip-length band,
         as returned by `load_nts_mode_shares`.
 
-        decile (int, optional): Districts at or below this IMD decile are the
+        decile (int, optional): Districts at or below this IDACI decile are the
         disadvantaged group the index measures and that ranks with its own
         weights. Defaults to DISADVANTAGED_DECILE.
 

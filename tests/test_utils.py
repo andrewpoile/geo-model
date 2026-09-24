@@ -445,7 +445,7 @@ def test_cohort_capacity_rejects_a_cohort_of_less_than_one_seat():
 
 
 def test_disadvantaged_students_labels_each_student_by_its_own_district():
-    areas = pd.DataFrame({"IMD Decile": [1, 5, 3]})
+    areas = pd.DataFrame({"IDACI Decile": [1, 5, 3]})
     student_lsoa = np.array([0, 1, 1, 2, 0])
 
     labels = disadvantaged_students(student_lsoa, areas, decile=3)
@@ -455,7 +455,7 @@ def test_disadvantaged_students_labels_each_student_by_its_own_district():
 
 def test_disadvantaged_students_defaults_to_the_route_decile():
     areas = pd.DataFrame(
-        {"IMD Decile": [DISADVANTAGED_DECILE, DISADVANTAGED_DECILE + 1]}
+        {"IDACI Decile": [DISADVANTAGED_DECILE, DISADVANTAGED_DECILE + 1]}
     )
 
     np.testing.assert_array_equal(

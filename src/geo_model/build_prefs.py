@@ -225,7 +225,7 @@ def main() -> None:
         secondary_school_capacities=secondary_school_capacities,
         primary_student_district=primary_student_lsoa,
         secondary_student_district=secondary_student_lsoa,
-        district_decile=geo_soton["IMD Decile"].to_numpy(dtype=np.int64),
+        district_decile=geo_soton["IDACI Decile"].to_numpy(dtype=np.int64),
     )
 
 

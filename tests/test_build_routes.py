@@ -25,7 +25,7 @@ def make_areas(deciles, spacing=10_000.0, index=None):
     frame = gpd.GeoDataFrame(
         {
             "LSOA21CD": [f"E{i:08d}" for i in range(n)],
-            "IMD Decile": deciles,
+            "IDACI Decile": deciles,
         },
         geometry=gpd.points_from_xy(np.arange(n) * spacing, np.zeros(n), crs=CRS),
         index=index,
@@ -134,7 +134,7 @@ def test_route_network_routes_only_the_disadvantaged_districts(capsys):
     # is routed to the first; district 2 is beyond both.
     np.testing.assert_array_equal(routes["district_idx"], [1, 2, 2])
     np.testing.assert_array_equal(routes["school_idx"], [0, 0, 1])
-    assert "2 disadvantaged districts at IMD decile 3" in capsys.readouterr().out
+    assert "2 disadvantaged districts at IDACI decile 3" in capsys.readouterr().out
 
 
 def test_route_network_names_a_district_left_without_any_route(capsys):
@@ -162,7 +162,7 @@ def test_route_network_uses_the_module_defaults():
 
 @pytest.mark.parametrize("decile", [0, 11, -1])
 def test_route_network_rejects_a_decile_outside_one_to_ten(decile):
-    with pytest.raises(ValueError, match="must be an IMD decile"):
+    with pytest.raises(ValueError, match="must be an IDACI decile"):
         network(make_areas([1, 2]), decile=decile)
 
 
@@ -296,7 +296,7 @@ def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrou
     assert set(routes["district_idx"]) == {1}
     out = capsys.readouterr().out
     assert "No secondary school beyond" not in out
-    assert "2 disadvantaged districts at IMD decile 3 or below, 1 of them" in out
+    assert "2 disadvantaged districts at IDACI decile 3 or below, 1 of them" in out
 
 
 # --------------------------------------------------------------------------

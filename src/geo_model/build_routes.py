@@ -6,7 +6,7 @@ import pandas as pd
 import shapely
 from scipy.spatial import distance as spdist
 
-# LSOAs at or below this decile are the disadvantaged districts, the only
+# LSOAs at or below this IDACI decile are the disadvantaged districts, the only
 # districts routes are built from. 1 is the most deprived 10% of LSOAs.
 DISADVANTAGED_DECILE = 3
 
@@ -140,7 +140,7 @@ def route_network(
     is the district's disadvantaged cohort.
 
     Args:
-        areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IMD
+        areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IDACI
         Decile" and "Centroids" columns, positionally indexed in the order
         students were sampled from.
 
@@ -158,7 +158,7 @@ def route_network(
         district_cohort (np.ndarray): Students in the cohort of every district,
         positionally aligned with `areas`, as `cohort_sizes` gives it.
 
-        decile (int, optional): Districts at or below this IMD decile are the
+        decile (int, optional): Districts at or below this IDACI decile are the
         disadvantaged ones routes are built from. Defaults to
         DISADVANTAGED_DECILE.
 
@@ -185,7 +185,7 @@ def route_network(
         pd.DataFrame: The route set, as returned by `build_routes`.
     """
     if not 1 <= decile <= 10:
-        raise ValueError(f"decile must be an IMD decile in [1, 10], got {decile}.")
+        raise ValueError(f"decile must be an IDACI decile in [1, 10], got {decile}.")
 
     # A student is tied to their district by position, since sample_students
     # returns a positional area index, so district_idx only means anything if
@@ -215,10 +215,10 @@ def route_network(
     if capacity_scale <= 0:
         raise ValueError(f"capacity_scale must be positive, got {capacity_scale}.")
 
-    disadvantaged = areas[areas["IMD Decile"] <= decile]
+    disadvantaged = areas[areas["IDACI Decile"] <= decile]
     if disadvantaged.empty:
         raise ValueError(
-            f"No LSOA sits at or below IMD decile {decile}, so there are no "
+            f"No LSOA sits at or below IDACI decile {decile}, so there are no "
             "disadvantaged districts to build routes from."
         )
 
@@ -267,7 +267,7 @@ def route_network(
         )
 
     print(
-        f"{len(disadvantaged)} disadvantaged districts at IMD decile {decile} or "
+        f"{len(disadvantaged)} disadvantaged districts at IDACI decile {decile} or "
         f"below, {len(eligible)} of them with no school above Progress 8 "
         f"{max_local_p8} within {local_radius}m, {len(routes)} routes to "
         f"{len(school_xy)} secondary schools, "

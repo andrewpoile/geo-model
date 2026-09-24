@@ -441,16 +441,16 @@ def disadvantaged_students(
         student_lsoa (np.ndarray): Positional index into `areas` of the
         district each student was sampled in.
 
-        areas (pd.DataFrame): Districts carrying an "IMD Decile" column, in
+        areas (pd.DataFrame): Districts carrying an "IDACI Decile" column, in
         the order students were sampled from.
 
-        decile (int, optional): Districts at or below this IMD decile are
+        decile (int, optional): Districts at or below this IDACI decile are
         disadvantaged. Defaults to DISADVANTAGED_DECILE.
 
     Returns:
         np.ndarray: Boolean, one per student.
     """
-    return areas["IMD Decile"].to_numpy()[student_lsoa] <= decile
+    return areas["IDACI Decile"].to_numpy()[student_lsoa] <= decile
 
 
 def school_intake(

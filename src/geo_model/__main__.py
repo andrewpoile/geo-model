@@ -78,7 +78,7 @@ GRID = {
 }
 
 AXIS_LABELS = {
-    "decile": "Disadvantaged at or below IMD decile",
+    "decile": "Disadvantaged at or below IDACI decile",
     "min_distance": "Minimum route distance (m)",
     "capacity_scale": "Route capacity scale (× fair share of PAN)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
