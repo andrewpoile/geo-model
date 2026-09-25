@@ -283,6 +283,62 @@ def test_route_network_rejects_a_route_set_holding_no_seat():
         network(make_areas([1, 1, 9]), district_cohort=np.array([1, 1, 1_000_000]))
 
 
+@pytest.mark.parametrize(
+    ("progressivity", "seats"), [(0.0, [10, 10]), (0.5, [12, 8]), (1.0, [15, 5])]
+)
+def test_route_network_leans_seats_towards_the_deprived_districts(progressivity, seats):
+    # Districts at deciles 1 and 3 of threshold 3, 10 students each out of 100,
+    # routed to one far school admitting 100. At p = 1 the raw weights are 1
+    # and 1/3, rescaled to 1.5 and 0.5; at p = 0.5 they are 1 and 2/3, rescaled
+    # to 1.2 and 0.8. The 20 seats the two share never change.
+    routes = network(
+        make_areas([1, 3, 5]),
+        np.array([[100_000.0, 0.0]]),
+        SCHOOL_P8[:1],
+        school_pan=np.array([100]),
+        district_cohort=np.array([10, 10, 80]),
+        decile=3,
+        capacity_scale=1.0,
+        progressivity=progressivity,
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [0, 1])
+    np.testing.assert_array_equal(routes["capacity"], seats)
+
+
+@pytest.mark.parametrize(("linear", "seats"), [(False, [13, 7]), (True, [12, 8])])
+def test_route_network_weights_the_middle_deciles_by_the_profile_chosen(linear, seats):
+    # Districts at deciles 1 and 2 of threshold 3, 10 students each out of 100,
+    # routed to one far school admitting 100, fully progressive. By 1 / D the
+    # raw weights are 1 and 1/2, rescaled to 4/3 and 2/3; by the linear profile
+    # they are 1 and 2/3, rescaled to 1.2 and 0.8.
+    routes = network(
+        make_areas([1, 2, 5]),
+        np.array([[100_000.0, 0.0]]),
+        SCHOOL_P8[:1],
+        school_pan=np.array([100]),
+        district_cohort=np.array([10, 10, 80]),
+        decile=3,
+        capacity_scale=1.0,
+        progressivity=1.0,
+        linear=linear,
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [0, 1])
+    np.testing.assert_array_equal(routes["capacity"], seats)
+
+
+@pytest.mark.parametrize("progressivity", [-0.1, 1.1])
+def test_route_network_rejects_a_progressivity_outside_zero_to_one(progressivity):
+    with pytest.raises(ValueError, match="progressivity must lie in"):
+        network(make_areas([1, 1]), progressivity=progressivity)
+
+
+def test_route_network_rejects_route_eligible_districts_holding_no_students():
+    with pytest.raises(ValueError, match="hold no students"):
+        network(make_areas([1, 1, 9]), district_cohort=np.array([0, 0, 100]))
+
+
 def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrouted(
     capsys,
 ):

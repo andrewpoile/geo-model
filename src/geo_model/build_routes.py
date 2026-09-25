@@ -22,6 +22,19 @@ MIN_ROUTE_DISTANCE = 3218
 # the SCT instance.
 ROUTE_CAPACITY_SCALE = 5.0
 
+# How far a route's seats lean towards the more deprived districts, in [0, 1].
+# A district at IDACI decile D at or below the threshold T is weighted
+# (1 - p) + p * f(D), f running from 1 at decile 1 to 1 / T at decile T, so 0
+# seats every district on its fair share alone and 1 weights decile 1 T times
+# decile T. The weights are rescaled to a cohort-weighted mean of 1 over the
+# route-eligible districts, so they move seats between districts without
+# changing how many there are.
+ROUTE_PROGRESSIVITY = 0.5
+
+# The profile f of the progressive weight: 1 / D, or with True the linear
+# (T + 1 - D) / T. The two agree at deciles 1 and T and differ between them.
+LINEAR_PROGRESSIVITY = False
+
 # Seats are rounded to the nearest whole seat, and a route rounding to none is
 # not built. True rounds up instead, so every route keeps at least one seat.
 ROUND_UP_SEATS = False
@@ -120,6 +133,8 @@ def route_network(
     max_local_p8: float = MAX_LOCAL_P8,
     local_radius: float = LOCAL_RADIUS,
     round_up: bool = ROUND_UP_SEATS,
+    progressivity: float = ROUTE_PROGRESSIVITY,
+    linear: bool = LINEAR_PROGRESSIVITY,
 ) -> pd.DataFrame:
     """Select the route-eligible districts of `areas` and route them to schools.
 
@@ -133,11 +148,15 @@ def route_network(
     performance condition, so the dissimilarity index still measures every
     district at or below `decile` whether it is route-eligible or not.
 
-    A route from district d to school s holds k * PAN_s * n_d / N seats, with
-    n_d the district's cohort and N the city's, so at k = 1 it holds the seats
-    the district would take at the school if every intake matched the city's
-    mix. Every student of a route-eligible district is disadvantaged, so n_d
-    is the district's disadvantaged cohort.
+    A route from district d to school s holds k * PAN_s * n_d * w_d / N seats,
+    with n_d the district's cohort and N the city's, so at k = 1 and w_d = 1 it
+    holds the seats the district would take at the school if every intake
+    matched the city's mix. Every student of a route-eligible district is
+    disadvantaged, so n_d is the district's disadvantaged cohort. The weight
+    w_d is (1 - p) + p / D_d for a district at IDACI decile D_d, or
+    (1 - p) + p * (decile + 1 - D_d) / decile when `linear`, rescaled so its
+    cohort-weighted mean over the route-eligible districts is 1: p moves seats towards the more deprived districts without
+    changing how many seats each school offers before rounding.
 
     Args:
         areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IDACI
@@ -181,6 +200,14 @@ def route_network(
         least one, rather than to the nearest seat, which leaves a route
         rounding to none unbuilt. Defaults to ROUND_UP_SEATS.
 
+        progressivity (float, optional): p, in [0, 1], how far seats lean
+        towards the more deprived districts: 0 is flat, 1 weights decile 1
+        `decile` times decile `decile`. Defaults to ROUTE_PROGRESSIVITY.
+
+        linear (bool, optional): Weight by the linear profile
+        (decile + 1 - D) / decile rather than by 1 / D. Defaults to
+        LINEAR_PROGRESSIVITY.
+
     Returns:
         pd.DataFrame: The route set, as returned by `build_routes`.
     """
@@ -214,6 +241,8 @@ def route_network(
         )
     if capacity_scale <= 0:
         raise ValueError(f"capacity_scale must be positive, got {capacity_scale}.")
+    if not 0 <= progressivity <= 1:
+        raise ValueError(f"progressivity must lie in [0, 1], got {progressivity}.")
 
     disadvantaged = areas[areas["IDACI Decile"] <= decile]
     if disadvantaged.empty:
@@ -238,9 +267,19 @@ def route_network(
         )
 
     cohort = np.asarray(district_cohort, dtype=float)
+    eligible_cohort = cohort[eligible.index]
+    if eligible_cohort.sum() == 0:
+        raise ValueError(
+            f"The {len(eligible)} route-eligible districts hold no students, so "
+            "no route can hold a seat."
+        )
+    district_decile = eligible["IDACI Decile"].to_numpy()
+    rank = (decile + 1 - district_decile) / decile if linear else 1 / district_decile
+    weight = (1 - progressivity) + progressivity * rank
+    weight *= eligible_cohort.sum() / (eligible_cohort * weight).sum()
     seats = (
         capacity_scale
-        * np.outer(cohort[eligible.index], np.asarray(school_pan, dtype=float))
+        * np.outer(eligible_cohort * weight, np.asarray(school_pan, dtype=float))
         / cohort.sum()
     )
     capacity = (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int32)

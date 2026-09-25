@@ -20,11 +20,13 @@ from geo_model.build_prefs import (
 )
 from geo_model.build_routes import (
     DISADVANTAGED_DECILE,
+    LINEAR_PROGRESSIVITY,
     LOCAL_RADIUS,
     MAX_LOCAL_P8,
     MIN_ROUTE_DISTANCE,
     ROUND_UP_SEATS,
     ROUTE_CAPACITY_SCALE,
+    ROUTE_PROGRESSIVITY,
     route_network,
 )
 from geo_model.load_data import load_areas, load_nts_mode_shares, load_schools
@@ -51,6 +53,7 @@ class Settings:
     decile: int = DISADVANTAGED_DECILE
     min_distance: float = MIN_ROUTE_DISTANCE
     capacity_scale: float = ROUTE_CAPACITY_SCALE
+    progressivity: float = ROUTE_PROGRESSIVITY
     max_local_p8: float = MAX_LOCAL_P8
     local_radius: float = LOCAL_RADIUS
     performance_weight: float = PERFORMANCE_WEIGHT
@@ -282,6 +285,7 @@ def settings_routes(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     round_up: bool = ROUND_UP_SEATS,
+    linear: bool = LINEAR_PROGRESSIVITY,
 ) -> pd.DataFrame:
     """The route set at one setting of the parameters.
 
@@ -295,6 +299,9 @@ def settings_routes(
 
         round_up (bool, optional): Passed to `route_network`. Defaults to
         ROUND_UP_SEATS.
+
+        linear (bool, optional): Passed to `route_network`. Defaults to
+        LINEAR_PROGRESSIVITY.
 
     Returns:
         pd.DataFrame: The route set, as returned by `route_network`.
@@ -311,6 +318,8 @@ def settings_routes(
         max_local_p8=settings.max_local_p8,
         local_radius=settings.local_radius,
         round_up=round_up,
+        progressivity=settings.progressivity,
+        linear=linear,
     )
 
 
@@ -322,6 +331,7 @@ def score_settings(
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
     round_up: bool = ROUND_UP_SEATS,
+    linear: bool = LINEAR_PROGRESSIVITY,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Score every sample at one setting of the parameters.
 
@@ -348,13 +358,16 @@ def score_settings(
         round_up (bool, optional): Passed to `settings_routes`. Defaults to
         ROUND_UP_SEATS.
 
+        linear (bool, optional): Passed to `settings_routes`. Defaults to
+        LINEAR_PROGRESSIVITY.
+
     Returns:
         tuple[list[dict], list[dict], list[dict]]: The scenario, school and
         mode rows `score_sample` returns for every sample, each tagged with
         "seed", the scenario rows with "n_routes" as well.
     """
     print(f"Scoring {settings}")
-    routes = settings_routes(settings, areas, secondary_schools, round_up)
+    routes = settings_routes(settings, areas, secondary_schools, round_up, linear)
     rows, school_rows, mode_rows = [], [], []
     for seed, (student_xy, student_lsoa) in enumerate(samples):
         scenario_rows, intake_rows, travel_rows = score_sample(

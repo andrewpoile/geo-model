@@ -17,7 +17,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
 from geo_model.build_prefs import cohort_sizes
-from geo_model.build_routes import ROUND_UP_SEATS
+from geo_model.build_routes import LINEAR_PROGRESSIVITY, ROUND_UP_SEATS
 from geo_model.dissimilarity import (
     DEFAULTS,
     N_SEEDS,
@@ -65,6 +65,9 @@ GRID = {
         replace(DEFAULTS, capacity_scale=k)
         for k in (1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 25.0)
     ],
+    # From every district on its fair share alone to decile 1 weighted T times
+    # the threshold decile T, the total seats held fixed throughout.
+    "progressivity": [replace(DEFAULTS, progressivity=p / 10) for p in range(11)],
     # Quarter steps over the spread of P8MEA, which runs from -0.99 to 0.82 over
     # the 12 secondary schools: above 0.82 no school is above the threshold, so
     # the condition is inert and the route set is whole. At LOCAL_RADIUS no
@@ -95,6 +98,7 @@ AXIS_LABELS = {
     "decile": "Disadvantaged at or below IDACI decile",
     "min_distance": "Minimum route distance (m)",
     "capacity_scale": "Route capacity scale (× fair share of PAN)",
+    "progressivity": "Route seat progressivity (0 flat, 1 by decile)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
     "local_radius": "Local performance radius (m)",
     "performance_weight": "Performance weight, other students",
@@ -160,6 +164,7 @@ def sweep(
     circuity: float = CIRCUITY,
     workers: int = 1,
     round_up: bool = ROUND_UP_SEATS,
+    linear: bool = LINEAR_PROGRESSIVITY,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score every cell of GRID on the same samples.
 
@@ -191,6 +196,9 @@ def sweep(
         round_up (bool, optional): Passed to `score_settings`. Defaults to
         ROUND_UP_SEATS.
 
+        linear (bool, optional): Passed to `score_settings`. Defaults to
+        LINEAR_PROGRESSIVITY.
+
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: The scenario rows,
         one per (parameter, value, seed, scenario), the school rows, one per
@@ -208,6 +216,7 @@ def sweep(
         shares=shares,
         circuity=circuity,
         round_up=round_up,
+        linear=linear,
     )
     if workers == 1:
         scored = [score(settings) for _, settings in cells]
@@ -715,6 +724,7 @@ def default_matchings(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     round_up: bool = ROUND_UP_SEATS,
+    linear: bool = LINEAR_PROGRESSIVITY,
 ) -> dict[str, np.ndarray]:
     """Match one student sample at DEFAULTS, with routes and without.
 
@@ -734,6 +744,9 @@ def default_matchings(
         round_up (bool, optional): Passed to `settings_routes`. Defaults to
         ROUND_UP_SEATS.
 
+        linear (bool, optional): Passed to `settings_routes`. Defaults to
+        LINEAR_PROGRESSIVITY.
+
     Returns:
         dict[str, np.ndarray]: The matching of each scenario, "with routes"
         then "without routes", as returned by `fast_DAT`.
@@ -745,7 +758,7 @@ def default_matchings(
             student_lsoa,
             areas,
             secondary_schools,
-            settings_routes(DEFAULTS, areas, secondary_schools, round_up),
+            settings_routes(DEFAULTS, areas, secondary_schools, round_up, linear),
             disadvantaged_students(student_lsoa, areas, DEFAULTS.decile),
             DEFAULTS.performance_weight,
             DEFAULTS.route_discount,
@@ -963,6 +976,13 @@ def main() -> None:
         "the nearest seat, which leaves a route rounding to none unbuilt",
     )
     parser.add_argument(
+        "--linear-progressivity",
+        action=argparse.BooleanOptionalAction,
+        default=LINEAR_PROGRESSIVITY,
+        help="weight route seats by the linear profile (T + 1 - D) / T of "
+        "each district's IDACI decile D rather than by 1 / D",
+    )
+    parser.add_argument(
         "--intake",
         choices=list(INTAKE_MEASURES),
         default="dissimilarity",
@@ -990,6 +1010,7 @@ def main() -> None:
         args.circuity,
         args.workers,
         args.round_up_seats,
+        args.linear_progressivity,
     )
     summary = results.pivot_table(
         index=["parameter", "value"],
@@ -1021,7 +1042,11 @@ def main() -> None:
             secondary_schools,
             samples[0][0],
             default_matchings(
-                samples[0], areas, secondary_schools, args.round_up_seats
+                samples[0],
+                areas,
+                secondary_schools,
+                args.round_up_seats,
+                args.linear_progressivity,
             ),
         )
     print(
