@@ -12,7 +12,13 @@ from geo_model import __main__ as sweep_main
 from geo_model import build_prefs as bp
 from geo_model import load_data as ld
 from geo_model.dissimilarity import score_settings
-from geo_model.utils import MODES, disadvantaged_students, dissimilarity_index
+from geo_model.utils import (
+    MODES,
+    disadvantaged_students,
+    dissimilarity_index,
+    gini,
+    lorenz_curve,
+)
 
 DATA = ld.POPULATION_XLSX.parent.parent
 
@@ -379,6 +385,58 @@ def test_plot_map_writes_a_png(tmp_path, monkeypatch):
     sweep_main.plot_map(*synthetic_city())
 
     assert sweep_main.MAP_PNG.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# --------------------------------------------------------------------------
+# draw_lorenz
+# --------------------------------------------------------------------------
+
+
+def default_intake(intake: pd.DataFrame) -> pd.DataFrame:
+    """The school rows of the first parameter's default cell."""
+    parameter = next(iter(sweep_main.GRID))
+    return intake[
+        (intake["parameter"] == parameter)
+        & (intake["value"] == asdict(sweep_main.DEFAULTS)[parameter])
+    ]
+
+
+def test_draw_lorenz_draws_every_seed_and_its_gini_per_scenario():
+    _, intake, _, _ = synthetic_frames()
+    fig = Figure(figsize=(12, 6.5), layout="constrained")
+
+    sweep_main.draw_lorenz(fig, intake)
+
+    default = default_intake(intake)
+    for ax, scenario in zip(fig.axes, sweep_main.COLOURS):
+        assert ax.get_title() == scenario
+        seeds = default[default["scenario"] == scenario].groupby("seed")
+        lines = {line.get_label(): line for line in ax.get_lines()}
+        assert set(lines) == {"equality", *(f"seed {seed}" for seed, _ in seeds)}
+        coefficients = []
+        for seed, rows in seeds:
+            x, y = lorenz_curve(rows["disadvantaged"], rows["other"])
+            np.testing.assert_allclose(
+                np.asarray(lines[f"seed {seed}"].get_xydata()), np.column_stack((x, y))
+            )
+            coefficients.append(gini(x, y))
+        (text,) = ax.texts
+        assert text.get_text().startswith(f"Gini {np.mean(coefficients):.3f} (mean)")
+
+
+def test_draw_lorenz_rejects_rows_without_the_default_cell():
+    _, intake, _, _ = synthetic_frames()
+
+    with pytest.raises(ValueError, match="no default cell of"):
+        sweep_main.draw_lorenz(Figure(), intake.drop(default_intake(intake).index))
+
+
+def test_plot_lorenz_writes_a_png(tmp_path, monkeypatch):
+    monkeypatch.setattr(sweep_main, "LORENZ_PNG", tmp_path / "out" / "lorenz.png")
+
+    sweep_main.plot_lorenz(synthetic_frames()[1])
+
+    assert sweep_main.LORENZ_PNG.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 # --------------------------------------------------------------------------

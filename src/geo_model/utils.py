@@ -564,6 +564,71 @@ def dissimilarity_index(
     return 0.5 * float(np.abs(terms).sum())
 
 
+def lorenz_curve(
+    group_a: ArrayLike, group_b: ArrayLike
+) -> tuple[np.ndarray, np.ndarray]:
+    """The Lorenz curve of the first group against every student, over schools.
+
+    Schools are ordered by the share of their intake in group a, lowest first,
+    and the curve joins (0, 0) to the point after each school: the cumulative
+    share of all students seated against that of group a's. A school nobody
+    is seated at adds no length to the curve, so it is left out.
+
+    The curve is taken against every student rather than against group b
+    alone, so with P the share of students in group a, its largest gap from
+    the diagonal is (1 - P) times the dissimilarity index.
+
+    Args:
+        group_a (ArrayLike): Students of the first group at each school,
+        shape (n_schools,).
+
+        group_b (ArrayLike): Students of the second group at each school,
+        shape (n_schools,).
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: The cumulative shares of all students
+        and of group a, each running from 0 to 1, one point per school seating
+        a student after the origin.
+    """
+    group_a = np.asarray(group_a, dtype=np.float64)
+    group_b = np.asarray(group_b, dtype=np.float64)
+    if group_a.shape != group_b.shape:
+        raise ValueError(
+            f"group_a and group_b must align: got {group_a.shape} and {group_b.shape}."
+        )
+    if group_a.sum() == 0:
+        raise ValueError(
+            "No student of the first group holds a seat, so the curve is undefined."
+        )
+    total = group_a + group_b
+    seated = total > 0
+    group_a, total = group_a[seated], total[seated]
+    order = np.argsort(group_a / total, kind="stable")
+    x = np.concatenate(([0.0], np.cumsum(total[order]) / total.sum()))
+    y = np.concatenate(([0.0], np.cumsum(group_a[order]) / group_a.sum()))
+    return x, y
+
+
+def gini(x: np.ndarray, y: np.ndarray) -> float:
+    """Gini coefficient of a Lorenz curve, as `lorenz_curve` returns it.
+
+    One less twice the area under the curve, taken by the trapezoid rule,
+    which is exact for a curve joining its points by straight lines. 0 is
+    every school holding the city-wide mix. Against every student, as
+    `lorenz_curve` draws it, complete segregation reaches 1 - P rather than
+    1, with P the share of students in the first group.
+
+    Args:
+        x (np.ndarray): Cumulative share of all students, from 0 to 1.
+
+        y (np.ndarray): Cumulative share of the first group, from 0 to 1.
+
+    Returns:
+        float: The coefficient.
+    """
+    return 1 - 2 * float(np.trapezoid(y, x))
+
+
 def trip_band(distance_m: ArrayLike, circuity: float = CIRCUITY) -> np.ndarray:
     """The NTS trip-length band of each trip.
 

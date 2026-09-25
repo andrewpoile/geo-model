@@ -16,6 +16,8 @@ from geo_model.utils import (
     dissimilarity_terms,
     district_index,
     expected_modes,
+    gini,
+    lorenz_curve,
     mode_change,
     rank_bundles,
     sample_in_polygon,
@@ -580,6 +582,67 @@ def test_dissimilarity_index_rejects_misaligned_inputs():
 def test_dissimilarity_index_rejects_a_school_beyond_the_count():
     with pytest.raises(ValueError, match="beyond the 2 schools"):
         dissimilarity_index([0, 2], [True, False], 2)
+
+
+# --------------------------------------------------------------------------
+# lorenz_curve
+# --------------------------------------------------------------------------
+
+
+def test_lorenz_curve_orders_schools_by_share_from_corner_to_corner():
+    # a = [3, 1], b = [1, 3]: the second school, a quarter disadvantaged,
+    # comes first and holds half the students and a quarter of group a.
+    x, y = lorenz_curve([3, 1], [1, 3])
+
+    np.testing.assert_allclose(x, [0, 0.5, 1])
+    np.testing.assert_allclose(y, [0, 0.25, 1])
+
+
+def test_lorenz_curve_leaves_out_a_school_nobody_was_matched_to():
+    x, y = lorenz_curve([3, 0, 1], [1, 0, 3])
+
+    np.testing.assert_allclose(x, [0, 0.5, 1])
+    np.testing.assert_allclose(y, [0, 0.25, 1])
+
+
+def test_lorenz_curve_rejects_no_seated_student_of_the_first_group():
+    with pytest.raises(ValueError, match="so the curve is undefined"):
+        lorenz_curve([0, 0], [1, 2])
+
+
+def test_lorenz_curve_rejects_misaligned_inputs():
+    with pytest.raises(ValueError, match="must align"):
+        lorenz_curve([1, 2], [1])
+
+
+# --------------------------------------------------------------------------
+# gini
+# --------------------------------------------------------------------------
+
+
+def test_gini_matches_a_hand_worked_case():
+    # Under the curve through (0, 0), (1/2, 1/4), (1, 1): 1/16 + 5/16 = 3/8.
+    assert gini(*lorenz_curve([3, 1], [1, 3])) == pytest.approx(1 - 2 * 3 / 8)
+
+
+def test_gini_is_zero_when_every_school_holds_the_city_mix():
+    assert gini(*lorenz_curve([1, 2], [2, 4])) == pytest.approx(0)
+
+
+def test_gini_under_complete_segregation_is_the_share_outside_the_group():
+    # 4 of 10 students are in group a, so the curve reaches 1 - 4/10.
+    assert gini(*lorenz_curve([4, 0], [0, 6])) == pytest.approx(0.6)
+
+
+def test_gini_is_the_mean_difference_of_school_shares():
+    rng = np.random.default_rng(0)
+    a, b = rng.integers(0, 50, 8), rng.integers(1, 50, 8)
+    t, p = a + b, a / (a + b)
+
+    pairs = t[:, None] * t[None, :] * np.abs(p[:, None] - p[None, :])
+    expected = pairs.sum() / (2 * t.sum() ** 2 * (a.sum() / t.sum()))
+
+    assert gini(*lorenz_curve(a, b)) == pytest.approx(expected)
 
 
 # --------------------------------------------------------------------------

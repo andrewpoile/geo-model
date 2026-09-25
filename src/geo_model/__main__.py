@@ -38,6 +38,8 @@ from geo_model.utils import (
     MODES,
     disadvantaged_students,
     dissimilarity_terms,
+    gini,
+    lorenz_curve,
     mode_change,
 )
 
@@ -47,11 +49,18 @@ SCHOOLS_CSV = SWEEP_DIR / "schools.csv"
 MODES_CSV = SWEEP_DIR / "modes.csv"
 PLOT_PNG = SWEEP_DIR / "sweep.png"
 MAP_PNG = SWEEP_DIR / "map.png"
+LORENZ_PNG = SWEEP_DIR / "lorenz.png"
 
 # One-at-a-time grids: a parameter runs over its values while the others hold
 # DEFAULTS, so every grid carries its own default.
 GRID = {
     # Decile 10 would make every student disadvantaged and the index undefined.
+    # The one grid that is not ceteris paribus: the decile sets the districts
+    # routes are built from as well as the group the index and the unassigned
+    # panel measure, so a step along it moves the treatment and the measurement
+    # together. That is what makes decile 2 the only setting where routes leave
+    # more disadvantaged students unassigned, taken apart in
+    # agent_docs/decile_anomaly.md.
     "decile": [replace(DEFAULTS, decile=d) for d in range(1, 10)],
     # Whole miles in metres. Every district lies within 9.9km of every school,
     # so the route set stays non-empty throughout.
@@ -943,6 +952,76 @@ def plot_map(
     fig.savefig(MAP_PNG, dpi=200)
 
 
+def draw_lorenz(fig: Figure, schools: pd.DataFrame) -> None:
+    """Fill `fig` with a panel per scenario: the Lorenz curve of disadvantaged
+    against seated students over schools at the default settings, a line per
+    seed, and its Gini coefficient over the seeds.
+
+    Every parameter's default cell scores the same matchings, so the first
+    parameter's stands for them all. A student left unassigned belongs to no
+    school's intake, so the curves count seated students alone. Both panels
+    share both axes, so the panels compare.
+
+    Args:
+        fig (Figure): Figure to draw on, using constrained layout.
+
+        schools (pd.DataFrame): The school rows `sweep` returns.
+
+    Raises:
+        ValueError: If the rows hold no default cell of the first parameter.
+    """
+    parameter = next(iter(GRID))
+    default = schools[
+        (schools["parameter"] == parameter)
+        & (schools["value"] == asdict(DEFAULTS)[parameter])
+    ]
+    if default.empty:
+        raise ValueError(f"The school rows hold no default cell of {parameter}.")
+    axes = fig.subplots(1, len(COLOURS), sharex=True, sharey=True)
+    for ax, (scenario, colour) in zip(axes, COLOURS.items()):
+        coefficients = []
+        for seed, intake in default[default["scenario"] == scenario].groupby("seed"):
+            x, y = lorenz_curve(intake["disadvantaged"], intake["other"])
+            ax.plot(x, y, color=colour, linewidth=1, alpha=0.5, label=f"seed {seed}")
+            coefficients.append(gini(x, y))
+        ax.plot([0, 1], [0, 1], color="#898781", linewidth=1, label="equality")
+        # The curve never rises above the diagonal, so the upper left is clear.
+        ax.text(
+            0.04,
+            0.96,
+            f"Gini {np.mean(coefficients):.3f} (mean)\n"
+            f"seeds {min(coefficients):.3f} to {max(coefficients):.3f}, "
+            f"n = {len(coefficients)}",
+            transform=ax.transAxes,
+            va="top",
+            color=INK,
+        )
+        ax.set_title(scenario)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_aspect("equal")
+        ax.set_xlabel("Cumulative share of seated students")
+        ax.grid(True, color="#e1e0d9")
+        ax.set_axisbelow(True)
+        sns.despine(ax=ax)
+    axes[0].set_ylabel(
+        f"Cumulative share of disadvantaged students (IDACI decile ≤ {DEFAULTS.decile})"
+    )
+
+
+def plot_lorenz(schools: pd.DataFrame) -> None:
+    """Plot the Lorenz curves with `draw_lorenz`, to LORENZ_PNG.
+
+    Args:
+        schools (pd.DataFrame): Passed to `draw_lorenz`.
+    """
+    # A bare Figure draws without a display backend, which pyplot would need.
+    fig = Figure(figsize=(12, 6.5), layout="constrained")
+    draw_lorenz(fig, schools)
+    LORENZ_PNG.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(LORENZ_PNG, dpi=200)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Sweep each parameter of the secondary matching and score it "
@@ -994,6 +1073,13 @@ def main() -> None:
         action="store_true",
         help="also map the first sample's matchings at the default settings, "
         "with routes and without",
+    )
+    parser.add_argument(
+        "--lorenz",
+        action="store_true",
+        help="also plot the Lorenz curve of disadvantaged against seated "
+        "students over schools at the default settings, with routes and "
+        "without, and its Gini coefficient",
     )
     args = parser.parse_args()
 
@@ -1049,6 +1135,8 @@ def main() -> None:
                 args.linear_progressivity,
             ),
         )
+    if args.lorenz:
+        plot_lorenz(schools)
     print(
         f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in {SWEEP_DIR}."
     )
