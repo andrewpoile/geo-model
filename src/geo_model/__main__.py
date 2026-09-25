@@ -8,7 +8,10 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib import colormaps
 from matplotlib.axes import Axes
+from matplotlib.collections import LineCollection
+from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
@@ -18,7 +21,9 @@ from geo_model.build_routes import ROUND_UP_SEATS
 from geo_model.dissimilarity import (
     DEFAULTS,
     N_SEEDS,
+    match_sample,
     score_settings,
+    settings_routes,
     student_samples,
 )
 from geo_model.load_data import (
@@ -27,13 +32,21 @@ from geo_model.load_data import (
     load_nts_mode_shares,
     load_schools,
 )
-from geo_model.utils import CIRCUITY, MODES, dissimilarity_terms, mode_change
+from geo_model.utils import (
+    CIRCUITY,
+    MILE,
+    MODES,
+    disadvantaged_students,
+    dissimilarity_terms,
+    mode_change,
+)
 
 SWEEP_DIR = Path("temp/sweep")
 RESULTS_CSV = SWEEP_DIR / "sweep.csv"
 SCHOOLS_CSV = SWEEP_DIR / "schools.csv"
 MODES_CSV = SWEEP_DIR / "modes.csv"
 PLOT_PNG = SWEEP_DIR / "sweep.png"
+MAP_PNG = SWEEP_DIR / "map.png"
 
 # One-at-a-time grids: a parameter runs over its values while the others hold
 # DEFAULTS, so every grid carries its own default.
@@ -123,6 +136,19 @@ INTAKE_MEASURES = {
         "label": "Disadvantaged share of intake",
     },
 }
+# The map's districts in one hue, a step per IDACI decile and the most deprived
+# darkest, stopping short of the hue's darkest so the links stay legible over
+# it. Schools diverge either side of the England average Progress 8 of 0.
+DECILE_CMAP = ListedColormap(colormaps["Purples"](np.linspace(0.15, 0.75, 10))[::-1])
+P8_CMAP = "RdBu"
+INK = "#1f2933"
+# Two hues neither the fill nor the school scale uses, the green across from
+# the purple fill so the plain trips stand out against it.
+LINK_COLOURS = {"without a route": "#029e73", "on a route": "#de8f05"}
+# The map's scale bar, kilometres ticked above the line and miles below: the
+# metres in each unit and the units the bar reaches, near a third of the
+# city's 10.9km width either way.
+SCALE_BAR = {"km": (1000.0, 3), "miles": (MILE, 2)}
 
 
 def sweep(
@@ -683,6 +709,226 @@ def plot(
     fig.savefig(PLOT_PNG, dpi=200)
 
 
+def default_matchings(
+    sample: tuple[np.ndarray, np.ndarray],
+    areas: gpd.GeoDataFrame,
+    secondary_schools: gpd.GeoDataFrame,
+    round_up: bool = ROUND_UP_SEATS,
+) -> dict[str, np.ndarray]:
+    """Match one student sample at DEFAULTS, with routes and without.
+
+    The ranking carries no noise and the mechanism is deterministic, so these
+    are the matchings the default cell of every parameter scores for the
+    sample.
+
+    Args:
+        sample (tuple[np.ndarray, np.ndarray]): Coordinates and positional
+        district index of each student, as yielded by `student_samples`.
+
+        areas (gpd.GeoDataFrame): Districts, as `score_settings` takes them.
+
+        secondary_schools (gpd.GeoDataFrame): Schools, as `score_settings`
+        takes them.
+
+        round_up (bool, optional): Passed to `settings_routes`. Defaults to
+        ROUND_UP_SEATS.
+
+    Returns:
+        dict[str, np.ndarray]: The matching of each scenario, "with routes"
+        then "without routes", as returned by `fast_DAT`.
+    """
+    student_xy, student_lsoa = sample
+    return dict(
+        match_sample(
+            student_xy,
+            student_lsoa,
+            areas,
+            secondary_schools,
+            settings_routes(DEFAULTS, areas, secondary_schools, round_up),
+            disadvantaged_students(student_lsoa, areas, DEFAULTS.decile),
+            DEFAULTS.performance_weight,
+            DEFAULTS.route_discount,
+            DEFAULTS.disadvantaged_performance_weight,
+            DEFAULTS.disadvantaged_route_discount,
+        )
+    )
+
+
+def draw_map(
+    fig: Figure,
+    areas: gpd.GeoDataFrame,
+    secondary_schools: pd.DataFrame,
+    student_xy: np.ndarray,
+    matchings: dict[str, np.ndarray],
+) -> None:
+    """Fill `fig` with a map per scenario: the districts by IDACI decile, a
+    link from every seated student to their school, and the schools by
+    Progress 8 on top.
+
+    A routed student's link takes a colour of its own, and a student the
+    matching leaves unassigned is marked by a cross, having no link. Every
+    panel shares both colour scales, so the panels compare.
+
+    Args:
+        fig (Figure): Figure to draw on, using constrained layout.
+
+        areas (gpd.GeoDataFrame): Districts carrying "IDACI Decile" and a
+        polygon geometry.
+
+        secondary_schools (pd.DataFrame): Schools carrying "Easting",
+        "Northing" and "P8MEA", in the order the matchings index them.
+
+        student_xy (np.ndarray): Student coordinates, shape (n_students, 2),
+        in the CRS of `areas`.
+
+        matchings (dict[str, np.ndarray]): The matching of each scenario, as
+        `default_matchings` returns them.
+    """
+    school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
+    p8 = secondary_schools["P8MEA"].to_numpy()
+    p8_norm = Normalize(-np.abs(p8).max(), np.abs(p8).max())
+    axes = fig.subplots(1, len(matchings), squeeze=False)[0]
+    for ax, (scenario, matching) in zip(axes, matchings.items()):
+        # Half-step limits give every whole decile its own step of the scale.
+        areas.plot(
+            ax=ax,
+            column="IDACI Decile",
+            cmap=DECILE_CMAP,
+            vmin=0.5,
+            vmax=10.5,
+            edgecolor="white",
+            linewidth=0.3,
+            label="districts",
+        )
+        school, route = matching[:, 0], matching[:, 1]
+        # The routed links are the fewer, so they are drawn over the rest.
+        for label, linked, width, alpha in (
+            ("without a route", (school >= 0) & (route < 0), 0.3, 0.4),
+            ("on a route", route >= 0, 0.6, 0.7),
+        ):
+            # One (2, 2) segment per student, from their home to their school.
+            segments = list(
+                np.stack((student_xy[linked], school_xy[school[linked]]), axis=1)
+            )
+            ax.add_collection(
+                LineCollection(
+                    segments,
+                    colors=LINK_COLOURS[label],
+                    linewidths=width,
+                    alpha=alpha,
+                    label=label,
+                )
+            )
+        ax.scatter(*student_xy[school >= 0].T, s=1, color=INK, label="seated")
+        ax.scatter(
+            *student_xy[school < 0].T,
+            s=12,
+            marker="x",
+            color=INK,
+            linewidths=0.8,
+            label="unassigned",
+        )
+        schools = ax.scatter(
+            *school_xy.T,
+            c=p8,
+            cmap=P8_CMAP,
+            norm=p8_norm,
+            s=90,
+            edgecolors=INK,
+            linewidths=1,
+            zorder=3,
+            label="schools",
+        )
+        ax.set_title(scenario)
+        ax.set_axis_off()
+        draw_scale(ax)
+
+    fig.colorbar(
+        axes[0].collections[0],
+        ax=axes.tolist(),
+        ticks=range(1, 11),
+        label="LSOA IDACI decile (1 is most deprived)",
+    )
+    fig.colorbar(schools, ax=axes.tolist(), label="School Progress 8 (P8MEA)")
+    fig.legend(
+        handles=[
+            Line2D([], [], color=INK, marker="o", markersize=3, linestyle="none"),
+            Line2D([], [], color=INK, marker="x", markersize=6, linestyle="none"),
+        ]
+        + [
+            Line2D([], [], color=colour, linewidth=2)
+            for colour in LINK_COLOURS.values()
+        ],
+        labels=["student", "student left unassigned"]
+        + [f"link to school {label}" for label in LINK_COLOURS],
+        loc="outside lower center",
+        ncol=4,
+        frameon=False,
+    )
+
+
+def draw_scale(ax: Axes) -> None:
+    """Draw SCALE_BAR in the lower left of a map panel, its first unit ticked
+    above the line and its second below, both from the same origin.
+
+    Lengths are British National Grid metres, the metres every distance in the
+    model is measured in; over the city a grid metre is 0.9996 of a metre on
+    the ground. The bar is placed by the panel's limits and leaves them as
+    they are, so it is drawn last.
+
+    Args:
+        ax (Axes): A map panel, drawn in metres at equal aspect.
+    """
+    (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()
+    x, y = x0 + 0.03 * (x1 - x0), y0 + 0.07 * (y1 - y0)
+    tick = 0.012 * (y1 - y0)
+    for (unit, (metres, length)), side in zip(SCALE_BAR.items(), (1, -1)):
+        at = x + metres * np.arange(length + 1)
+        ax.add_collection(
+            LineCollection(
+                [[(x, y), (at[-1], y)], *[[(t, y), (t, y + side * tick)] for t in at]],
+                colors=INK,
+                linewidths=1,
+                label=unit,
+            ),
+            autolim=False,
+        )
+        for i, t in enumerate(at):
+            ax.text(
+                t,
+                y + side * 2 * tick,
+                f"{i} {unit}" if i == length else str(i),
+                ha="center",
+                va="bottom" if side > 0 else "top",
+                fontsize="small",
+                color=INK,
+            )
+
+
+def plot_map(
+    areas: gpd.GeoDataFrame,
+    secondary_schools: pd.DataFrame,
+    student_xy: np.ndarray,
+    matchings: dict[str, np.ndarray],
+) -> None:
+    """Map `matchings` with `draw_map`, to MAP_PNG.
+
+    Args:
+        areas (gpd.GeoDataFrame): Passed to `draw_map`.
+
+        secondary_schools (pd.DataFrame): Passed to `draw_map`.
+
+        student_xy (np.ndarray): Passed to `draw_map`.
+
+        matchings (dict[str, np.ndarray]): Passed to `draw_map`.
+    """
+    # A bare Figure draws without a display backend, which pyplot would need.
+    fig = Figure(figsize=(16, 8), layout="constrained")
+    draw_map(fig, areas, secondary_schools, student_xy, matchings)
+    MAP_PNG.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(MAP_PNG, dpi=200)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Sweep each parameter of the secondary matching and score it "
@@ -721,6 +967,12 @@ def main() -> None:
         default="dissimilarity",
         help="what the intake panels show of each school: its term of the "
         "dissimilarity index, or the disadvantaged share of its intake",
+    )
+    parser.add_argument(
+        "--map",
+        action="store_true",
+        help="also map the first sample's matchings at the default settings, "
+        "with routes and without",
     )
     args = parser.parse_args()
 
@@ -762,6 +1014,15 @@ def main() -> None:
         print(unassigned.loc[list(GRID)].round(1))
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
     plot(results, schools, modes, fsm(secondary_schools), args.intake)
+    if args.map:
+        plot_map(
+            areas,
+            secondary_schools,
+            samples[0][0],
+            default_matchings(
+                samples[0], areas, secondary_schools, args.round_up_seats
+            ),
+        )
     print(
         f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in {SWEEP_DIR}."
     )

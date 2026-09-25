@@ -277,6 +277,43 @@ def score_sample(
     return rows, school_rows, mode_rows
 
 
+def settings_routes(
+    settings: Settings,
+    areas: gpd.GeoDataFrame,
+    secondary_schools: gpd.GeoDataFrame,
+    round_up: bool = ROUND_UP_SEATS,
+) -> pd.DataFrame:
+    """The route set at one setting of the parameters.
+
+    Args:
+        settings (Settings): The parameter values to build routes with.
+
+        areas (gpd.GeoDataFrame): Districts, as `route_network` takes them.
+
+        secondary_schools (gpd.GeoDataFrame): Schools carrying "Easting",
+        "Northing", "P8MEA" and "PAN".
+
+        round_up (bool, optional): Passed to `route_network`. Defaults to
+        ROUND_UP_SEATS.
+
+    Returns:
+        pd.DataFrame: The route set, as returned by `route_network`.
+    """
+    return route_network(
+        areas,
+        secondary_schools[["Easting", "Northing"]].to_numpy(),
+        secondary_schools["P8MEA"].to_numpy(),
+        secondary_schools["PAN"].to_numpy(),
+        cohort_sizes(areas, "secondary"),
+        decile=settings.decile,
+        min_distance=settings.min_distance,
+        capacity_scale=settings.capacity_scale,
+        max_local_p8=settings.max_local_p8,
+        local_radius=settings.local_radius,
+        round_up=round_up,
+    )
+
+
 def score_settings(
     settings: Settings,
     samples: list[tuple[np.ndarray, np.ndarray]],
@@ -308,7 +345,7 @@ def score_settings(
         circuity (float, optional): Passed to `score_sample`. Defaults to
         CIRCUITY.
 
-        round_up (bool, optional): Passed to `route_network`. Defaults to
+        round_up (bool, optional): Passed to `settings_routes`. Defaults to
         ROUND_UP_SEATS.
 
     Returns:
@@ -317,19 +354,7 @@ def score_settings(
         "seed", the scenario rows with "n_routes" as well.
     """
     print(f"Scoring {settings}")
-    routes = route_network(
-        areas,
-        secondary_schools[["Easting", "Northing"]].to_numpy(),
-        secondary_schools["P8MEA"].to_numpy(),
-        secondary_schools["PAN"].to_numpy(),
-        cohort_sizes(areas, "secondary"),
-        decile=settings.decile,
-        min_distance=settings.min_distance,
-        capacity_scale=settings.capacity_scale,
-        max_local_p8=settings.max_local_p8,
-        local_radius=settings.local_radius,
-        round_up=round_up,
-    )
+    routes = settings_routes(settings, areas, secondary_schools, round_up)
     rows, school_rows, mode_rows = [], [], []
     for seed, (student_xy, student_lsoa) in enumerate(samples):
         scenario_rows, intake_rows, travel_rows = score_sample(

@@ -1,14 +1,18 @@
 from dataclasses import asdict, replace
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
+from shapely import box
 
 from geo_model import __main__ as sweep_main
 from geo_model import build_prefs as bp
 from geo_model import load_data as ld
-from geo_model.utils import MODES
+from geo_model.dissimilarity import score_settings
+from geo_model.utils import MODES, disadvantaged_students, dissimilarity_index
 
 DATA = ld.POPULATION_XLSX.parent.parent
 
@@ -243,6 +247,138 @@ def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
         sweep_main.draw_columns(
             Figure(), pd.concat([results, stray]), intake, modes, fsm, ["decile"]
         )
+
+
+# --------------------------------------------------------------------------
+# default_matchings: against the real data folder
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_default_matchings_are_the_ones_the_sweep_scores_at_the_defaults():
+    areas = ld.load_areas()
+    _, schools = ld.load_schools()
+    samples = list(
+        sweep_main.student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1)
+    )
+    shares = ld.load_nts_mode_shares()
+
+    matchings = sweep_main.default_matchings(samples[0], areas, schools)
+    rows, _, _ = score_settings(sweep_main.DEFAULTS, samples, areas, schools, shares)
+
+    disadvantaged = disadvantaged_students(
+        samples[0][1], areas, sweep_main.DEFAULTS.decile
+    )
+    assert [row["scenario"] for row in rows] == list(matchings)
+    for row in rows:
+        matched_school = matchings[row["scenario"]][:, 0]
+        assert (
+            dissimilarity_index(matched_school, disadvantaged, len(schools))
+            == row["dissimilarity"]
+        )
+        assert (matched_school >= 0).sum() == row["n_matched"]
+    assert (matchings["with routes"][:, 1] >= 0).any()
+    assert (matchings["without routes"][:, 1] < 0).all()
+
+
+# --------------------------------------------------------------------------
+# draw_map
+# --------------------------------------------------------------------------
+
+
+def synthetic_city():
+    """Two 10km districts, two schools and four students, matched both ways.
+
+    With routes, student 0 is seated at school 0, student 1 at school 1 on
+    route 0 and student 2 at school 1, while student 3 is left unassigned.
+    Without routes, student 1 is seated at school 0 instead.
+    """
+    areas = gpd.GeoDataFrame(
+        {"IDACI Decile": [1, 10]},
+        geometry=[box(0, 0, 10_000, 10_000), box(10_000, 0, 20_000, 10_000)],
+        crs=ld.CRS,
+    )
+    schools = pd.DataFrame(
+        {
+            "Easting": [5_000.0, 15_000.0],
+            "Northing": [5_000.0, 5_000.0],
+            "P8MEA": [-0.5, 0.25],
+        }
+    )
+    student_xy = np.array(
+        [
+            [1_000.0, 1_000.0],
+            [2_000.0, 8_000.0],
+            [12_000.0, 3_000.0],
+            [18_000.0, 8_000.0],
+        ]
+    )
+    matchings = {
+        "with routes": np.array([[0, -1], [1, 0], [1, -1], [-1, -1]]),
+        "without routes": np.array([[0, -1], [0, -1], [1, -1], [-1, -1]]),
+    }
+    return areas, schools, student_xy, matchings
+
+
+def test_draw_map_links_every_seated_student_to_their_school():
+    areas, schools, student_xy, matchings = synthetic_city()
+    fig = Figure(figsize=(16, 8), layout="constrained")
+
+    sweep_main.draw_map(fig, areas, schools, student_xy, matchings)
+
+    school_xy = schools[["Easting", "Northing"]].to_numpy()
+    linked = {
+        "with routes": {"without a route": [0, 2], "on a route": [1]},
+        "without routes": {"without a route": [0, 1, 2], "on a route": []},
+    }
+    # The panels come first and in scenario order; the colorbars follow them.
+    for ax, (scenario, matching) in zip(fig.axes, matchings.items()):
+        assert ax.get_title() == scenario
+        drawn = {collection.get_label(): collection for collection in ax.collections}
+        deciles = drawn["districts"].get_array()
+        assert deciles is not None and list(deciles) == [1, 10]
+        assert drawn["districts"].get_clim() == (0.5, 10.5)
+        for label, students in linked[scenario].items():
+            links = drawn[label]
+            assert isinstance(links, LineCollection)
+            assert [s.tolist() for s in links.get_segments()] == [
+                [student_xy[i].tolist(), school_xy[matching[i, 0]].tolist()]
+                for i in students
+            ]
+        np.testing.assert_array_equal(drawn["seated"].get_offsets(), student_xy[:3])
+        np.testing.assert_array_equal(drawn["unassigned"].get_offsets(), student_xy[3:])
+        scores = drawn["schools"].get_array()
+        assert scores is not None and list(scores) == [-0.5, 0.25]
+        # Centred on the England average, reaching the largest score either way.
+        assert drawn["schools"].get_clim() == (-0.5, 0.5)
+        # A metre is as long north as east, so the scale holds in every direction.
+        assert ax.get_aspect() == 1.0
+        # Kilometres ticked above the line and miles below, from one origin.
+        origins = []
+        for (unit, (metres, length)), side in zip(
+            sweep_main.SCALE_BAR.items(), (1, -1)
+        ):
+            scale = drawn[unit]
+            assert isinstance(scale, LineCollection)
+            (start, end), *ticks = scale.get_segments()
+            assert start[1] == end[1]
+            assert end[0] - start[0] == pytest.approx(length * metres)
+            assert [tick[0, 0] - start[0] for tick in ticks] == pytest.approx(
+                [i * metres for i in range(length + 1)]
+            )
+            assert all(np.sign(tick[1, 1] - tick[0, 1]) == side for tick in ticks)
+            origins.append(start.tolist())
+        assert origins[0] == origins[1]
+        labels = ["0", "1", "2", "3 km", "0", "1", "2 miles"]
+        assert [text.get_text() for text in ax.texts] == labels
+
+
+def test_plot_map_writes_a_png(tmp_path, monkeypatch):
+    monkeypatch.setattr(sweep_main, "MAP_PNG", tmp_path / "out" / "map.png")
+
+    sweep_main.plot_map(*synthetic_city())
+
+    assert sweep_main.MAP_PNG.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 # --------------------------------------------------------------------------
