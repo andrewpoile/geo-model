@@ -22,14 +22,14 @@ MIN_ROUTE_DISTANCE = 3218
 # the SCT instance.
 ROUTE_CAPACITY_SCALE = 5.0
 
-# How far a route's seats lean towards the more deprived districts, in [0, 1].
-# A district at IDACI decile D at or below the threshold T is weighted
-# (1 - p) + p * f(D), f running from 1 at decile 1 to 1 / T at decile T, so 0
-# seats every district on its fair share alone and 1 weights decile 1 T times
-# decile T. The weights are rescaled to a cohort-weighted mean of 1 over the
-# route-eligible districts, so they move seats between districts without
-# changing how many there are.
-ROUTE_PROGRESSIVITY = 0.5
+# How far a route's seats lean towards the more deprived districts, p >= 0.
+# A district at IDACI decile D at or below the threshold T is weighted f(D)^p,
+# f running from 1 at decile 1 to 1 / T at decile T, so 0 seats every district
+# on its fair share alone and p weights decile 1 T^p times decile T. The
+# weights are rescaled to a cohort-weighted mean of 1 over the route-eligible
+# districts, so they move seats between districts without changing how many
+# there are.
+ROUTE_PROGRESSIVITY = 1.0
 
 # The profile f of the progressive weight: 1 / D, or with True the linear
 # (T + 1 - D) / T. The two agree at deciles 1 and T and differ between them.
@@ -153,10 +153,11 @@ def route_network(
     holds the seats the district would take at the school if every intake
     matched the city's mix. Every student of a route-eligible district is
     disadvantaged, so n_d is the district's disadvantaged cohort. The weight
-    w_d is (1 - p) + p / D_d for a district at IDACI decile D_d, or
-    (1 - p) + p * (decile + 1 - D_d) / decile when `linear`, rescaled so its
-    cohort-weighted mean over the route-eligible districts is 1: p moves seats towards the more deprived districts without
-    changing how many seats each school offers before rounding.
+    w_d is (1 / D_d)^p for a district at IDACI decile D_d, or
+    ((decile + 1 - D_d) / decile)^p when `linear`, rescaled so its
+    cohort-weighted mean over the route-eligible districts is 1: p moves seats
+    towards the more deprived districts without changing how many seats each
+    school offers before rounding.
 
     Args:
         areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IDACI
@@ -200,9 +201,9 @@ def route_network(
         least one, rather than to the nearest seat, which leaves a route
         rounding to none unbuilt. Defaults to ROUND_UP_SEATS.
 
-        progressivity (float, optional): p, in [0, 1], how far seats lean
-        towards the more deprived districts: 0 is flat, 1 weights decile 1
-        `decile` times decile `decile`. Defaults to ROUTE_PROGRESSIVITY.
+        progressivity (float, optional): p >= 0, how far seats lean towards
+        the more deprived districts: 0 is flat, p weights decile 1 `decile`^p
+        times decile `decile`. Defaults to ROUTE_PROGRESSIVITY.
 
         linear (bool, optional): Weight by the linear profile
         (decile + 1 - D) / decile rather than by 1 / D. Defaults to
@@ -241,8 +242,8 @@ def route_network(
         )
     if capacity_scale <= 0:
         raise ValueError(f"capacity_scale must be positive, got {capacity_scale}.")
-    if not 0 <= progressivity <= 1:
-        raise ValueError(f"progressivity must lie in [0, 1], got {progressivity}.")
+    if progressivity < 0:
+        raise ValueError(f"progressivity must be non-negative, got {progressivity}.")
 
     disadvantaged = areas[areas["IDACI Decile"] <= decile]
     if disadvantaged.empty:
@@ -275,7 +276,7 @@ def route_network(
         )
     district_decile = eligible["IDACI Decile"].to_numpy()
     rank = (decile + 1 - district_decile) / decile if linear else 1 / district_decile
-    weight = (1 - progressivity) + progressivity * rank
+    weight = rank**progressivity
     weight *= eligible_cohort.sum() / (eligible_cohort * weight).sum()
     seats = (
         capacity_scale

@@ -63,11 +63,11 @@ GRID = {
     # whole cohort and no route capacity binds.
     "capacity_scale": [
         replace(DEFAULTS, capacity_scale=k)
-        for k in (1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 25.0)
+        for k in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 10.0, 15.0, 20.0, 25.0)
     ],
-    # From every district on its fair share alone to decile 1 weighted T times
-    # the threshold decile T, the total seats held fixed throughout.
-    "progressivity": [replace(DEFAULTS, progressivity=p / 10) for p in range(11)],
+    # From every district on its fair share alone to decile 1 weighted T^3
+    # times the threshold decile T, the total seats held fixed throughout.
+    "progressivity": [replace(DEFAULTS, progressivity=p / 4) for p in range(13)],
     # Quarter steps over the spread of P8MEA, which runs from -0.99 to 0.82 over
     # the 12 secondary schools: above 0.82 no school is above the threshold, so
     # the condition is inert and the route set is whole. At LOCAL_RADIUS no
@@ -98,7 +98,7 @@ AXIS_LABELS = {
     "decile": "Disadvantaged at or below IDACI decile",
     "min_distance": "Minimum route distance (m)",
     "capacity_scale": "Route capacity scale (× fair share of PAN)",
-    "progressivity": "Route seat progressivity (0 flat, 1 by decile)",
+    "progressivity": "Route seat progressivity (weight f(D)^p)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
     "local_radius": "Local performance radius (m)",
     "performance_weight": "Performance weight, other students",

@@ -284,13 +284,13 @@ def test_route_network_rejects_a_route_set_holding_no_seat():
 
 
 @pytest.mark.parametrize(
-    ("progressivity", "seats"), [(0.0, [10, 10]), (0.5, [12, 8]), (1.0, [15, 5])]
+    ("progressivity", "seats"), [(0.0, [10, 10]), (1.0, [15, 5]), (2.0, [18, 2])]
 )
 def test_route_network_leans_seats_towards_the_deprived_districts(progressivity, seats):
     # Districts at deciles 1 and 3 of threshold 3, 10 students each out of 100,
     # routed to one far school admitting 100. At p = 1 the raw weights are 1
-    # and 1/3, rescaled to 1.5 and 0.5; at p = 0.5 they are 1 and 2/3, rescaled
-    # to 1.2 and 0.8. The 20 seats the two share never change.
+    # and 1/3, rescaled to 1.5 and 0.5; at p = 2 they are 1 and 1/9, rescaled
+    # to 1.8 and 0.2. The 20 seats the two share never change.
     routes = network(
         make_areas([1, 3, 5]),
         np.array([[100_000.0, 0.0]]),
@@ -328,10 +328,9 @@ def test_route_network_weights_the_middle_deciles_by_the_profile_chosen(linear, 
     np.testing.assert_array_equal(routes["capacity"], seats)
 
 
-@pytest.mark.parametrize("progressivity", [-0.1, 1.1])
-def test_route_network_rejects_a_progressivity_outside_zero_to_one(progressivity):
-    with pytest.raises(ValueError, match="progressivity must lie in"):
-        network(make_areas([1, 1]), progressivity=progressivity)
+def test_route_network_rejects_a_negative_progressivity():
+    with pytest.raises(ValueError, match="progressivity must be non-negative"):
+        network(make_areas([1, 1]), progressivity=-0.1)
 
 
 def test_route_network_rejects_route_eligible_districts_holding_no_students():
