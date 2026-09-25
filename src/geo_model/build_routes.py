@@ -31,10 +31,10 @@ ROUND_UP_SEATS = False
 # on the England average, so 0 is an average school.
 MAX_LOCAL_P8 = 0.0
 
-# Metres. Two miles again, but read the other way round: the distance a district
-# is taken to be served over. It coincides with MIN_ROUTE_DISTANCE by
-# construction rather than by definition, so the two are swept apart.
-LOCAL_RADIUS = 3218
+# Metres. 1609m is one mile, read the other way round from MIN_ROUTE_DISTANCE:
+# the distance a district is taken to be served over rather than the distance
+# it must be carried. The two are independent, so they are swept apart.
+LOCAL_RADIUS = 1609
 
 ROUTES_CSV = Path("temp/secondary_routes.csv")
 ROUTES_NPZ = Path("temp/secondary_routes.npz")

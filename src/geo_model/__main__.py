@@ -65,10 +65,11 @@ GRID = {
         replace(DEFAULTS, capacity_scale=k)
         for k in (1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 25.0)
     ],
-    # P8MEA runs from -0.99 to 0.82 over the 12 secondary schools. At -0.72 or
-    # below every disadvantaged district has a school above the threshold within
-    # the radius and the route set empties, so the grid starts at -0.5; above
-    # 0.82 no school is, so the condition is inert and the route set is whole.
+    # Quarter steps over the spread of P8MEA, which runs from -0.99 to 0.82 over
+    # the 12 secondary schools: above 0.82 no school is above the threshold, so
+    # the condition is inert and the route set is whole. At LOCAL_RADIUS no
+    # value empties it, since a district with no school inside the radius at all
+    # keeps its routes however low the threshold.
     "max_local_p8": [replace(DEFAULTS, max_local_p8=p / 4) for p in range(-2, 5)],
     # Half miles in metres. Every disadvantaged district has a school above
     # MAX_LOCAL_P8 within 5.6km, so the route set empties from there.
