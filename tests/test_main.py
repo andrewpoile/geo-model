@@ -256,12 +256,12 @@ def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
 
 
 # --------------------------------------------------------------------------
-# default_matchings: against the real data folder
+# settings_matchings: against the real data folder
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_default_matchings_are_the_ones_the_sweep_scores_at_the_defaults():
+def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults():
     areas = ld.load_areas()
     _, schools = ld.load_schools()
     samples = list(
@@ -269,7 +269,9 @@ def test_default_matchings_are_the_ones_the_sweep_scores_at_the_defaults():
     )
     shares = ld.load_nts_mode_shares()
 
-    matchings = sweep_main.default_matchings(samples[0], areas, schools)
+    matchings = sweep_main.settings_matchings(
+        sweep_main.DEFAULTS, samples[0], areas, schools
+    )
     rows, _, _ = score_settings(sweep_main.DEFAULTS, samples, areas, schools, shares)
 
     disadvantaged = disadvantaged_students(
@@ -379,12 +381,12 @@ def test_draw_map_links_every_seated_student_to_their_school():
         assert [text.get_text() for text in ax.texts] == labels
 
 
-def test_plot_map_writes_a_png(tmp_path, monkeypatch):
-    monkeypatch.setattr(sweep_main, "MAP_PNG", tmp_path / "out" / "map.png")
+def test_plot_map_writes_a_png(tmp_path):
+    png = tmp_path / "out" / "map.png"
 
-    sweep_main.plot_map(*synthetic_city())
+    sweep_main.plot_map(*synthetic_city(), png)
 
-    assert sweep_main.MAP_PNG.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 # --------------------------------------------------------------------------
@@ -405,9 +407,8 @@ def test_draw_lorenz_draws_every_seed_and_its_gini_per_scenario():
     _, intake, _, _ = synthetic_frames()
     fig = Figure(figsize=(12, 6.5), layout="constrained")
 
-    sweep_main.draw_lorenz(fig, intake)
-
     default = default_intake(intake)
+    sweep_main.draw_lorenz(fig, default)
     for ax, scenario in zip(fig.axes, sweep_main.COLOURS):
         assert ax.get_title() == scenario
         seeds = default[default["scenario"] == scenario].groupby("seed")
@@ -424,19 +425,27 @@ def test_draw_lorenz_draws_every_seed_and_its_gini_per_scenario():
         assert text.get_text().startswith(f"Gini {np.mean(coefficients):.3f} (mean)")
 
 
-def test_draw_lorenz_rejects_rows_without_the_default_cell():
+def test_default_cell_picks_the_rows_of_the_first_parameters_default():
+    _, intake, _, _ = synthetic_frames()
+
+    pd.testing.assert_frame_equal(
+        sweep_main.default_cell(intake), default_intake(intake)
+    )
+
+
+def test_default_cell_rejects_rows_without_it():
     _, intake, _, _ = synthetic_frames()
 
     with pytest.raises(ValueError, match="no default cell of"):
-        sweep_main.draw_lorenz(Figure(), intake.drop(default_intake(intake).index))
+        sweep_main.default_cell(intake.drop(default_intake(intake).index))
 
 
-def test_plot_lorenz_writes_a_png(tmp_path, monkeypatch):
-    monkeypatch.setattr(sweep_main, "LORENZ_PNG", tmp_path / "out" / "lorenz.png")
+def test_plot_lorenz_writes_a_png(tmp_path):
+    png = tmp_path / "out" / "lorenz.png"
 
-    sweep_main.plot_lorenz(synthetic_frames()[1])
+    sweep_main.plot_lorenz(default_intake(synthetic_frames()[1]), png)
 
-    assert sweep_main.LORENZ_PNG.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 # --------------------------------------------------------------------------

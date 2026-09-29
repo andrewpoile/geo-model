@@ -90,11 +90,14 @@ def run(
     return results
 
 
-def plot(results: pd.DataFrame) -> None:
-    """Plot the expected modes of both scenarios and the change per mode, to PLOT_PNG.
+def plot(results: pd.DataFrame, path: Path) -> None:
+    """Plot the expected modes of both scenarios and the change per mode, to `path`.
 
     Args:
-        results (pd.DataFrame): As returned by `run`.
+        results (pd.DataFrame): As returned by `run`, or the mode rows of one
+        setting as `score_settings` returns them.
+
+        path (Path): PNG to write.
     """
     change = mode_change(results)
 
@@ -127,8 +130,8 @@ def plot(results: pd.DataFrame) -> None:
         ax.set_axisbelow(True)
         sns.despine(ax=ax)
 
-    PLOT_PNG.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(PLOT_PNG, dpi=200)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=200)
 
 
 def main() -> None:
@@ -162,7 +165,7 @@ def main() -> None:
     )
     print("Mean over seeds:")
     print(summary.round(3))
-    plot(results)
+    plot(results, PLOT_PNG)
     print(f"Wrote {RESULTS_CSV} and {PLOT_PNG}.")
 
 

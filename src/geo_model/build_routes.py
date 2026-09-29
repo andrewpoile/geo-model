@@ -53,6 +53,10 @@ ROUTES_CSV = Path("temp/secondary_routes.csv")
 ROUTES_NPZ = Path("temp/secondary_routes.npz")
 
 
+class EmptyRouteSet(ValueError):
+    """No route survives the conditions: an outcome of the settings, not bad input."""
+
+
 def centroid_xy(districts: gpd.GeoDataFrame) -> np.ndarray:
     """Read the population centroid of every district as coordinates.
 
@@ -261,7 +265,7 @@ def route_network(
     ).any(axis=1)
     eligible = disadvantaged[~served]
     if eligible.empty:
-        raise ValueError(
+        raise EmptyRouteSet(
             f"Every one of the {len(disadvantaged)} disadvantaged districts has "
             f"a school scoring above Progress 8 {max_local_p8} within "
             f"{local_radius}m, so no district is route-eligible."
@@ -270,7 +274,7 @@ def route_network(
     cohort = np.asarray(district_cohort, dtype=float)
     eligible_cohort = cohort[eligible.index]
     if eligible_cohort.sum() == 0:
-        raise ValueError(
+        raise EmptyRouteSet(
             f"The {len(eligible)} route-eligible districts hold no students, so "
             "no route can hold a seat."
         )
@@ -287,7 +291,7 @@ def route_network(
 
     routes = build_routes(eligible, school_xy, min_distance, capacity)
     if routes.empty:
-        raise ValueError(
+        raise EmptyRouteSet(
             f"No school lies more than {min_distance}m from any of the "
             f"{len(eligible)} route-eligible districts on a route holding a seat "
             f"at capacity scale {capacity_scale}, so the route set is empty."

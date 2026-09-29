@@ -32,8 +32,8 @@ def test_run_counts_every_mode_of_both_scenarios_of_every_seed(tmp_path, monkeyp
 # --------------------------------------------------------------------------
 
 
-def test_plot_writes_a_png_of_the_results(tmp_path, monkeypatch):
-    monkeypatch.setattr(cd, "PLOT_PNG", tmp_path / "out" / "car_displacement.png")
+def test_plot_writes_a_png_of_the_results(tmp_path):
+    png = tmp_path / "out" / "car_displacement.png"
     results = pd.DataFrame(
         [
             {"seed": seed, "scenario": scenario, "mode": mode, "students": 10.0}
@@ -43,6 +43,6 @@ def test_plot_writes_a_png_of_the_results(tmp_path, monkeypatch):
         ]
     )
 
-    cd.plot(results)
+    cd.plot(results, png)
 
-    assert cd.PLOT_PNG.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

@@ -431,11 +431,14 @@ def run(n_seeds: int) -> pd.DataFrame:
     return results
 
 
-def plot(results: pd.DataFrame) -> None:
-    """Box-plot the index per scenario, one point per seed, to PLOT_PNG.
+def plot(results: pd.DataFrame, path: Path) -> None:
+    """Box-plot the index per scenario, one point per seed, to `path`.
 
     Args:
-        results (pd.DataFrame): As returned by `run`.
+        results (pd.DataFrame): As returned by `run`, or the scenario rows of
+        one setting as `score_settings` returns them.
+
+        path (Path): PNG to write.
     """
     # A bare Figure draws without a display backend, which pyplot would need.
     fig = Figure(figsize=(5, 4))
@@ -452,8 +455,8 @@ def plot(results: pd.DataFrame) -> None:
     sns.despine(ax=ax)
     fig.tight_layout()
 
-    PLOT_PNG.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(PLOT_PNG, dpi=200)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=200)
 
 
 def main() -> None:
@@ -465,7 +468,7 @@ def main() -> None:
 
     results = run(args.seeds)
     print(results.groupby("scenario")["dissimilarity"].describe())
-    plot(results)
+    plot(results, PLOT_PNG)
     print(f"Wrote {RESULTS_CSV} and {PLOT_PNG}.")
 
 

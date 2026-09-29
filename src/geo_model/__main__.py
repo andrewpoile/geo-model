@@ -21,6 +21,7 @@ from geo_model.build_routes import LINEAR_PROGRESSIVITY, ROUND_UP_SEATS
 from geo_model.dissimilarity import (
     DEFAULTS,
     N_SEEDS,
+    Settings,
     match_sample,
     score_settings,
     settings_routes,
@@ -728,20 +729,23 @@ def plot(
     fig.savefig(PLOT_PNG, dpi=200)
 
 
-def default_matchings(
+def settings_matchings(
+    settings: Settings,
     sample: tuple[np.ndarray, np.ndarray],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
 ) -> dict[str, np.ndarray]:
-    """Match one student sample at DEFAULTS, with routes and without.
+    """Match one student sample at `settings`, with routes and without.
 
     The ranking carries no noise and the mechanism is deterministic, so these
-    are the matchings the default cell of every parameter scores for the
-    sample.
+    are the matchings `score_settings` scores for the sample at `settings`.
 
     Args:
+        settings (Settings): The parameter values to build routes and rank
+        preferences with.
+
         sample (tuple[np.ndarray, np.ndarray]): Coordinates and positional
         district index of each student, as yielded by `student_samples`.
 
@@ -767,12 +771,12 @@ def default_matchings(
             student_lsoa,
             areas,
             secondary_schools,
-            settings_routes(DEFAULTS, areas, secondary_schools, round_up, linear),
-            disadvantaged_students(student_lsoa, areas, DEFAULTS.decile),
-            DEFAULTS.performance_weight,
-            DEFAULTS.route_discount,
-            DEFAULTS.disadvantaged_performance_weight,
-            DEFAULTS.disadvantaged_route_discount,
+            settings_routes(settings, areas, secondary_schools, round_up, linear),
+            disadvantaged_students(student_lsoa, areas, settings.decile),
+            settings.performance_weight,
+            settings.route_discount,
+            settings.disadvantaged_performance_weight,
+            settings.disadvantaged_route_discount,
         )
     )
 
@@ -805,7 +809,7 @@ def draw_map(
         in the CRS of `areas`.
 
         matchings (dict[str, np.ndarray]): The matching of each scenario, as
-        `default_matchings` returns them.
+        `settings_matchings` returns them.
     """
     school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
     p8 = secondary_schools["P8MEA"].to_numpy()
@@ -933,8 +937,9 @@ def plot_map(
     secondary_schools: pd.DataFrame,
     student_xy: np.ndarray,
     matchings: dict[str, np.ndarray],
+    path: Path,
 ) -> None:
-    """Map `matchings` with `draw_map`, to MAP_PNG.
+    """Map `matchings` with `draw_map`, to `path`.
 
     Args:
         areas (gpd.GeoDataFrame): Passed to `draw_map`.
@@ -944,43 +949,61 @@ def plot_map(
         student_xy (np.ndarray): Passed to `draw_map`.
 
         matchings (dict[str, np.ndarray]): Passed to `draw_map`.
+
+        path (Path): PNG to write.
     """
     # A bare Figure draws without a display backend, which pyplot would need.
     fig = Figure(figsize=(16, 8), layout="constrained")
     draw_map(fig, areas, secondary_schools, student_xy, matchings)
-    MAP_PNG.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(MAP_PNG, dpi=200)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=200)
 
 
-def draw_lorenz(fig: Figure, schools: pd.DataFrame) -> None:
-    """Fill `fig` with a panel per scenario: the Lorenz curve of disadvantaged
-    against seated students over schools at the default settings, a line per
-    seed, and its Gini coefficient over the seeds.
+def default_cell(rows: pd.DataFrame) -> pd.DataFrame:
+    """The rows of the first parameter's default cell.
 
     Every parameter's default cell scores the same matchings, so the first
-    parameter's stands for them all. A student left unassigned belongs to no
-    school's intake, so the curves count seated students alone. Both panels
-    share both axes, so the panels compare.
+    parameter's stands for them all: the rows of the default settings.
 
     Args:
-        fig (Figure): Figure to draw on, using constrained layout.
+        rows (pd.DataFrame): Rows `sweep` returns.
 
-        schools (pd.DataFrame): The school rows `sweep` returns.
+    Returns:
+        pd.DataFrame: The rows of that cell.
 
     Raises:
         ValueError: If the rows hold no default cell of the first parameter.
     """
     parameter = next(iter(GRID))
-    default = schools[
-        (schools["parameter"] == parameter)
-        & (schools["value"] == asdict(DEFAULTS)[parameter])
+    default = rows[
+        (rows["parameter"] == parameter)
+        & (rows["value"] == asdict(DEFAULTS)[parameter])
     ]
     if default.empty:
-        raise ValueError(f"The school rows hold no default cell of {parameter}.")
+        raise ValueError(f"The rows hold no default cell of {parameter}.")
+    return default
+
+
+def draw_lorenz(fig: Figure, schools: pd.DataFrame) -> None:
+    """Fill `fig` with a panel per scenario: the Lorenz curve of disadvantaged
+    against seated students over schools at one setting, a line per seed, and
+    its Gini coefficient over the seeds.
+
+    A student left unassigned belongs to no school's intake, so the curves
+    count seated students alone. Both panels share both axes, so the panels
+    compare.
+
+    Args:
+        fig (Figure): Figure to draw on, using constrained layout.
+
+        schools (pd.DataFrame): The school rows of one setting, as
+        `score_settings` returns them or `default_cell` picks them from
+        `sweep`'s, the disadvantaged group taken at DEFAULTS.decile.
+    """
     axes = fig.subplots(1, len(COLOURS), sharex=True, sharey=True)
     for ax, (scenario, colour) in zip(axes, COLOURS.items()):
         coefficients = []
-        for seed, intake in default[default["scenario"] == scenario].groupby("seed"):
+        for seed, intake in schools[schools["scenario"] == scenario].groupby("seed"):
             x, y = lorenz_curve(intake["disadvantaged"], intake["other"])
             ax.plot(x, y, color=colour, linewidth=1, alpha=0.5, label=f"seed {seed}")
             coefficients.append(gini(x, y))
@@ -1009,17 +1032,19 @@ def draw_lorenz(fig: Figure, schools: pd.DataFrame) -> None:
     )
 
 
-def plot_lorenz(schools: pd.DataFrame) -> None:
-    """Plot the Lorenz curves with `draw_lorenz`, to LORENZ_PNG.
+def plot_lorenz(schools: pd.DataFrame, path: Path) -> None:
+    """Plot the Lorenz curves with `draw_lorenz`, to `path`.
 
     Args:
         schools (pd.DataFrame): Passed to `draw_lorenz`.
+
+        path (Path): PNG to write.
     """
     # A bare Figure draws without a display backend, which pyplot would need.
     fig = Figure(figsize=(12, 6.5), layout="constrained")
     draw_lorenz(fig, schools)
-    LORENZ_PNG.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(LORENZ_PNG, dpi=200)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=200)
 
 
 def main() -> None:
@@ -1127,16 +1152,18 @@ def main() -> None:
             areas,
             secondary_schools,
             samples[0][0],
-            default_matchings(
+            settings_matchings(
+                DEFAULTS,
                 samples[0],
                 areas,
                 secondary_schools,
                 args.round_up_seats,
                 args.linear_progressivity,
             ),
+            MAP_PNG,
         )
     if args.lorenz:
-        plot_lorenz(schools)
+        plot_lorenz(default_cell(schools), LORENZ_PNG)
     print(
         f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in {SWEEP_DIR}."
     )

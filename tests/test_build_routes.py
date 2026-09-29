@@ -180,7 +180,7 @@ def test_route_network_rejects_an_instance_with_no_disadvantaged_district():
 
 
 def test_route_network_rejects_an_empty_route_set():
-    with pytest.raises(ValueError, match="so the route set is"):
+    with pytest.raises(br.EmptyRouteSet, match="so the route set is"):
         network(make_areas([1, 1]), min_distance=50_000)
 
 
@@ -213,7 +213,7 @@ def test_route_network_takes_a_school_on_the_radius_as_local():
 
 
 def test_route_network_rejects_an_instance_with_no_route_eligible_district():
-    with pytest.raises(ValueError, match="no district is route-eligible"):
+    with pytest.raises(br.EmptyRouteSet, match="no district is route-eligible"):
         network(
             make_areas([1, 1]), school_scores=np.array([1.0, 1.0]), local_radius=50_000
         )
@@ -279,7 +279,7 @@ def test_route_network_drops_a_route_rounding_to_no_seat_unless_rounding_up(caps
 
 
 def test_route_network_rejects_a_route_set_holding_no_seat():
-    with pytest.raises(ValueError, match="so the route set is"):
+    with pytest.raises(br.EmptyRouteSet, match="so the route set is"):
         network(make_areas([1, 1, 9]), district_cohort=np.array([1, 1, 1_000_000]))
 
 
@@ -334,7 +334,7 @@ def test_route_network_rejects_a_negative_progressivity():
 
 
 def test_route_network_rejects_route_eligible_districts_holding_no_students():
-    with pytest.raises(ValueError, match="hold no students"):
+    with pytest.raises(br.EmptyRouteSet, match="hold no students"):
         network(make_areas([1, 1, 9]), district_cohort=np.array([0, 0, 100]))
 
 
