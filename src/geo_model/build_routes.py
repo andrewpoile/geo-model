@@ -6,9 +6,23 @@ import pandas as pd
 import shapely
 from scipy.spatial import distance as spdist
 
-# LSOAs at or below this IDACI decile are the disadvantaged districts, the only
-# districts routes are built from. 1 is the most deprived 10% of LSOAs.
+# Routes are built only from LSOAs at or below this IDACI decile, 1 being the
+# most deprived 10% of LSOAs. Under DISADVANTAGE "decile" it also sets which
+# students are disadvantaged.
 DISADVANTAGED_DECILE = 3
+
+# Who is disadvantaged, and who may ride a route leaving their district:
+#   "score"       Each LSOA's students are drawn disadvantaged in proportion to
+#                 its IDACI score, and only they ride, so a route's seats are
+#                 sized on its district's disadvantaged cohort.
+#   "score-open"  Drawn the same way, but every student of a route's district
+#                 rides, as the SCT model's district-level routes, so seats are
+#                 sized on the district's whole cohort.
+#   "decile"      Every student of an LSOA at or below the decile is
+#                 disadvantaged and rides, seats sized on the whole cohort: the
+#                 model as it was before the scores were drawn from.
+DISADVANTAGE_CHOICES = ("score", "score-open", "decile")
+DISADVANTAGE = "score"
 
 # Metres. A route carries a student to a school they cannot reach unaided, so
 # nearer schools need none. 3218m is two miles, the lower bound of the extended
@@ -69,6 +83,25 @@ def centroid_xy(districts: gpd.GeoDataFrame) -> np.ndarray:
     """
     centroids = np.asarray(districts["Centroids"])
     return np.column_stack((shapely.get_x(centroids), shapely.get_y(centroids)))
+
+
+def disadvantaged_cohort(areas: pd.DataFrame, sizes: np.ndarray) -> np.ndarray:
+    """Disadvantaged students in each area's cohort, to the nearest student.
+
+    An area's IDACI score is the share of its children, aged 0 to 15, living
+    in income-deprived families, so it is taken as the share of the cohort
+    sampled there who are disadvantaged.
+
+    Args:
+        areas (pd.DataFrame): Areas carrying an "IDACI Score" column.
+
+        sizes (np.ndarray): Students in each area's cohort, aligned with
+        `areas`.
+
+    Returns:
+        np.ndarray: Disadvantaged students in each area, aligned with `areas`.
+    """
+    return np.rint(areas["IDACI Score"].to_numpy() * sizes).astype(np.int64)
 
 
 def build_routes(
@@ -139,6 +172,7 @@ def route_network(
     round_up: bool = ROUND_UP_SEATS,
     progressivity: float = ROUTE_PROGRESSIVITY,
     linear: bool = LINEAR_PROGRESSIVITY,
+    disadvantage: str = DISADVANTAGE,
 ) -> pd.DataFrame:
     """Select the route-eligible districts of `areas` and route them to schools.
 
@@ -148,25 +182,28 @@ def route_network(
     past it. The local schools are read from the same population centroid the
     distance condition measures from.
 
-    The disadvantaged group itself is the decile group, untouched by the
-    performance condition, so the dissimilarity index still measures every
-    district at or below `decile` whether it is route-eligible or not.
+    The disadvantaged group is untouched by the performance condition, so the
+    dissimilarity index measures the same students whether their district is
+    route-eligible or not. Under every `disadvantage` but "decile" it is drawn
+    from IDACI scores, so the decile does not move it either.
 
     A route from district d to school s holds k * PAN_s * n_d * w_d / N seats,
-    with n_d the district's cohort and N the city's, so at k = 1 and w_d = 1 it
-    holds the seats the district would take at the school if every intake
-    matched the city's mix. Every student of a route-eligible district is
-    disadvantaged, so n_d is the district's disadvantaged cohort. The weight
+    with n_d the students of the district who may ride and N the city's
+    cohort, so at k = 1 and w_d = 1 it holds the seats the district's riders
+    would take at the school if every intake matched the city's mix. Under
+    "score" only the district's disadvantaged students ride, so n_d is its
+    disadvantaged cohort, as `disadvantaged_cohort` gives it; otherwise every
+    student of the district rides and n_d is its whole cohort. The weight
     w_d is (1 / D_d)^p for a district at IDACI decile D_d, or
     ((decile + 1 - D_d) / decile)^p when `linear`, rescaled so its
-    cohort-weighted mean over the route-eligible districts is 1: p moves seats
+    rider-weighted mean over the route-eligible districts is 1: p moves seats
     towards the more deprived districts without changing how many seats each
     school offers before rounding.
 
     Args:
         areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IDACI
-        Decile" and "Centroids" columns, positionally indexed in the order
-        students were sampled from.
+        Decile", "IDACI Score" and "Centroids" columns, positionally indexed
+        in the order students were sampled from.
 
         school_xy (np.ndarray): School coordinates, shape (n_schools, 2), in the
         same CRS as the centroids.
@@ -182,9 +219,8 @@ def route_network(
         district_cohort (np.ndarray): Students in the cohort of every district,
         positionally aligned with `areas`, as `cohort_sizes` gives it.
 
-        decile (int, optional): Districts at or below this IDACI decile are the
-        disadvantaged ones routes are built from. Defaults to
-        DISADVANTAGED_DECILE.
+        decile (int, optional): Routes are built only from districts at or
+        below this IDACI decile. Defaults to DISADVANTAGED_DECILE.
 
         min_distance (float, optional): Districts are routed only to schools
         further away than this, in metres. Defaults to MIN_ROUTE_DISTANCE.
@@ -213,11 +249,18 @@ def route_network(
         (decile + 1 - D) / decile rather than by 1 / D. Defaults to
         LINEAR_PROGRESSIVITY.
 
+        disadvantage (str, optional): One of DISADVANTAGE_CHOICES, which sets
+        who may ride a route. Defaults to DISADVANTAGE.
+
     Returns:
         pd.DataFrame: The route set, as returned by `build_routes`.
     """
     if not 1 <= decile <= 10:
         raise ValueError(f"decile must be an IDACI decile in [1, 10], got {decile}.")
+    if disadvantage not in DISADVANTAGE_CHOICES:
+        raise ValueError(
+            f"disadvantage must be one of {DISADVANTAGE_CHOICES}, got {disadvantage!r}."
+        )
 
     # A student is tied to their district by position, since sample_students
     # returns a positional area index, so district_idx only means anything if
@@ -249,42 +292,44 @@ def route_network(
     if progressivity < 0:
         raise ValueError(f"progressivity must be non-negative, got {progressivity}.")
 
-    disadvantaged = areas[areas["IDACI Decile"] <= decile]
-    if disadvantaged.empty:
+    deprived = areas[areas["IDACI Decile"] <= decile]
+    if deprived.empty:
         raise ValueError(
             f"No LSOA sits at or below IDACI decile {decile}, so there are no "
-            "disadvantaged districts to build routes from."
+            "districts to build routes from."
         )
 
     # A school above the threshold inside the radius serves the district
     # already, so no route is built from it. Carried on the district index, so
     # the eligible subset keeps the positions district_idx is read from.
-    local = spdist.cdist(centroid_xy(disadvantaged), school_xy) <= local_radius
+    local = spdist.cdist(centroid_xy(deprived), school_xy) <= local_radius
     served = pd.DataFrame(
-        local & (np.asarray(school_scores) > max_local_p8), index=disadvantaged.index
+        local & (np.asarray(school_scores) > max_local_p8), index=deprived.index
     ).any(axis=1)
-    eligible = disadvantaged[~served]
+    eligible = deprived[~served]
     if eligible.empty:
         raise EmptyRouteSet(
-            f"Every one of the {len(disadvantaged)} disadvantaged districts has "
-            f"a school scoring above Progress 8 {max_local_p8} within "
-            f"{local_radius}m, so no district is route-eligible."
+            f"Every one of the {len(deprived)} districts at or below IDACI "
+            f"decile {decile} has a school scoring above Progress 8 "
+            f"{max_local_p8} within {local_radius}m, so no district is "
+            "route-eligible."
         )
 
     cohort = np.asarray(district_cohort, dtype=float)
-    eligible_cohort = cohort[eligible.index]
-    if eligible_cohort.sum() == 0:
+    riders = disadvantaged_cohort(areas, cohort) if disadvantage == "score" else cohort
+    eligible_riders = riders[eligible.index]
+    if eligible_riders.sum() == 0:
         raise EmptyRouteSet(
-            f"The {len(eligible)} route-eligible districts hold no students, so "
-            "no route can hold a seat."
+            f"The {len(eligible)} route-eligible districts hold no student who "
+            "may ride, so no route can hold a seat."
         )
     district_decile = eligible["IDACI Decile"].to_numpy()
     rank = (decile + 1 - district_decile) / decile if linear else 1 / district_decile
     weight = rank**progressivity
-    weight *= eligible_cohort.sum() / (eligible_cohort * weight).sum()
+    weight *= eligible_riders.sum() / (eligible_riders * weight).sum()
     seats = (
         capacity_scale
-        * np.outer(eligible_cohort * weight, np.asarray(school_pan, dtype=float))
+        * np.outer(eligible_riders * weight, np.asarray(school_pan, dtype=float))
         / cohort.sum()
     )
     capacity = (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int32)
@@ -311,7 +356,7 @@ def route_network(
         )
 
     print(
-        f"{len(disadvantaged)} disadvantaged districts at IDACI decile {decile} or "
+        f"{len(deprived)} districts at IDACI decile {decile} or "
         f"below, {len(eligible)} of them with no school above Progress 8 "
         f"{max_local_p8} within {local_radius}m, {len(routes)} routes to "
         f"{len(school_xy)} secondary schools, "

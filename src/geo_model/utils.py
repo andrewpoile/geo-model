@@ -5,7 +5,7 @@ from numpy.typing import ArrayLike
 from scipy.spatial import distance as spdist
 from shapely.geometry.base import BaseGeometry
 
-from geo_model.build_routes import DISADVANTAGED_DECILE
+from geo_model.build_routes import DISADVANTAGE_CHOICES, disadvantaged_cohort
 from geo_model.load_data import NTS_BANDS, NTS_MODES
 
 MILE = 1609.344  # metres
@@ -140,15 +140,17 @@ def rank_bundles(
     school_scores: np.ndarray | None = None,
     performance_weight: ArrayLike = 0.0,
     route_discount: ArrayLike = 0.0,
+    route_eligible: ArrayLike = True,
     noise_scale: float = 0.0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Rank (school, route) bundles for students and (student, route) bundles for schools.
 
     A bundle pairs a school with a route to it, or with no route at all, written
-    as route -1. A route serves one district, so a student ranks the bundles of
-    the routes leaving their own district alongside the routeless bundle of
-    every school; a student whose district has no routes ranks schools alone.
+    as route -1. A route serves one district, so a student eligible for routes
+    ranks the bundles of the routes leaving their own district alongside the
+    routeless bundle of every school; a student who is not eligible, or whose
+    district has no routes, ranks schools alone.
 
     Student preferences trade travel off against school performance, while
     school priorities are the transpose of the same pairwise distances, so one
@@ -167,10 +169,11 @@ def rank_bundles(
     penalty. A bundle therefore never ranks below the same school without one.
 
     School priorities carry the model's two brackets. The top bracket holds
-    every routed bundle to the school and every student living in the school's
-    own district, the bottom bracket holds the routeless bundles of everyone
-    else, and distance orders both. Every bundle takes its own rank, since the
-    mechanism compares ranks across the whole route axis when it evicts.
+    every routed bundle to the school, those of eligible students alone, and
+    every student living in the school's own district, the bottom bracket
+    holds the routeless bundles of everyone else, and distance orders both.
+    Every bundle takes its own rank, since the mechanism compares ranks across
+    the whole route axis when it evicts.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -208,6 +211,10 @@ def rank_bundles(
         same school without a route, 1 ranks it as if the school were next
         door. School priorities are unaffected. Defaults to 0.0.
 
+        route_eligible (ArrayLike, optional): Whether a student may take the
+        routes leaving their district, one for every student or one per
+        student. Defaults to True.
+
         noise_scale (float, optional): Standard deviation of Gaussian noise
         added to the combined preference cost, measured in units of that cost
         rather than in metres. Useful to break ties or add mild randomness
@@ -234,6 +241,9 @@ def rank_bundles(
     )
     route_discount = np.broadcast_to(
         np.asarray(route_discount, dtype=float), (n_students,)
+    )
+    route_eligible = np.broadcast_to(
+        np.asarray(route_eligible, dtype=bool), (n_students,)
     )
     if not ((0.0 <= performance_weight) & (performance_weight <= 1.0)).all():
         raise ValueError(
@@ -293,16 +303,21 @@ def rank_bundles(
 
     noise_rng = (rng or np.random.default_rng()) if noise_scale > 0 else None
 
-    # Every student in a district is offered that district's routes, so option
-    # sets are built once per district rather than once per student.
+    # Every eligible student in a district is offered that district's routes,
+    # and every other student none, so option sets are built once per
+    # (district, eligibility) pair rather than once per student.
     routes_per_district = np.bincount(route_district) if n_routes else np.zeros(1)
     max_options = n_schools + int(routes_per_district.max())
     preferences = np.full((n_students, max_options, 2), -1, dtype=np.int32)
     routeless = np.column_stack((np.arange(n_schools), np.full(n_schools, -1)))
 
-    for district in np.unique(student_district):
-        students = np.flatnonzero(student_district == district)
-        routes = np.flatnonzero(route_district == district)
+    for district, eligible in np.unique(
+        np.column_stack((student_district, route_eligible)), axis=0
+    ):
+        students = np.flatnonzero(
+            (student_district == district) & (route_eligible == eligible)
+        )
+        routes = np.flatnonzero((route_district == district) & bool(eligible))
         schools = route_school[routes]
 
         options = np.vstack((routeless, np.column_stack((schools, routes))))
@@ -328,7 +343,9 @@ def rank_bundles(
         bracket = [np.where(student_district == school_district[school], 0, 1)]
 
         for route in np.flatnonzero(route_school == school):
-            riders = np.flatnonzero(student_district == route_district[route])
+            riders = np.flatnonzero(
+                (student_district == route_district[route]) & route_eligible
+            )
             bundle_student.append(riders)
             bundle_route.append(np.full(len(riders), route))
             bracket.append(np.zeros(len(riders), dtype=np.int64))
@@ -433,24 +450,71 @@ def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
 
 
 def disadvantaged_students(
-    student_lsoa: np.ndarray, areas: pd.DataFrame, decile: int = DISADVANTAGED_DECILE
+    student_lsoa: np.ndarray, areas: pd.DataFrame, rng: np.random.Generator
 ) -> np.ndarray:
-    """Whether each student lives in a disadvantaged district.
+    """Draw which students are disadvantaged, each area in its IDACI share.
+
+    Of the students sampled in each area, `disadvantaged_cohort` of them,
+    picked at random, are disadvantaged, so every area holds its IDACI score's
+    share of disadvantaged students to within half a student.
 
     Args:
         student_lsoa (np.ndarray): Positional index into `areas` of the
         district each student was sampled in.
 
-        areas (pd.DataFrame): Districts carrying an "IDACI Decile" column, in
+        areas (pd.DataFrame): Districts carrying an "IDACI Score" column, in
         the order students were sampled from.
 
-        decile (int, optional): Districts at or below this IDACI decile are
-        disadvantaged. Defaults to DISADVANTAGED_DECILE.
+        rng (np.random.Generator): Source of randomness.
 
     Returns:
         np.ndarray: Boolean, one per student.
     """
-    return areas["IDACI Decile"].to_numpy()[student_lsoa] <= decile
+    counts = disadvantaged_cohort(
+        areas, np.bincount(student_lsoa, minlength=len(areas))
+    )
+    disadvantaged = np.zeros(len(student_lsoa), dtype=bool)
+    for area in np.flatnonzero(counts):
+        students = np.flatnonzero(student_lsoa == area)
+        disadvantaged[rng.choice(students, counts[area], replace=False)] = True
+    return disadvantaged
+
+
+def disadvantaged_group(
+    student_lsoa: np.ndarray,
+    drawn: np.ndarray,
+    areas: pd.DataFrame,
+    decile: int,
+    disadvantage: str,
+) -> np.ndarray:
+    """Whether each student is disadvantaged under `disadvantage`.
+
+    Args:
+        student_lsoa (np.ndarray): Positional index into `areas` of the
+        district each student was sampled in.
+
+        drawn (np.ndarray): Whether each student was drawn disadvantaged, as
+        `disadvantaged_students` draws it.
+
+        areas (pd.DataFrame): Districts carrying an "IDACI Decile" column, in
+        the order students were sampled from.
+
+        decile (int): Under "decile", every student of a district at or below
+        this IDACI decile is disadvantaged.
+
+        disadvantage (str): One of DISADVANTAGE_CHOICES.
+
+    Returns:
+        np.ndarray: Boolean, one per student: `drawn`, or under "decile"
+        whether the student's district sits at or below `decile`.
+    """
+    if disadvantage not in DISADVANTAGE_CHOICES:
+        raise ValueError(
+            f"disadvantage must be one of {DISADVANTAGE_CHOICES}, got {disadvantage!r}."
+        )
+    if disadvantage == "decile":
+        return areas["IDACI Decile"].to_numpy()[student_lsoa] <= decile
+    return drawn
 
 
 def school_intake(
@@ -468,8 +532,8 @@ def school_intake(
         (n_students,), -1 for an unmatched student. The first column of the
         matching `fast_DAT` returns.
 
-        disadvantaged (ArrayLike): Whether each student lives in a
-        disadvantaged district, shape (n_students,).
+        disadvantaged (ArrayLike): Whether each student is disadvantaged,
+        shape (n_students,).
 
         n_schools (int): Number of schools the matching indexes.
 
@@ -550,8 +614,8 @@ def dissimilarity_index(
         (n_students,), -1 for an unmatched student. The first column of the
         matching `fast_DAT` returns.
 
-        disadvantaged (ArrayLike): Whether each student lives in a
-        disadvantaged district, shape (n_students,).
+        disadvantaged (ArrayLike): Whether each student is disadvantaged,
+        shape (n_students,).
 
         n_schools (int): Number of schools the matching indexes.
 

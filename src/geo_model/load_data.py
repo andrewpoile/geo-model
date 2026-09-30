@@ -14,6 +14,10 @@ POPULATION_CACHE = Path("temp/population_lsoa.pkl")
 IDACI_CSV = Path(
     "data/student_data/File_3_IoD2025 Supplementary Indices_IDACI and IDAOPI.csv"
 )
+IDACI_SCORES_CSV = Path(
+    "data/student_data/"
+    "File_5_IoD2025_Scores_for_the_Indices_of_Deprivation(IoD2025 Scores).csv"
+)
 BOUNDARIES_DIR = Path("data/student_data/LSOA_Boundaries_geospacial_data_2021")
 CENTROIDS_DIR = Path("data/student_data/LSOA_PopCentroids_geospatial_data_2021")
 REGISTER_CSV = Path("data/school_data/edubasealldata20260225.csv")
@@ -186,8 +190,10 @@ def load_areas() -> gpd.GeoDataFrame:
 
     Returns:
         gpd.GeoDataFrame: One row per LSOA, positionally indexed, carrying
-        "LSOA21CD", "LSOA21NM", "IDACI", "IDACI Decile", "Total", "F4", "F11",
-        "M4", "M11", a "Centroids" point and a "Borders" polygon.
+        "LSOA21CD", "LSOA21NM", "IDACI" (the rank), "IDACI Decile", "IDACI
+        Score" (the share of children living in income-deprived families),
+        "Total", "F4", "F11", "M4", "M11", a "Centroids" point and a
+        "Borders" polygon.
     """
     population = load_population()
 
@@ -235,12 +241,37 @@ def load_areas() -> gpd.GeoDataFrame:
     geomerge = geomerge.merge(
         idaci[["LSOA21CD", "IDACI", "IDACI Decile"]], "inner", "LSOA21CD"
     )
+
+    # Import the IDACI score, the share of an LSOA's children living in
+    # income-deprived families, necessary for drawing which students are
+    # disadvantaged. Merged left, so an LSOA the file does not score is named
+    # rather than dropped.
+    scores = pd.read_csv(
+        IDACI_SCORES_CSV,
+        usecols=[
+            "LSOA code (2021)",
+            "Income Deprivation Affecting Children Index (IDACI) Score (rate)",
+        ],
+    ).rename(
+        columns={
+            "LSOA code (2021)": "LSOA21CD",
+            "Income Deprivation Affecting Children Index (IDACI) Score (rate)": "IDACI Score",
+        }
+    )
+    geomerge = geomerge.merge(scores, "left", "LSOA21CD", validate="one_to_one")
+    unscored = ~geomerge["IDACI Score"].between(0, 1)
+    if unscored.any():
+        raise ValueError(
+            "No IDACI score in [0, 1] held, so no students can be drawn "
+            "disadvantaged: " + ", ".join(geomerge.loc[unscored, "LSOA21CD"])
+        )
     return geomerge[
         [
             "LSOA21CD",
             "LSOA21NM",
             "IDACI",
             "IDACI Decile",
+            "IDACI Score",
             "Total",
             "F4",
             "F11",

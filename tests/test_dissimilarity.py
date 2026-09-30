@@ -6,7 +6,7 @@ from geo_model import build_prefs as bp
 from geo_model import build_routes as br
 from geo_model import dissimilarity as ds
 from geo_model import load_data as ld
-from geo_model.utils import MODES
+from geo_model.utils import MODES, sample_students
 
 DATA = ld.POPULATION_XLSX.parent.parent
 
@@ -31,12 +31,34 @@ def test_student_samples_draws_one_reproducible_sample_per_seed(secondary):
     second = list(ds.student_samples(areas, sizes, 2))
 
     assert len(first) == 2
-    assert all(len(xy) == sizes.sum() for xy, _ in first)
+    assert all(len(xy) == sizes.sum() for xy, _, _ in first)
     # Different seeds draw different students, the same seed the same ones.
     assert not np.array_equal(first[0][0], first[1][0])
-    for (xy_a, lsoa_a), (xy_b, lsoa_b) in zip(first, second):
-        np.testing.assert_array_equal(xy_a, xy_b)
-        np.testing.assert_array_equal(lsoa_a, lsoa_b)
+    for sample_a, sample_b in zip(first, second):
+        for a, b in zip(sample_a, sample_b):
+            np.testing.assert_array_equal(a, b)
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_student_samples_draw_each_district_its_idaci_share_after_the_locations(
+    secondary,
+):
+    areas, _ = secondary
+    sizes = bp.cohort_sizes(areas, "secondary")
+
+    student_xy, student_lsoa, drawn = next(ds.student_samples(areas, sizes, 1))
+
+    np.testing.assert_array_equal(
+        np.bincount(student_lsoa[drawn], minlength=len(areas)),
+        br.disadvantaged_cohort(areas, sizes),
+    )
+    # The locations are the ones a draw of locations alone takes from the
+    # seed's stream, so drawing the group after them leaves them as they were.
+    stream = np.random.SeedSequence(ds.SEED).spawn(1)[0]
+    alone, _ = sample_students(
+        areas["Borders"], areas["Centroids"], sizes, np.random.default_rng(stream)
+    )
+    np.testing.assert_array_equal(student_xy, alone)
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
@@ -50,10 +72,16 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
         schools["PAN"].to_numpy(),
         sizes,
     )
-    student_xy, student_lsoa = next(ds.student_samples(areas, sizes, 1))
+    student_xy, student_lsoa, disadvantaged = next(ds.student_samples(areas, sizes, 1))
 
     rows, school_rows, mode_rows = ds.score_sample(
-        student_xy, student_lsoa, areas, schools, routes, ld.load_nts_mode_shares()
+        student_xy,
+        student_lsoa,
+        areas,
+        schools,
+        routes,
+        disadvantaged,
+        ld.load_nts_mode_shares(),
     )
     rows, intake, modes = map(pd.DataFrame, (rows, school_rows, mode_rows))
 
@@ -64,7 +92,7 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
     # The disadvantaged group is the sample's, not the matching's, so it is
     # the same in both scenarios, and those of it without a place are a
     # subset of both the group and the unmatched.
-    assert rows["n_disadvantaged"].nunique() == 1
+    assert (rows["n_disadvantaged"] == disadvantaged.sum()).all()
     assert 0 < rows["n_disadvantaged"].iloc[0] < len(student_xy)
     assert (rows["unassigned_disadvantaged"] <= rows["n_unmatched"]).all()
     assert (rows["unassigned_disadvantaged"] <= rows["n_disadvantaged"]).all()

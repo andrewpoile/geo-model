@@ -19,13 +19,18 @@ SCHOOL_P8 = np.array([-0.5, -0.5])
 SEATS = np.full((2, 2), 30, dtype=np.int32)
 
 
-def make_areas(deciles, spacing=10_000.0, index=None):
-    """Districts on a line, one every `spacing` metres, in the given deciles."""
+def make_areas(deciles, spacing=10_000.0, index=None, scores=None):
+    """Districts on a line, one every `spacing` metres, in the given deciles.
+
+    Every district scores 1 on IDACI unless a test passes its own scores, so
+    under every choice of disadvantage every student of a district may ride.
+    """
     n = len(deciles)
     frame = gpd.GeoDataFrame(
         {
             "LSOA21CD": [f"E{i:08d}" for i in range(n)],
             "IDACI Decile": deciles,
+            "IDACI Score": np.ones(n) if scores is None else scores,
         },
         geometry=gpd.points_from_xy(np.arange(n) * spacing, np.zeros(n), crs=CRS),
         index=index,
@@ -54,6 +59,20 @@ def test_centroid_xy_reads_the_population_centroid_of_every_district():
     np.testing.assert_array_equal(
         coordinates, [[0.0, 0.0], [10_000.0, 0.0], [20_000.0, 0.0]]
     )
+
+
+# --------------------------------------------------------------------------
+# disadvantaged_cohort
+# --------------------------------------------------------------------------
+
+
+def test_disadvantaged_cohort_rounds_each_share_to_the_nearest_student():
+    # 0.134 * 19 = 2.5, 0.767 * 21 = 16.1 and 0 * 30 = 0.
+    areas = make_areas([1, 1, 1], scores=[0.134, 0.767, 0.0])
+
+    cohort = br.disadvantaged_cohort(areas, np.array([19, 21, 30]))
+
+    np.testing.assert_array_equal(cohort, [3, 16, 0])
 
 
 # --------------------------------------------------------------------------
@@ -126,15 +145,15 @@ def test_build_routes_leaves_a_pair_holding_no_seat_unrouted(capsys):
 # --------------------------------------------------------------------------
 
 
-def test_route_network_routes_only_the_disadvantaged_districts(capsys):
+def test_route_network_routes_only_the_districts_at_or_below_the_decile(capsys):
     areas = make_areas([5, 2, 1])
     routes = network(areas, decile=3)
 
-    # District 0 is not disadvantaged. District 1 sits on the second school and
-    # is routed to the first; district 2 is beyond both.
+    # District 0 sits above the decile. District 1 sits on the second school
+    # and is routed to the first; district 2 is beyond both.
     np.testing.assert_array_equal(routes["district_idx"], [1, 2, 2])
     np.testing.assert_array_equal(routes["school_idx"], [0, 0, 1])
-    assert "2 disadvantaged districts at IDACI decile 3" in capsys.readouterr().out
+    assert "2 districts at IDACI decile 3" in capsys.readouterr().out
 
 
 def test_route_network_names_a_district_left_without_any_route(capsys):
@@ -174,7 +193,12 @@ def test_route_network_rejects_an_area_frame_that_is_not_positionally_indexed():
         network(areas)
 
 
-def test_route_network_rejects_an_instance_with_no_disadvantaged_district():
+def test_route_network_rejects_an_unknown_choice_of_disadvantage():
+    with pytest.raises(ValueError, match="disadvantage must be one of"):
+        network(make_areas([1, 1]), disadvantage="district")
+
+
+def test_route_network_rejects_an_instance_with_no_district_at_or_below_the_decile():
     with pytest.raises(ValueError, match="No LSOA sits at or below"):
         network(make_areas([8, 9, 10]), decile=3)
 
@@ -242,7 +266,7 @@ def test_route_network_rejects_a_capacity_scale_that_is_not_positive(scale):
 
 
 def test_route_network_seats_every_route_on_its_fair_share_of_the_pan():
-    # 100 students in the city, district 2 is not disadvantaged, and the
+    # 100 students in the city, district 2 sits above the decile, and the
     # schools admit 100 and 200: a route holds k * PAN * n_d / 100 seats.
     areas = make_areas([1, 1, 5])
     routes = network(
@@ -333,9 +357,39 @@ def test_route_network_rejects_a_negative_progressivity():
         network(make_areas([1, 1]), progressivity=-0.1)
 
 
+@pytest.mark.parametrize(
+    ("disadvantage", "seats"),
+    [("score", [3, 12]), ("score-open", [10, 20]), ("decile", [10, 20])],
+)
+def test_route_network_seats_the_students_who_may_ride(disadvantage, seats):
+    # Two districts of 10 and 20 students out of 100, scoring 0.3 and 0.6, are
+    # routed to one far school admitting 100, the weights flat. Under "score"
+    # only the 3 and 12 disadvantaged ride, so a route holds 100 * n_d / 100
+    # seats for them; otherwise every student of the district rides.
+    routes = network(
+        make_areas([1, 1, 5], scores=[0.3, 0.6, 0.5]),
+        np.array([[100_000.0, 0.0]]),
+        SCHOOL_P8[:1],
+        school_pan=np.array([100]),
+        district_cohort=np.array([10, 20, 70]),
+        capacity_scale=1.0,
+        progressivity=0.0,
+        disadvantage=disadvantage,
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [0, 1])
+    np.testing.assert_array_equal(routes["capacity"], seats)
+
+
 def test_route_network_rejects_route_eligible_districts_holding_no_students():
-    with pytest.raises(br.EmptyRouteSet, match="hold no students"):
+    with pytest.raises(br.EmptyRouteSet, match="hold no student who may ride"):
         network(make_areas([1, 1, 9]), district_cohort=np.array([0, 0, 100]))
+
+
+def test_route_network_rejects_route_eligible_districts_holding_no_rider():
+    # Every student is there, but none of them is disadvantaged.
+    with pytest.raises(br.EmptyRouteSet, match="hold no student who may ride"):
+        network(make_areas([1, 1, 9], scores=[0.0, 0.0, 1.0]))
 
 
 def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrouted(
@@ -351,7 +405,7 @@ def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrou
     assert set(routes["district_idx"]) == {1}
     out = capsys.readouterr().out
     assert "No secondary school beyond" not in out
-    assert "2 disadvantaged districts at IDACI decile 3 or below, 1 of them" in out
+    assert "2 districts at IDACI decile 3 or below, 1 of them" in out
 
 
 # --------------------------------------------------------------------------

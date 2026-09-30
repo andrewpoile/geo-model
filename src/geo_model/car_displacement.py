@@ -23,15 +23,20 @@ from matplotlib.figure import Figure
 
 from geo_model.__main__ import COLOURS
 from geo_model.build_prefs import cohort_sizes
-from geo_model.build_routes import route_network
-from geo_model.dissimilarity import N_SEEDS, score_sample, student_samples
+from geo_model.build_routes import DISADVANTAGE, route_network
+from geo_model.dissimilarity import (
+    DEFAULTS,
+    N_SEEDS,
+    score_sample,
+    student_samples,
+)
 from geo_model.load_data import (
     NTS_YEARS,
     load_areas,
     load_nts_mode_shares,
     load_schools,
 )
-from geo_model.utils import CIRCUITY, MODES, mode_change
+from geo_model.utils import CIRCUITY, MODES, disadvantaged_group, mode_change
 
 RESULTS_CSV = Path("temp/car_displacement.csv")
 PLOT_PNG = Path("temp/car_displacement.png")
@@ -69,7 +74,7 @@ def run(
     shares = load_nts_mode_shares(years)
 
     rows = []
-    for seed, (student_xy, student_lsoa) in enumerate(
+    for seed, (student_xy, student_lsoa, drawn) in enumerate(
         student_samples(areas, sizes, n_seeds)
     ):
         _, _, mode_rows = score_sample(
@@ -78,6 +83,9 @@ def run(
             areas,
             secondary_schools,
             routes,
+            disadvantaged_group(
+                student_lsoa, drawn, areas, DEFAULTS.decile, DISADVANTAGE
+            ),
             shares,
             circuity=circuity,
         )

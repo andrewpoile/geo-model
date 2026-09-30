@@ -13,9 +13,13 @@ from geo_model import build_prefs as bp
 from geo_model import load_data as ld
 from geo_model import optimise as op
 from geo_model.__main__ import COLOURS, GROUP_COLOURS, INTAKE_MEASURES
+from geo_model.build_routes import DISADVANTAGE_CHOICES
 from geo_model.dissimilarity import DEFAULTS, Settings, score_settings, student_samples
 
 DATA = ld.POPULATION_XLSX.parent.parent
+
+# A sample of no students, for the checks made before anything is scored.
+NO_STUDENTS = [(np.empty((0, 2)), np.empty(0, dtype=np.int64), np.empty(0, dtype=bool))]
 
 
 def scored_rows(dissimilarity: float, car: tuple[float, float]):
@@ -72,7 +76,6 @@ def test_car_displacement_is_the_mean_car_students_the_routes_remove():
 
 
 def test_bounds_hold_the_default_of_every_optimisable_parameter():
-    assert "decile" not in op.OPTIMISABLE
     assert set(op.LEVERS) <= set(op.OPTIMISABLE)
     for parameter in op.OPTIMISABLE:
         low, high = op.bounds(parameter)
@@ -80,9 +83,48 @@ def test_bounds_hold_the_default_of_every_optimisable_parameter():
         assert low <= asdict(DEFAULTS)[parameter] <= high
 
 
-def test_bounds_rejects_the_decile():
-    with pytest.raises(ValueError, match="decile is not optimisable"):
-        op.bounds("decile")
+def test_bounds_search_the_decile_over_the_deciles_swept():
+    assert op.bounds("decile") == (1.0, 9.0)
+
+
+def test_bounds_rejects_a_parameter_that_is_not_swept():
+    with pytest.raises(ValueError, match="circuity is not optimisable"):
+        op.bounds("circuity")
+
+
+# --------------------------------------------------------------------------
+# searchable
+# --------------------------------------------------------------------------
+
+
+def test_searchable_leaves_the_decile_out_only_where_it_sets_the_group():
+    assert "decile" in op.searchable("score")
+    assert "decile" in op.searchable("score-open")
+    assert "decile" not in op.searchable("decile")
+
+
+def test_searchable_leaves_the_other_students_route_discount_out_unless_they_ride():
+    assert "route_discount" in op.searchable("score-open")
+    assert "route_discount" not in op.searchable("score")
+    assert "route_discount" not in op.searchable("decile")
+
+
+@pytest.mark.parametrize("disadvantage", DISADVANTAGE_CHOICES)
+def test_every_lever_is_searchable_under_every_choice(disadvantage):
+    assert set(op.LEVERS) <= set(op.searchable(disadvantage))
+
+
+# --------------------------------------------------------------------------
+# cast
+# --------------------------------------------------------------------------
+
+
+def test_cast_rounds_the_decile_and_makes_every_other_value_a_float():
+    cast = op.cast({"decile": np.float64(2.6), "min_distance": np.float64(1609.4)})
+
+    assert cast == {"decile": 3, "min_distance": 1609.4}
+    assert type(cast["decile"]) is int
+    assert type(cast["min_distance"]) is float
 
 
 # --------------------------------------------------------------------------
@@ -120,6 +162,20 @@ def test_pipeline_negates_maximised_objectives_and_marks_infeasible_settings():
     assert np.isnan(infeasible["car_displacement"])
 
 
+def test_pipeline_scores_and_records_a_searched_decile_rounded():
+    scored_deciles = []
+
+    def score(settings: Settings):
+        scored_deciles.append(settings.decile)
+        return scored_rows(0.1, (100.0, 90.0))
+
+    problem = op.Pipeline(["decile"], op.DEFAULT_OBJECTIVES, score, map)
+    problem.evaluate(np.array([[2.4], [2.6]]))
+
+    assert scored_deciles == [2, 3]
+    assert [row["decile"] for row in problem.evaluations] == [2, 3]
+
+
 # --------------------------------------------------------------------------
 # optimise
 # --------------------------------------------------------------------------
@@ -128,11 +184,29 @@ def test_pipeline_negates_maximised_objectives_and_marks_infeasible_settings():
 def test_optimise_rejects_a_parameter_named_twice():
     with pytest.raises(ValueError, match="named once"):
         op.optimise(
-            [(np.empty((0, 2)), np.empty(0))],
+            NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             pd.DataFrame(),
             parameters=["min_distance", "min_distance"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("parameter", "disadvantage"),
+    [("decile", "decile"), ("route_discount", "score"), ("route_discount", "decile")],
+)
+def test_optimise_rejects_a_parameter_the_choice_of_disadvantage_bars(
+    parameter, disadvantage
+):
+    with pytest.raises(ValueError, match=rf"\['{parameter}'\] cannot be searched"):
+        op.optimise(
+            NO_STUDENTS,
+            gpd.GeoDataFrame(),
+            gpd.GeoDataFrame(),
+            pd.DataFrame(),
+            parameters=[parameter],
+            disadvantage=disadvantage,
         )
 
 
@@ -141,7 +215,7 @@ def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(monkeypatch):
 
     with pytest.raises(ValueError, match="None of the 8 settings scored"):
         op.optimise(
-            [(np.empty((0, 2)), np.empty(0))],
+            NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             pd.DataFrame(),

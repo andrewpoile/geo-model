@@ -14,7 +14,7 @@ from geo_model import load_data as ld
 from geo_model.dissimilarity import score_settings
 from geo_model.utils import (
     MODES,
-    disadvantaged_students,
+    disadvantaged_group,
     dissimilarity_index,
     gini,
     lorenz_curve,
@@ -37,6 +37,19 @@ def test_every_grid_varies_its_own_parameter_alone_and_holds_the_default():
                 k: v for k, v in asdict(sweep_main.DEFAULTS).items() if k != parameter
             }
             assert others == defaults
+
+
+@pytest.mark.parametrize("disadvantage", ["score", "decile"])
+def test_swept_leaves_the_other_students_route_discount_out_unless_they_ride(
+    disadvantage,
+):
+    assert sweep_main.swept(disadvantage) == [
+        parameter for parameter in sweep_main.GRID if parameter != "route_discount"
+    ]
+
+
+def test_swept_runs_every_grid_when_routes_are_open_to_every_student():
+    assert sweep_main.swept("score-open") == list(sweep_main.GRID)
 
 
 # --------------------------------------------------------------------------
@@ -194,7 +207,7 @@ def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch, m
     monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path / "out")
     monkeypatch.setattr(sweep_main, "PLOT_PNG", tmp_path / "out" / "sweep.png")
 
-    sweep_main.plot(*synthetic_frames(), measure)
+    sweep_main.plot(*synthetic_frames(), list(sweep_main.GRID), measure)
 
     for name in [*sweep_main.GRID, "sweep"]:
         png = sweep_main.SWEEP_DIR / f"{name}.png"
@@ -261,7 +274,10 @@ def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults():
+@pytest.mark.parametrize("disadvantage", sweep_main.DISADVANTAGE_CHOICES)
+def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
+    disadvantage,
+):
     areas = ld.load_areas()
     _, schools = ld.load_schools()
     samples = list(
@@ -270,12 +286,20 @@ def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults():
     shares = ld.load_nts_mode_shares()
 
     matchings = sweep_main.settings_matchings(
-        sweep_main.DEFAULTS, samples[0], areas, schools
+        sweep_main.DEFAULTS, samples[0], areas, schools, disadvantage=disadvantage
     )
-    rows, _, _ = score_settings(sweep_main.DEFAULTS, samples, areas, schools, shares)
+    rows, _, _ = score_settings(
+        sweep_main.DEFAULTS,
+        samples,
+        areas,
+        schools,
+        shares,
+        disadvantage=disadvantage,
+    )
 
-    disadvantaged = disadvantaged_students(
-        samples[0][1], areas, sweep_main.DEFAULTS.decile
+    _, student_lsoa, drawn = samples[0]
+    disadvantaged = disadvantaged_group(
+        student_lsoa, drawn, areas, sweep_main.DEFAULTS.decile, disadvantage
     )
     assert [row["scenario"] for row in rows] == list(matchings)
     for row in rows:
@@ -438,6 +462,24 @@ def test_default_cell_rejects_rows_without_it():
 
     with pytest.raises(ValueError, match="no default cell of"):
         sweep_main.default_cell(intake.drop(default_intake(intake).index))
+
+
+@pytest.mark.parametrize(
+    ("disadvantage", "group"),
+    [
+        ("score", "drawn from LSOA IDACI scores"),
+        ("score-open", "drawn from LSOA IDACI scores"),
+        ("decile", f"IDACI decile ≤ {sweep_main.DEFAULTS.decile}"),
+    ],
+)
+def test_draw_lorenz_names_the_group_the_rows_were_scored_on(disadvantage, group):
+    fig = Figure()
+
+    sweep_main.draw_lorenz(fig, default_intake(synthetic_frames()[1]), disadvantage)
+
+    assert fig.axes[0].get_ylabel() == (
+        f"Cumulative share of disadvantaged students ({group})"
+    )
 
 
 def test_plot_lorenz_writes_a_png(tmp_path):

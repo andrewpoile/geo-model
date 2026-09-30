@@ -19,6 +19,7 @@ from geo_model.build_prefs import (
     secondary_instance,
 )
 from geo_model.build_routes import (
+    DISADVANTAGE,
     DISADVANTAGED_DECILE,
     LINEAR_PROGRESSIVITY,
     LOCAL_RADIUS,
@@ -33,6 +34,7 @@ from geo_model.load_data import load_areas, load_nts_mode_shares, load_schools
 from geo_model.matching import fast_DAT
 from geo_model.utils import (
     CIRCUITY,
+    disadvantaged_group,
     disadvantaged_students,
     dissimilarity_index,
     dissimilarity_terms,
@@ -44,6 +46,10 @@ from geo_model.utils import (
 N_SEEDS = 30
 RESULTS_CSV = Path("temp/dissimilarity.csv")
 PLOT_PNG = Path("temp/dissimilarity.png")
+
+# A student sample: the coordinates of every student, the positional index of
+# the district each was drawn in, and whether each was drawn disadvantaged.
+Sample = tuple[np.ndarray, np.ndarray, np.ndarray]
 
 
 @dataclass(frozen=True)
@@ -67,11 +73,15 @@ DEFAULTS = Settings()
 
 def student_samples(
     areas: pd.DataFrame, sizes: np.ndarray, n_seeds: int
-) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+) -> Iterator[Sample]:
     """Draw one secondary student sample per seed, reproducibly from SEED.
 
+    Which students are disadvantaged is drawn after where they live, from the
+    same stream, so the locations of a seed do not depend on it.
+
     Args:
-        areas (pd.DataFrame): Districts carrying "Borders" and "Centroids".
+        areas (pd.DataFrame): Districts carrying "Borders", "Centroids" and
+        "IDACI Score".
 
         sizes (np.ndarray): Students to sample in each area, aligned with
         `areas`.
@@ -79,13 +89,16 @@ def student_samples(
         n_seeds (int): Number of samples to draw.
 
     Yields:
-        tuple[np.ndarray, np.ndarray]: Coordinates and positional district
-        index of each student, as returned by `sample_students`.
+        Sample: Coordinates and positional district index of each student, as
+        returned by `sample_students`, and whether each is disadvantaged, as
+        drawn by `disadvantaged_students`.
     """
     for stream in np.random.SeedSequence(SEED).spawn(n_seeds):
-        yield sample_students(
-            areas["Borders"], areas["Centroids"], sizes, np.random.default_rng(stream)
+        rng = np.random.default_rng(stream)
+        student_xy, student_lsoa = sample_students(
+            areas["Borders"], areas["Centroids"], sizes, rng
         )
+        yield student_xy, student_lsoa, disadvantaged_students(student_lsoa, areas, rng)
 
 
 def match_sample(
@@ -99,6 +112,7 @@ def match_sample(
     route_discount: float = ROUTE_DISCOUNT,
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
+    disadvantage: str = DISADVANTAGE,
 ) -> Iterator[tuple[str, np.ndarray]]:
     """Match one student sample with and without routes.
 
@@ -133,6 +147,9 @@ def match_sample(
         disadvantaged_route_discount (float, optional): Passed to
         `secondary_instance`. Defaults to DISADVANTAGED_ROUTE_DISCOUNT.
 
+        disadvantage (str, optional): Passed to `secondary_instance`. Defaults
+        to DISADVANTAGE.
+
     Yields:
         tuple[str, np.ndarray]: The scenario, "with routes" then "without
         routes", and its matching as returned by `fast_DAT`.
@@ -149,6 +166,7 @@ def match_sample(
             route_discount,
             disadvantaged_performance_weight,
             disadvantaged_route_discount,
+            disadvantage,
         )
         yield scenario, fast_DAT(*instance)
 
@@ -159,14 +177,15 @@ def score_sample(
     areas: pd.DataFrame,
     secondary_schools: gpd.GeoDataFrame,
     routes: pd.DataFrame,
+    disadvantaged: np.ndarray,
     shares: pd.DataFrame,
     *,
-    decile: int = DISADVANTAGED_DECILE,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
     circuity: float = CIRCUITY,
+    disadvantage: str = DISADVANTAGE,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Match one student sample with and without routes and score both.
 
@@ -183,20 +202,19 @@ def score_sample(
         district each student was sampled in.
 
         areas (pd.DataFrame): Districts, in the order students were sampled
-        from, carrying the columns `secondary_instance` and
-        `disadvantaged_students` read.
+        from, carrying the columns `secondary_instance` reads.
 
         secondary_schools (gpd.GeoDataFrame): Schools, as `secondary_instance`
         takes them.
 
         routes (pd.DataFrame): The route set, as returned by `route_network`.
 
+        disadvantaged (np.ndarray): Whether each student is disadvantaged, as
+        `disadvantaged_group` gives it: the group the index measures and that
+        ranks with its own weights.
+
         shares (pd.DataFrame): NTS mode share within each trip-length band,
         as returned by `load_nts_mode_shares`.
-
-        decile (int, optional): Districts at or below this IDACI decile are the
-        disadvantaged group the index measures and that ranks with its own
-        weights. Defaults to DISADVANTAGED_DECILE.
 
         performance_weight (float, optional): Passed to `secondary_instance`.
         Defaults to PERFORMANCE_WEIGHT.
@@ -213,10 +231,13 @@ def score_sample(
         circuity (float, optional): Passed to `expected_modes`. Defaults to
         CIRCUITY.
 
+        disadvantage (str, optional): Passed to `secondary_instance`. Defaults
+        to DISADVANTAGE.
+
     Returns:
         tuple[list[dict], list[dict], list[dict]]: One row per scenario, with
         keys "scenario", "dissimilarity", "n_matched", "n_unmatched",
-        "n_disadvantaged" (students drawn from a disadvantaged district) and
+        "n_disadvantaged" (students disadvantaged) and
         "unassigned_disadvantaged" (those of them left without a place); one
         row per (scenario, school), with keys "scenario", "school" (the
         establishment name), "disadvantaged" and "other" (students seated)
@@ -225,7 +246,6 @@ def score_sample(
         and one row per (scenario, mode), with keys "scenario", "mode" and
         "students" (expected).
     """
-    disadvantaged = disadvantaged_students(student_lsoa, areas, decile)
     n_schools = len(secondary_schools)
     school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
     rows, school_rows, mode_rows = [], [], []
@@ -240,6 +260,7 @@ def score_sample(
         route_discount,
         disadvantaged_performance_weight,
         disadvantaged_route_discount,
+        disadvantage,
     ):
         matched_school = matching[:, 0]
         rows.append(
@@ -286,6 +307,7 @@ def settings_routes(
     secondary_schools: gpd.GeoDataFrame,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
+    disadvantage: str = DISADVANTAGE,
 ) -> pd.DataFrame:
     """The route set at one setting of the parameters.
 
@@ -302,6 +324,9 @@ def settings_routes(
 
         linear (bool, optional): Passed to `route_network`. Defaults to
         LINEAR_PROGRESSIVITY.
+
+        disadvantage (str, optional): Passed to `route_network`. Defaults to
+        DISADVANTAGE.
 
     Returns:
         pd.DataFrame: The route set, as returned by `route_network`.
@@ -320,18 +345,20 @@ def settings_routes(
         round_up=round_up,
         progressivity=settings.progressivity,
         linear=linear,
+        disadvantage=disadvantage,
     )
 
 
 def score_settings(
     settings: Settings,
-    samples: list[tuple[np.ndarray, np.ndarray]],
+    samples: list[Sample],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
+    disadvantage: str = DISADVANTAGE,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Score every sample at one setting of the parameters.
 
@@ -342,8 +369,8 @@ def score_settings(
         settings (Settings): The parameter values to build routes and rank
         preferences with.
 
-        samples (list[tuple[np.ndarray, np.ndarray]]): Student samples, as
-        yielded by `student_samples`, in seed order.
+        samples (list[Sample]): Student samples, as yielded by
+        `student_samples`, in seed order.
 
         areas (gpd.GeoDataFrame): Districts, as `route_network` takes them.
 
@@ -361,28 +388,37 @@ def score_settings(
         linear (bool, optional): Passed to `settings_routes`. Defaults to
         LINEAR_PROGRESSIVITY.
 
+        disadvantage (str, optional): Passed to `settings_routes` and
+        `score_sample`, and sets each sample's disadvantaged group with
+        `disadvantaged_group` at `settings.decile`. Defaults to DISADVANTAGE.
+
     Returns:
         tuple[list[dict], list[dict], list[dict]]: The scenario, school and
         mode rows `score_sample` returns for every sample, each tagged with
         "seed", the scenario rows with "n_routes" as well.
     """
     print(f"Scoring {settings}")
-    routes = settings_routes(settings, areas, secondary_schools, round_up, linear)
+    routes = settings_routes(
+        settings, areas, secondary_schools, round_up, linear, disadvantage
+    )
     rows, school_rows, mode_rows = [], [], []
-    for seed, (student_xy, student_lsoa) in enumerate(samples):
+    for seed, (student_xy, student_lsoa, drawn) in enumerate(samples):
         scenario_rows, intake_rows, travel_rows = score_sample(
             student_xy,
             student_lsoa,
             areas,
             secondary_schools,
             routes,
+            disadvantaged_group(
+                student_lsoa, drawn, areas, settings.decile, disadvantage
+            ),
             shares,
-            decile=settings.decile,
             performance_weight=settings.performance_weight,
             route_discount=settings.route_discount,
             disadvantaged_performance_weight=settings.disadvantaged_performance_weight,
             disadvantaged_route_discount=settings.disadvantaged_route_discount,
             circuity=circuity,
+            disadvantage=disadvantage,
         )
         rows += [{"seed": seed, "n_routes": len(routes), **r} for r in scenario_rows]
         school_rows += [{"seed": seed, **r} for r in intake_rows]
@@ -416,11 +452,19 @@ def run(n_seeds: int) -> pd.DataFrame:
     shares = load_nts_mode_shares()
 
     rows = []
-    for seed, (student_xy, student_lsoa) in enumerate(
+    for seed, (student_xy, student_lsoa, drawn) in enumerate(
         student_samples(areas, sizes, n_seeds)
     ):
         scenario_rows, _, _ = score_sample(
-            student_xy, student_lsoa, areas, secondary_schools, routes, shares
+            student_xy,
+            student_lsoa,
+            areas,
+            secondary_schools,
+            routes,
+            disadvantaged_group(
+                student_lsoa, drawn, areas, DEFAULTS.decile, DISADVANTAGE
+            ),
+            shares,
         )
         rows += [{"seed": seed, **r} for r in scenario_rows]
         print(f"Seed {seed + 1} of {n_seeds}: {len(student_xy)} students.")

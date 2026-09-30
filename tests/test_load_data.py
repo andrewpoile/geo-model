@@ -239,3 +239,21 @@ def test_load_pan_fails_loudly_when_the_file_is_missing(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError):
         ld.load_pan()
+
+
+# --------------------------------------------------------------------------
+# load_areas: against the real data folder
+# --------------------------------------------------------------------------
+
+DATA = ld.POPULATION_XLSX.parent.parent
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_load_areas_carries_an_idaci_score_the_decile_ranks():
+    areas = ld.load_areas()
+
+    assert areas["IDACI Score"].between(0, 1).all()
+    # The decile ranks LSOAs on the score, 1 the most deprived, so no LSOA
+    # scores above one in a more deprived decile.
+    by_decile = areas.groupby("IDACI Decile")["IDACI Score"].agg(["min", "max"])
+    assert (by_decile["max"].iloc[1:].to_numpy() <= by_decile["min"].iloc[:-1]).all()

@@ -62,14 +62,15 @@ def test_main_writes_a_consistent_instance_for_both_phases(redirected_outputs):
             assert ((bundle_routes == -1) | (bundle_routes < phase_routes)).all()
             assert (preferences[schools == -1] == -1).all()
 
-            # Every student carries the district it was drawn in, and every
-            # district a decile, so the matching can be scored for segregation.
+            # Every student carries the district it was drawn in and whether
+            # it is disadvantaged, so the matching can be scored for
+            # segregation.
             district = built[f"{phase}_student_district"]
-            assert district.shape == (n_students,)
-            assert ((0 <= district) & (district < len(built["district_decile"]))).all()
-
-        decile = built["district_decile"]
-        assert ((1 <= decile) & (decile <= 10)).all()
+            disadvantaged = built[f"{phase}_student_disadvantaged"]
+            assert district.shape == disadvantaged.shape == (n_students,)
+            assert (district >= 0).all()
+            assert disadvantaged.dtype == bool
+            assert disadvantaged.any() and not disadvantaged.all()
 
 
 @pytestmark_data
@@ -107,7 +108,7 @@ def test_secondary_instance_ranks_nearest_first_without_performance_weight():
         areas,
         schools,
         None,
-        bp.disadvantaged_students(student_lsoa, areas),
+        bp.disadvantaged_students(student_lsoa, areas, np.random.default_rng(1)),
         performance_weight=0.0,
         disadvantaged_performance_weight=0.0,
     )
@@ -136,7 +137,9 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights():
         schools["PAN"].to_numpy(),
         bp.cohort_sizes(areas, "secondary"),
     )
-    disadvantaged = bp.disadvantaged_students(student_lsoa, areas)
+    disadvantaged = bp.disadvantaged_students(
+        student_lsoa, areas, np.random.default_rng(1)
+    )
     assert disadvantaged.any() and not disadvantaged.all()
 
     def instance(other, own):
@@ -162,6 +165,48 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights():
     np.testing.assert_array_equal(mixed[0][disadvantaged], own[0][disadvantaged])
     # School priorities do not depend on how students weigh schools.
     np.testing.assert_array_equal(mixed[1], other[1])
+
+
+@pytestmark_data
+def test_secondary_instance_offers_other_students_routes_only_when_open():
+    areas = ld.load_areas()
+    _, schools = ld.load_schools()
+    rng = np.random.default_rng(0)
+    student_xy, student_lsoa = bp.sample_students(
+        areas["Borders"],
+        areas["Centroids"],
+        bp.cohort_sizes(areas, "secondary"),
+        rng,
+    )
+    disadvantaged = bp.disadvantaged_students(student_lsoa, areas, rng)
+    routes = br.route_network(
+        areas,
+        schools[["Easting", "Northing"]].to_numpy(),
+        schools["P8MEA"].to_numpy(),
+        schools["PAN"].to_numpy(),
+        bp.cohort_sizes(areas, "secondary"),
+    )
+    offered = {}
+    for disadvantage in ("score", "score-open"):
+        preferences, _, _, _ = bp.secondary_instance(
+            student_xy,
+            student_lsoa,
+            areas,
+            schools,
+            routes,
+            disadvantaged,
+            disadvantage=disadvantage,
+        )
+        offered[disadvantage] = np.any(preferences[..., 1] >= 0, axis=1)
+
+    # Under "score" the routes carry the disadvantaged alone; open, they carry
+    # the other students of the same districts as well.
+    assert offered["score"][disadvantaged].any()
+    assert not offered["score"][~disadvantaged].any()
+    assert offered["score-open"][~disadvantaged].any()
+    np.testing.assert_array_equal(
+        offered["score-open"][disadvantaged], offered["score"][disadvantaged]
+    )
 
 
 @pytestmark_data

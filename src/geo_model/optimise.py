@@ -16,7 +16,7 @@ import contextlib
 import functools
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -43,13 +43,21 @@ from geo_model.__main__ import (
     plot_lorenz,
     plot_map,
     settings_matchings,
+    swept,
     unassigned_rows,
 )
 from geo_model.build_prefs import SEED, cohort_sizes
-from geo_model.build_routes import LINEAR_PROGRESSIVITY, ROUND_UP_SEATS, EmptyRouteSet
+from geo_model.build_routes import (
+    DISADVANTAGE,
+    DISADVANTAGE_CHOICES,
+    LINEAR_PROGRESSIVITY,
+    ROUND_UP_SEATS,
+    EmptyRouteSet,
+)
 from geo_model.car_displacement import plot as plot_modes
 from geo_model.dissimilarity import (
     DEFAULTS,
+    Sample,
     Settings,
     score_settings,
     student_samples,
@@ -84,11 +92,9 @@ N_SEEDS = 5
 POP_SIZE = 20
 GENERATIONS = 10
 
-# Every swept parameter but the decile, which sets the group the index
-# measures as well as the districts routes leave, so searching it would move
-# the measurement rather than the matching. The other students' route
-# discount is inert, so it is neither swept nor searched.
-OPTIMISABLE = [parameter for parameter in GRID if parameter != "decile"]
+# Every swept parameter. Which of them a search may vary depends on the
+# choice of DISADVANTAGE, as `searchable` gives it.
+OPTIMISABLE = list(GRID)
 # The settings a transport authority holds. The preference weights describe
 # the students, so they hold DEFAULTS unless named.
 LEVERS = [
@@ -139,6 +145,48 @@ OBJECTIVES = {
     ),
 }
 DEFAULT_OBJECTIVES = list(OBJECTIVES)
+
+
+def searchable(disadvantage: str) -> list[str]:
+    """The parameters of OPTIMISABLE a search may vary under `disadvantage`.
+
+    Those `swept` runs under it, less the decile under "decile", where it sets
+    the group the index measures as well as the districts routes leave, so
+    searching it would move the measurement rather than the matching.
+
+    Args:
+        disadvantage (str): One of DISADVANTAGE_CHOICES.
+
+    Returns:
+        list[str]: Keys of OPTIMISABLE, in its order.
+    """
+    return [
+        parameter
+        for parameter in swept(disadvantage)
+        if not (parameter == "decile" and disadvantage == "decile")
+    ]
+
+
+def cast(values: dict[str, Any]) -> dict[str, Any]:
+    """`values` as the Settings fields they set: a field annotated int, the
+    decile, rounded to the nearest whole number, and every other value a float.
+
+    The search runs over the reals, so a searched decile is rounded here, and
+    the deciles at the ends of its span take half the span the others do. The
+    annotation is read rather than the default, since some float fields
+    default to a whole number of metres.
+
+    Args:
+        values (dict[str, Any]): A value for each of some fields of Settings.
+
+    Returns:
+        dict[str, Any]: The same fields, each value cast.
+    """
+    types = {field.name: field.type for field in fields(Settings)}
+    return {
+        name: round(value) if types[name] is int else float(value)
+        for name, value in values.items()
+    }
 
 
 def bounds(parameter: str) -> tuple[float, float]:
@@ -248,10 +296,7 @@ class Pipeline(Problem):
     def _evaluate(self, x: np.ndarray, out: dict, *args: Any, **kwargs: Any) -> None:
         self.generation += 1
         print(f"Generation {self.generation}: scoring {len(x)} settings.")
-        # Every value is a float, the decile, the one int field, being unsearchable.
-        candidates: list[dict[str, Any]] = [
-            dict(zip(self.parameters, map(float, row))) for row in x
-        ]
+        candidates = [cast(dict(zip(self.parameters, row))) for row in x]
         scored = self.mapper(
             self.score, [replace(DEFAULTS, **candidate) for candidate in candidates]
         )
@@ -278,7 +323,7 @@ class Pipeline(Problem):
 
 
 def optimise(
-    samples: list[tuple[np.ndarray, np.ndarray]],
+    samples: list[Sample],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     shares: pd.DataFrame,
@@ -290,6 +335,7 @@ def optimise(
     circuity: float = CIRCUITY,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
+    disadvantage: str = DISADVANTAGE,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Search `parameters` by NSGA-II for the Pareto front of `objectives`.
 
@@ -300,8 +346,8 @@ def optimise(
     is reproducible.
 
     Args:
-        samples (list[tuple[np.ndarray, np.ndarray]]): Student samples, as
-        yielded by `student_samples`, in seed order.
+        samples (list[Sample]): Student samples, as yielded by
+        `student_samples`, in seed order.
 
         areas (gpd.GeoDataFrame): Passed to `score_settings`.
 
@@ -310,7 +356,8 @@ def optimise(
         shares (pd.DataFrame): Passed to `score_settings`.
 
         parameters (list[str], optional): Keys of OPTIMISABLE to search, each
-        over its `bounds`. Defaults to LEVERS.
+        over its `bounds`, every one `searchable` under `disadvantage`.
+        Defaults to LEVERS.
 
         objectives (list[str], optional): Keys of OBJECTIVES to optimise.
         Defaults to DEFAULT_OBJECTIVES, every one.
@@ -334,6 +381,9 @@ def optimise(
         linear (bool, optional): Passed to `score_settings`. Defaults to
         LINEAR_PROGRESSIVITY.
 
+        disadvantage (str, optional): Passed to `score_settings`. Defaults to
+        DISADVANTAGE.
+
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]: Every setting scored, one row each
         with its "generation", parameter values, objectives and "feasible";
@@ -345,6 +395,15 @@ def optimise(
     for named in (parameters, objectives):
         if len(set(named)) != len(named):
             raise ValueError(f"Each may be named once, got {named}.")
+    allowed = searchable(disadvantage)
+    barred = [parameter for parameter in parameters if parameter not in allowed]
+    if barred:
+        raise ValueError(
+            f"Under disadvantage {disadvantage!r} {barred} cannot be searched: "
+            "the other students' route discount is inert unless they ride, and "
+            "under 'decile' the decile moves the group the index measures. "
+            f"Choose from {allowed}."
+        )
 
     score = functools.partial(
         score_feasible,
@@ -355,6 +414,7 @@ def optimise(
         circuity=circuity,
         round_up=round_up,
         linear=linear,
+        disadvantage=disadvantage,
     )
     with (
         ProcessPoolExecutor(workers) if workers > 1 else contextlib.nullcontext()
@@ -515,8 +575,8 @@ def draw_school_intake(
         cbar_kws={"label": INTAKE_MEASURES[measure]["label"]},
         ax=ax,
     )
-    # The register counts pupils by their own eligibility rather than by
-    # their district, so its column stands apart from the model's two.
+    # The register counts pupils by their own eligibility rather than as the
+    # model draws them, so its column stands apart from the model's two.
     ax.axvline(len(COLOURS), color="white", linewidth=4)
     # A word a line, so the scenario names fit their narrow columns.
     ax.set_xticklabels([column.replace(" ", "\n") for column in table.columns])
@@ -527,13 +587,14 @@ def draw_school_intake(
 
 def compare(
     settings: Settings,
-    samples: list[tuple[np.ndarray, np.ndarray]],
+    samples: list[Sample],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
+    disadvantage: str = DISADVANTAGE,
     measure: str = "dissimilarity",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and plot the
@@ -549,8 +610,8 @@ def compare(
     Args:
         settings (Settings): The parameter values to compare.
 
-        samples (list[tuple[np.ndarray, np.ndarray]]): Student samples, as
-        yielded by `student_samples`, in seed order.
+        samples (list[Sample]): Student samples, as yielded by
+        `student_samples`, in seed order.
 
         areas (gpd.GeoDataFrame): Passed to `score_settings`.
 
@@ -566,6 +627,9 @@ def compare(
 
         linear (bool, optional): Passed to `score_settings`. Defaults to
         LINEAR_PROGRESSIVITY.
+
+        disadvantage (str, optional): Passed to `score_settings`,
+        `plot_lorenz` and `settings_matchings`. Defaults to DISADVANTAGE.
 
         measure (str, optional): A key of INTAKE_MEASURES, what the intake
         heatmap shows. Defaults to "dissimilarity".
@@ -587,6 +651,7 @@ def compare(
             circuity,
             round_up,
             linear,
+            disadvantage,
         )
     )
     plot_dissimilarity(results, DISSIMILARITY_PNG)
@@ -601,13 +666,19 @@ def compare(
     draw_school_intake(fig, schools, fsm(secondary_schools), measure)
     save(fig, INTAKE_PNG)
     plot_modes(modes, MODES_PNG)
-    plot_lorenz(schools, LORENZ_PNG)
+    plot_lorenz(schools, LORENZ_PNG, disadvantage)
     plot_map(
         areas,
         secondary_schools,
         samples[0][0],
         settings_matchings(
-            settings, samples[0], areas, secondary_schools, round_up, linear
+            settings,
+            samples[0],
+            areas,
+            secondary_schools,
+            round_up,
+            linear,
+            disadvantage,
         ),
         MAP_PNG,
     )
@@ -713,7 +784,8 @@ def main() -> None:
         choices=OPTIMISABLE,
         default=LEVERS,
         help="parameters to search, each over the span GRID sweeps; the rest "
-        "hold DEFAULTS",
+        "hold DEFAULTS. route_discount is searchable only under "
+        "--disadvantage score-open, the decile under every choice but decile",
     )
     parser.add_argument(
         "--objectives", nargs="+", choices=list(OBJECTIVES), default=DEFAULT_OBJECTIVES
@@ -759,6 +831,16 @@ def main() -> None:
         "each district's IDACI decile D rather than by 1 / D",
     )
     parser.add_argument(
+        "--disadvantage",
+        choices=DISADVANTAGE_CHOICES,
+        default=DISADVANTAGE,
+        help="score: each LSOA's students are drawn disadvantaged in proportion "
+        "to its IDACI score, and routes carry only them; score-open: drawn the "
+        "same way, but routes carry every student of their district; decile: "
+        "every student of an LSOA at or below the decile is disadvantaged and "
+        "rides, the model as it was before",
+    )
+    parser.add_argument(
         "--intake",
         choices=list(INTAKE_MEASURES),
         default="dissimilarity",
@@ -789,6 +871,7 @@ def main() -> None:
             args.circuity,
             args.round_up_seats,
             args.linear_progressivity,
+            args.disadvantage,
         ),
         args.objectives,
     )
@@ -805,6 +888,7 @@ def main() -> None:
         args.circuity,
         args.round_up_seats,
         args.linear_progressivity,
+        args.disadvantage,
     )
     print(
         f"{len(front)} settings on the Pareto front, of the "
@@ -819,9 +903,8 @@ def main() -> None:
     print("Compromise setting:")
     print(chosen.round(3).to_string())
 
-    changes: dict[str, Any] = {p: float(chosen[p]) for p in args.parameters}
     results, _, modes = compare(
-        replace(DEFAULTS, **changes),
+        replace(DEFAULTS, **cast({p: chosen[p] for p in args.parameters})),
         held_out,
         areas,
         secondary_schools,
@@ -829,6 +912,7 @@ def main() -> None:
         args.circuity,
         args.round_up_seats,
         args.linear_progressivity,
+        args.disadvantage,
         args.intake,
     )
     print(

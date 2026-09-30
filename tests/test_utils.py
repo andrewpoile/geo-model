@@ -4,13 +4,13 @@ import pandas as pd
 import pytest
 import shapely
 
-from geo_model.build_routes import DISADVANTAGED_DECILE
 from geo_model.load_data import NTS_BANDS
 from geo_model.utils import (
     MILE,
     MODES,
     _spread,
     cohort_capacity,
+    disadvantaged_group,
     disadvantaged_students,
     dissimilarity_index,
     dissimilarity_terms,
@@ -185,6 +185,28 @@ def test_rank_bundles_priorities_bracket_local_and_routed_students_together():
     np.testing.assert_array_equal(priorities[0], [[3, 1], [0, 2]])
     # c1 has no route, and only s1 is local to its district.
     np.testing.assert_array_equal(priorities[1], [[2, 2], [1, 0]])
+
+
+def test_rank_bundles_offers_no_route_to_a_student_not_eligible_for_one():
+    preferences, priorities = rank_two_districts(
+        route_discount=0.5, route_eligible=[True, False]
+    )
+
+    # s1 is the only student r0 serves, and without eligibility it ranks the
+    # two schools alone, as a student whose district has no route does.
+    np.testing.assert_array_equal(preferences[1], [[0, -1], [1, -1], [-1, -1]])
+    # c0 no longer hears from (r0, s1), so its cell takes the filler rank 2,
+    # and s1 without a route stays in the bottom bracket.
+    np.testing.assert_array_equal(priorities[0], [[2, 2], [0, 1]])
+
+
+def test_rank_bundles_eligibility_leaves_a_student_no_route_serves_as_it_is():
+    # s0's district has no route, so whether s0 is eligible changes nothing.
+    for ranked, default in zip(
+        rank_two_districts(route_discount=0.5, route_eligible=[False, True]),
+        rank_two_districts(route_discount=0.5),
+    ):
+        np.testing.assert_array_equal(ranked, default)
 
 
 def test_rank_bundles_priorities_put_a_distant_local_above_a_near_outsider():
@@ -446,23 +468,70 @@ def test_cohort_capacity_rejects_a_cohort_of_less_than_one_seat():
 # --------------------------------------------------------------------------
 
 
-def test_disadvantaged_students_labels_each_student_by_its_own_district():
+def test_disadvantaged_students_holds_each_area_to_its_rounded_share():
+    # Scores of 0, 0.25, 0.6 and 1 over 4, 4, 5 and 3 students: 0, 1, 3 and 3.
+    areas = pd.DataFrame({"IDACI Score": [0.0, 0.25, 0.6, 1.0]})
+    student_lsoa = np.repeat(np.arange(4), [4, 4, 5, 3])
+
+    drawn = disadvantaged_students(student_lsoa, areas, np.random.default_rng(0))
+
+    assert drawn.dtype == bool
+    np.testing.assert_array_equal(
+        np.bincount(student_lsoa[drawn], minlength=4), [0, 1, 3, 3]
+    )
+
+
+def test_disadvantaged_students_is_reproducible_from_the_seed():
+    areas = pd.DataFrame({"IDACI Score": [0.5]})
+    student_lsoa = np.zeros(40, dtype=np.int64)
+
+    first, again = (
+        disadvantaged_students(student_lsoa, areas, np.random.default_rng(3))
+        for _ in range(2)
+    )
+    other = disadvantaged_students(student_lsoa, areas, np.random.default_rng(4))
+
+    np.testing.assert_array_equal(first, again)
+    # Another seed picks other students of the same area, as many of them.
+    assert not np.array_equal(first, other)
+    assert first.sum() == other.sum() == 20
+
+
+# --------------------------------------------------------------------------
+# disadvantaged_group
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("disadvantage", ["score", "score-open"])
+def test_disadvantaged_group_under_the_scores_is_the_group_drawn(disadvantage):
+    areas = pd.DataFrame({"IDACI Decile": [1, 5]})
+    drawn = np.array([False, True, True])
+
+    group = disadvantaged_group(np.array([0, 0, 1]), drawn, areas, 3, disadvantage)
+
+    np.testing.assert_array_equal(group, drawn)
+
+
+def test_disadvantaged_group_under_decile_labels_each_student_by_its_district():
     areas = pd.DataFrame({"IDACI Decile": [1, 5, 3]})
     student_lsoa = np.array([0, 1, 1, 2, 0])
 
-    labels = disadvantaged_students(student_lsoa, areas, decile=3)
-
-    np.testing.assert_array_equal(labels, [True, False, False, True, True])
-
-
-def test_disadvantaged_students_defaults_to_the_route_decile():
-    areas = pd.DataFrame(
-        {"IDACI Decile": [DISADVANTAGED_DECILE, DISADVANTAGED_DECILE + 1]}
+    group = disadvantaged_group(
+        student_lsoa, np.zeros(5, dtype=bool), areas, 3, "decile"
     )
 
-    np.testing.assert_array_equal(
-        disadvantaged_students(np.array([0, 1]), areas), [True, False]
-    )
+    np.testing.assert_array_equal(group, [True, False, False, True, True])
+
+
+def test_disadvantaged_group_rejects_an_unknown_choice():
+    with pytest.raises(ValueError, match="must be one of"):
+        disadvantaged_group(
+            np.array([0]),
+            np.array([True]),
+            pd.DataFrame({"IDACI Decile": [1]}),
+            3,
+            "district",
+        )
 
 
 # --------------------------------------------------------------------------
