@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import geopandas as gpd
@@ -10,22 +11,28 @@ from geo_model.build_routes import (
     route_network,
     save_routes,
 )
-from geo_model.load_data import load_areas, load_schools
+from geo_model.load_data import load_schools
 from geo_model.utils import (
+    add_region_arguments,
     cohort_capacity,
     disadvantaged_group,
     disadvantaged_students,
     district_index,
     rank_bundles,
+    region_dir,
+    regions,
     sample_students,
 )
 
 SEED = 20260907
-OUTPUT_NPZ = Path("temp/prefprio.npz")
+# Written to each region's folder.
+OUTPUT_NPZ = "prefprio.npz"
 
 # Share of the secondary preference ranking driven by Progress 8 rather than
-# distance, for students who are not disadvantaged. At 0.3 one
-# Progress 8 point is worth roughly 1.4km of extra travel.
+# distance, for students who are not disadvantaged. Distances and scores are
+# each scaled by their own spread over the region, so the trade-off is the
+# region's: in Southampton, at 0.3, one Progress 8 point is worth roughly
+# 1.4km of extra travel.
 PERFORMANCE_WEIGHT = 0.3
 
 # Share of the travel a route takes out of the ranking of the school it serves,
@@ -121,8 +128,8 @@ def secondary_instance(
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: Student
-        preferences, school priorities, school capacities and route
-        capacities, in the form `fast_DAT` takes. Route capacities are empty
+        preferences, the school's rank of every bundle on them, school
+        capacities and route capacities, in the form `fast_DAT` takes. Route capacities are empty
         when there are no routes.
     """
     if routes is None:
@@ -132,7 +139,7 @@ def secondary_instance(
         route_school = routes["school_idx"].to_numpy()
         route_capacities = routes["capacity"].to_numpy(dtype=np.int32)
 
-    preferences, priorities = rank_bundles(
+    preferences, ranks = rank_bundles(
         student_xy,
         student_lsoa,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
@@ -148,27 +155,43 @@ def secondary_instance(
         ),
         route_eligible=disadvantaged if disadvantage == "score" else True,
     )
-    return preferences, priorities, cohort_capacity(secondary_schools), route_capacities
+    return preferences, ranks, cohort_capacity(secondary_schools), route_capacities
 
 
-def main() -> None:
-    """Build the matching inputs for both phases and write them out."""
+def build(
+    areas: gpd.GeoDataFrame,
+    primary_schools: gpd.GeoDataFrame,
+    secondary_schools: gpd.GeoDataFrame,
+    out_dir: Path,
+) -> None:
+    """Build one region's matching inputs for both phases and write them out,
+    to OUTPUT_NPZ in `out_dir` and the route set beside it.
+
+    Args:
+        areas (gpd.GeoDataFrame): The region's districts, as `load_areas`
+        returns them.
+
+        primary_schools (gpd.GeoDataFrame): The region's primary schools, as
+        `load_schools` returns them.
+
+        secondary_schools (gpd.GeoDataFrame): The region's secondary schools,
+        as `load_schools` returns them.
+
+        out_dir (Path): Folder the inputs are written to.
+    """
     rng = np.random.default_rng(SEED)
-
-    geo_soton = load_areas()
-    primary_schools, secondary_schools = load_schools()
 
     # Simulate student locations within each LSOA, clustered on its population centroid.
     primary_student_xy, primary_student_lsoa = sample_students(
-        geo_soton["Borders"],
-        geo_soton["Centroids"],
-        cohort_sizes(geo_soton, "primary"),
+        areas["Borders"],
+        areas["Centroids"],
+        cohort_sizes(areas, "primary"),
         rng,
     )
     secondary_student_xy, secondary_student_lsoa = sample_students(
-        geo_soton["Borders"],
-        geo_soton["Centroids"],
-        cohort_sizes(geo_soton, "secondary"),
+        areas["Borders"],
+        areas["Centroids"],
+        cohort_sizes(areas, "secondary"),
         rng,
     )
     # Who is disadvantaged is drawn after both phases' locations, so the
@@ -176,8 +199,8 @@ def main() -> None:
     primary_student_disadvantaged, secondary_student_disadvantaged = (
         disadvantaged_group(
             student_lsoa,
-            disadvantaged_students(student_lsoa, geo_soton, rng),
-            geo_soton,
+            disadvantaged_students(student_lsoa, areas, rng),
+            areas,
             DISADVANTAGED_DECILE,
             DISADVANTAGE,
         )
@@ -187,35 +210,35 @@ def main() -> None:
     # Routes connect the most deprived districts to the secondary schools they
     # cannot reach unaided, so they exist for the secondary phase alone.
     secondary_routes = route_network(
-        geo_soton,
+        areas,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
         secondary_schools["P8MEA"].to_numpy(),
-        secondary_schools["PAN"].to_numpy(),
-        cohort_sizes(geo_soton, "secondary"),
+        secondary_schools["PlacesOffered"].to_numpy(),
+        cohort_sizes(areas, "secondary"),
     )
-    save_routes(secondary_routes)
+    save_routes(secondary_routes, out_dir)
 
     # School priorities are the transpose of the same pairwise distances that rank
     # student preferences, so one distance matrix per phase serves both. Progress 8
     # is a KS4 measure with no primary analogue, so it shapes secondary preferences
     # only, and priorities stay on distance and district alone in both phases.
-    primary_student_preferences, primary_school_priorities = rank_bundles(
+    primary_student_preferences, primary_preference_ranks = rank_bundles(
         primary_student_xy,
         primary_student_lsoa,
         primary_schools[["Easting", "Northing"]].to_numpy(),
-        district_index(primary_schools, geo_soton),
+        district_index(primary_schools, areas),
         np.empty(0, dtype=np.int32),
         np.empty(0, dtype=np.int32),
     )
     (
         secondary_student_preferences,
-        secondary_school_priorities,
+        secondary_preference_ranks,
         secondary_school_capacities,
         _,
     ) = secondary_instance(
         secondary_student_xy,
         secondary_student_lsoa,
-        geo_soton,
+        areas,
         secondary_schools,
         secondary_routes,
         secondary_student_disadvantaged,
@@ -234,24 +257,36 @@ def main() -> None:
         f"{len(secondary_student_xy)} students."
     )
 
-    OUTPUT_NPZ.parent.mkdir(parents=True, exist_ok=True)
-    # Compressed, since a priority array is mostly the filler that stands in for
-    # the bundles a school never hears from. The district each student was
-    # drawn in and whether they are disadvantaged are saved alongside, so a
-    # matching of this instance can be scored for segregation on its own.
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # The district each student was drawn in and whether they are
+    # disadvantaged are saved alongside, so a matching of this instance can be
+    # scored for segregation on its own.
     np.savez_compressed(
-        OUTPUT_NPZ,
+        out_dir / OUTPUT_NPZ,
         primary_student_preferences=primary_student_preferences,
         secondary_student_preferences=secondary_student_preferences,
-        primary_school_priorities=primary_school_priorities,
+        primary_preference_ranks=primary_preference_ranks,
         primary_school_capacities=primary_school_capacities,
-        secondary_school_priorities=secondary_school_priorities,
+        secondary_preference_ranks=secondary_preference_ranks,
         secondary_school_capacities=secondary_school_capacities,
         primary_student_district=primary_student_lsoa,
         secondary_student_district=secondary_student_lsoa,
         primary_student_disadvantaged=primary_student_disadvantaged,
         secondary_student_disadvantaged=secondary_student_disadvantaged,
     )
+
+
+def main() -> None:
+    """Build the matching inputs of every region named and write them out."""
+    parser = argparse.ArgumentParser(
+        description="Build the matching inputs for both phases and write them out."
+    )
+    add_region_arguments(parser)
+    args = parser.parse_args()
+
+    for las, areas in regions(args.la, args.merge):
+        primary_schools, secondary_schools = load_schools(las)
+        build(areas, primary_schools, secondary_schools, region_dir(las))
 
 
 if __name__ == "__main__":

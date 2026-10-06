@@ -181,13 +181,14 @@ def test_pipeline_scores_and_records_a_searched_decile_rounded():
 # --------------------------------------------------------------------------
 
 
-def test_optimise_rejects_a_parameter_named_twice():
+def test_optimise_rejects_a_parameter_named_twice(tmp_path):
     with pytest.raises(ValueError, match="named once"):
         op.optimise(
             NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             pd.DataFrame(),
+            tmp_path,
             parameters=["min_distance", "min_distance"],
         )
 
@@ -197,7 +198,7 @@ def test_optimise_rejects_a_parameter_named_twice():
     [("decile", "decile"), ("route_discount", "score"), ("route_discount", "decile")],
 )
 def test_optimise_rejects_a_parameter_the_choice_of_disadvantage_bars(
-    parameter, disadvantage
+    parameter, disadvantage, tmp_path
 ):
     with pytest.raises(ValueError, match=rf"\['{parameter}'\] cannot be searched"):
         op.optimise(
@@ -205,12 +206,15 @@ def test_optimise_rejects_a_parameter_the_choice_of_disadvantage_bars(
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             pd.DataFrame(),
+            tmp_path,
             parameters=[parameter],
             disadvantage=disadvantage,
         )
 
 
-def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(monkeypatch):
+def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(op, "score_feasible", lambda settings, **kwargs: None)
 
     with pytest.raises(ValueError, match="None of the 8 settings scored"):
@@ -219,6 +223,7 @@ def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(monkeypatch):
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             pd.DataFrame(),
+            tmp_path,
             pop_size=4,
             generations=2,
         )
@@ -241,7 +246,7 @@ def secondary():
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_score_feasible_names_a_setting_that_leaves_no_route(secondary, capsys):
     samples, areas, schools, shares = secondary
-    # Every district lies within 9.9km of every school.
+    # Every Southampton district lies within 9.9km of every school.
     settings = replace(DEFAULTS, min_distance=20_000)
 
     scored = op.score_feasible(
@@ -259,12 +264,7 @@ def test_score_feasible_names_a_setting_that_leaves_no_route(secondary, capsys):
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_optimise_finds_the_front_of_every_setting_scored(
-    secondary, tmp_path, monkeypatch
-):
-    monkeypatch.setattr(op, "OUT_DIR", tmp_path)
-    monkeypatch.setattr(op, "EVALUATIONS_CSV", tmp_path / "evaluations.csv")
-    monkeypatch.setattr(op, "FRONT_CSV", tmp_path / "front.csv")
+def test_optimise_finds_the_front_of_every_setting_scored(secondary, tmp_path):
     samples, areas, schools, shares = secondary
     parameters = ["capacity_scale", "progressivity"]
 
@@ -273,6 +273,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         areas,
         schools,
         shares,
+        tmp_path,
         parameters,
         pop_size=4,
         generations=2,
@@ -283,8 +284,10 @@ def test_optimise_finds_the_front_of_every_setting_scored(
     for parameter in parameters:
         low, high = op.bounds(parameter)
         assert evaluations[parameter].between(low, high).all()
-    pd.testing.assert_frame_equal(pd.read_csv(op.EVALUATIONS_CSV), evaluations)
-    pd.testing.assert_frame_equal(pd.read_csv(op.FRONT_CSV), front)
+    pd.testing.assert_frame_equal(
+        pd.read_csv(tmp_path / op.EVALUATIONS_CSV), evaluations
+    )
+    pd.testing.assert_frame_equal(pd.read_csv(tmp_path / op.FRONT_CSV), front)
 
     # No feasible setting beats a front setting on one objective without
     # losing on the other, and every feasible setting off the front is beaten.
@@ -321,6 +324,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         areas,
         schools,
         shares,
+        tmp_path / "pooled",
         parameters,
         pop_size=4,
         generations=2,
@@ -489,26 +493,13 @@ def test_draw_school_intake_centres_the_terms_on_the_largest_drawn():
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_compare_scores_and_plots_the_setting_against_no_routes(
-    secondary, tmp_path, monkeypatch
-):
-    pngs = {
-        name: tmp_path / f"{name.lower()}.png"
-        for name in (
-            "DISSIMILARITY_PNG",
-            "UNASSIGNED_PNG",
-            "INTAKE_PNG",
-            "MODES_PNG",
-            "LORENZ_PNG",
-            "MAP_PNG",
-        )
-    }
-    for name, png in pngs.items():
-        monkeypatch.setattr(op, name, png)
+def test_compare_scores_and_plots_the_setting_against_no_routes(secondary, tmp_path):
     samples, areas, schools, shares = secondary
     settings = replace(DEFAULTS, capacity_scale=2.0, progressivity=0.5)
 
-    results, intake, modes = op.compare(settings, samples, areas, schools, shares)
+    results, intake, modes = op.compare(
+        settings, samples, areas, schools, shares, tmp_path
+    )
 
     rows, school_rows, mode_rows = score_settings(
         settings, samples, areas, schools, shares
@@ -517,13 +508,27 @@ def test_compare_scores_and_plots_the_setting_against_no_routes(
     pd.testing.assert_frame_equal(intake, pd.DataFrame(school_rows))
     pd.testing.assert_frame_equal(modes, pd.DataFrame(mode_rows))
     assert list(results["scenario"]) == ["with routes", "without routes"]
-    for png in pngs.values():
-        assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", png
+    for name in (
+        op.DISSIMILARITY_PNG,
+        op.UNASSIGNED_PNG,
+        op.INTAKE_PNG,
+        op.MODES_PNG,
+        op.LORENZ_PNG,
+        op.MAP_PNG,
+    ):
+        assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
-def test_compare_rejects_no_samples():
+def test_compare_rejects_no_samples(tmp_path):
     with pytest.raises(ValueError, match="No student sample"):
-        op.compare(DEFAULTS, [], gpd.GeoDataFrame(), gpd.GeoDataFrame(), pd.DataFrame())
+        op.compare(
+            DEFAULTS,
+            [],
+            gpd.GeoDataFrame(),
+            gpd.GeoDataFrame(),
+            pd.DataFrame(),
+            tmp_path,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -531,8 +536,8 @@ def test_compare_rejects_no_samples():
 # --------------------------------------------------------------------------
 
 
-def test_plot_front_writes_a_png_of_the_front(tmp_path, monkeypatch):
-    monkeypatch.setattr(op, "FRONT_PNG", tmp_path / "out" / "front.png")
+def test_plot_front_writes_a_png_of_the_front(tmp_path):
+    png = tmp_path / "out" / op.FRONT_PNG
     evaluations = pd.DataFrame(
         {
             "generation": [1, 1, 1, 2],
@@ -550,13 +555,19 @@ def test_plot_front_writes_a_png_of_the_front(tmp_path, monkeypatch):
         front.iloc[1],
         {"dissimilarity": 0.33, "car_displacement": 9.0},
         op.DEFAULT_OBJECTIVES,
+        png,
     )
 
-    assert op.FRONT_PNG.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-def test_plot_front_rejects_anything_but_two_objectives():
+def test_plot_front_rejects_anything_but_two_objectives(tmp_path):
     with pytest.raises(ValueError, match="plotted in two objectives"):
         op.plot_front(
-            pd.DataFrame(), pd.DataFrame(), pd.Series(), {}, ["dissimilarity"]
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.Series(),
+            {},
+            ["dissimilarity"],
+            tmp_path / op.FRONT_PNG,
         )

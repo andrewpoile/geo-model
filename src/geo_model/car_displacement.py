@@ -17,6 +17,7 @@ carries the same estimate.
 import argparse
 from pathlib import Path
 
+import geopandas as gpd
 import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
@@ -30,25 +31,42 @@ from geo_model.dissimilarity import (
     score_sample,
     student_samples,
 )
-from geo_model.load_data import (
-    NTS_YEARS,
-    load_areas,
-    load_nts_mode_shares,
-    load_schools,
+from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
+from geo_model.utils import (
+    CIRCUITY,
+    MODES,
+    add_region_arguments,
+    disadvantaged_group,
+    mode_change,
+    region_dir,
+    regions,
 )
-from geo_model.utils import CIRCUITY, MODES, disadvantaged_group, mode_change
 
-RESULTS_CSV = Path("temp/car_displacement.csv")
-PLOT_PNG = Path("temp/car_displacement.png")
+# Written to each region's folder.
+RESULTS_CSV = "car_displacement.csv"
+PLOT_PNG = "car_displacement.png"
 
 
 def run(
-    n_seeds: int, years: list[int] = NTS_YEARS, circuity: float = CIRCUITY
+    n_seeds: int,
+    areas: gpd.GeoDataFrame,
+    secondary_schools: gpd.GeoDataFrame,
+    out_dir: Path,
+    years: list[int] = NTS_YEARS,
+    circuity: float = CIRCUITY,
 ) -> pd.DataFrame:
     """Count the modes of the secondary matching with and without routes over fresh samples.
 
     Args:
         n_seeds (int): Number of student samples to draw.
+
+        areas (gpd.GeoDataFrame): The region's districts, as `route_network`
+        takes them.
+
+        secondary_schools (gpd.GeoDataFrame): The region's schools, as
+        `score_sample` takes them.
+
+        out_dir (Path): Folder the rows are written to.
 
         years (list[int], optional): Passed to `load_nts_mode_shares`.
         Defaults to NTS_YEARS.
@@ -59,16 +77,14 @@ def run(
     Returns:
         pd.DataFrame: One row per (seed, scenario, mode), with columns "seed",
         "scenario", "mode" and "students" (expected). Also written to
-        RESULTS_CSV.
+        RESULTS_CSV in `out_dir`.
     """
-    areas = load_areas()
-    _, secondary_schools = load_schools()
     sizes = cohort_sizes(areas, "secondary")
     routes = route_network(
         areas,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
         secondary_schools["P8MEA"].to_numpy(),
-        secondary_schools["PAN"].to_numpy(),
+        secondary_schools["PlacesOffered"].to_numpy(),
         sizes,
     )
     shares = load_nts_mode_shares(years)
@@ -93,8 +109,8 @@ def run(
         print(f"Seed {seed + 1} of {n_seeds}: {len(student_xy)} students.")
 
     results = pd.DataFrame(rows)
-    RESULTS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    results.to_csv(RESULTS_CSV, index=False)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results.to_csv(out_dir / RESULTS_CSV, index=False)
     return results
 
 
@@ -161,20 +177,28 @@ def main() -> None:
         default=CIRCUITY,
         help="road distance per straight-line metre, applied before banding",
     )
+    add_region_arguments(parser)
     args = parser.parse_args()
 
-    results = run(args.seeds, args.years, args.circuity)
-    summary = results.pivot_table(index="mode", columns="scenario", values="students")
-    summary = summary.reindex(MODES)
-    summary["change"] = summary["with routes"] - summary["without routes"]
-    summary["share with"] = summary["with routes"] / summary["with routes"].sum()
-    summary["share without"] = (
-        summary["without routes"] / summary["without routes"].sum()
-    )
-    print("Mean over seeds:")
-    print(summary.round(3))
-    plot(results, PLOT_PNG)
-    print(f"Wrote {RESULTS_CSV} and {PLOT_PNG}.")
+    for las, areas in regions(args.la, args.merge):
+        out_dir = region_dir(las)
+        _, secondary_schools = load_schools(las)
+        results = run(
+            args.seeds, areas, secondary_schools, out_dir, args.years, args.circuity
+        )
+        summary = results.pivot_table(
+            index="mode", columns="scenario", values="students"
+        )
+        summary = summary.reindex(MODES)
+        summary["change"] = summary["with routes"] - summary["without routes"]
+        summary["share with"] = summary["with routes"] / summary["with routes"].sum()
+        summary["share without"] = (
+            summary["without routes"] / summary["without routes"].sum()
+        )
+        print(" + ".join(las) + ", mean over seeds:")
+        print(summary.round(3))
+        plot(results, out_dir / PLOT_PNG)
+        print(f"Wrote {RESULTS_CSV} and {PLOT_PNG} in {out_dir}.")
 
 
 if __name__ == "__main__":

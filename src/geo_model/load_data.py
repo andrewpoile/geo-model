@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import geopandas as gpd
@@ -12,30 +13,50 @@ SECONDARY_PHASES = ["All-through", "Middle deemed secondary", "Secondary"]
 POPULATION_XLSX = Path("data/student_data/sapelsoasyoa20222024.xlsx")
 POPULATION_CACHE = Path("temp/population_lsoa.pkl")
 IDACI_CSV = Path(
-    "data/student_data/File_3_IoD2025 Supplementary Indices_IDACI and IDAOPI.csv"
+    "data/student_data/IoD2025/"
+    "File_3_IoD2025 Supplementary Indices_IDACI and IDAOPI.csv"
 )
 IDACI_SCORES_CSV = Path(
-    "data/student_data/"
+    "data/student_data/IoD2025/"
     "File_5_IoD2025_Scores_for_the_Indices_of_Deprivation(IoD2025 Scores).csv"
 )
 BOUNDARIES_DIR = Path("data/student_data/LSOA_Boundaries_geospacial_data_2021")
 CENTROIDS_DIR = Path("data/student_data/LSOA_PopCentroids_geospatial_data_2021")
 REGISTER_CSV = Path("data/school_data/edubasealldata20260225.csv")
+# The register's GSSLACode for some schools, Dorset's and Bournemouth,
+# Christchurch and Poole's among them: a placeholder rather than an ONS code.
+NO_GSS_CODE = "X999999"
+# ONS: every local authority district to the county or unitary authority it
+# falls under, April 2025.
+COUNTY_LOOKUP_CSV = Path(
+    "data/student_data/Local_Authority_District_to_County_and_Unitary_"
+    "Authority_(April_2025)_Lookup_in_UK_v2.csv"
+)
 
-# Year 7 published admission numbers, transcribed from Southampton City
-# Council's determined admission arrangements. Every school holds the same
-# number in both published years, so the choice of year changes nothing today.
-PAN_CSV = Path("data/school_data/secondary_pan.csv")
-PAN_YEAR = "PAN2026"
+# The local authorities simulated unless others are named, spelled as the
+# register's "LA (name)" spells them.
+LAS = ["Southampton"]
+
+# DfE school-level applications and offers: the offers made on national offer
+# day for entry to every state-funded school in England, one row per school,
+# phase and admission year, 2014/15 to 2026/27.
+OFFERS_CSV = Path(
+    "data/school_data/school_applications_and_offers/supporting-files/"
+    "AppsandOffers_2026_SchoolLevel29062026.csv"
+)
+# The admission years a school's places offered are averaged over, as the file
+# codes them: the latest five, 2022/23 to 2026/27, so a school that grew or
+# shrank before them is sized as it now stands.
+OFFER_YEARS = [202223, 202324, 202425, 202526, 202627]
 
 # 2024-2025 is the newest release in the data folder, but it publishes no P8MEA
 # for any school in England, so 2023-2024 is the latest usable year.
-KS4_CSV = Path("data/school_data/Performancetables_csv/2023-2024/852_ks4final.csv")
+KS4_CSV = Path("data/school_data/Performancetables_csv/2023-2024/england_ks4final.csv")
 
 # NTS0614a: trips to and from school by trip length, main mode and age, England,
 # 2002 onwards. Education trips under 50 miles only; bus is private and local
 # bus together, other is rail and everything else.
-NTS_MODE_BY_LENGTH_ODS = Path("data/travel_data/nts/nts0614.ods")
+NTS_MODE_BY_LENGTH_ODS = Path("data/travel_data/national_travel_survey/nts0614.ods")
 NTS_MODE_BY_LENGTH_SHEET = "NTS0614a_length_by_mode"
 NTS_BANDS = [
     "Under 1 mile",
@@ -80,7 +101,11 @@ def load_population() -> pd.DataFrame:
     population.attrs["source_key"] = source_key
 
     POPULATION_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    population.to_pickle(POPULATION_CACHE)
+    # Written aside and moved into place whole, so a run started meanwhile
+    # never reads half a cache.
+    partial = POPULATION_CACHE.with_suffix(f".{os.getpid()}.tmp")
+    population.to_pickle(partial)
+    partial.replace(POPULATION_CACHE)
     return population
 
 
@@ -103,26 +128,59 @@ def load_p8() -> pd.DataFrame:
     return ks4[["LEA", "ESTAB", "P8MEA"]].dropna(subset=["P8MEA"])
 
 
-def load_pan(year: str = PAN_YEAR) -> pd.DataFrame:
-    """Import published admission numbers, keyed on local authority and establishment number.
+def load_places_offered(years: list[int] = OFFER_YEARS) -> pd.DataFrame:
+    """Import the Year 7 places each secondary school offers, keyed on local
+    authority and establishment number.
 
-    A PAN is the number of places a school offers in Year 7, which is the
-    cohort the matching admits, so it sizes a school directly. The register's
-    capacity covers every year group a school teaches instead, sixth form
-    included, and so cannot be read as an intake.
+    A school's figure is the floor of the mean of the places it offered for
+    Year 7 entry over `years`, taken over the years among them it made offers
+    in. Year 7 is the cohort the matching admits, so the figure sizes a school
+    directly, where the register's capacity covers every year group a school
+    teaches, sixth form included. The places offered are the offers made on
+    national offer day, so they are capped by demand: at an undersubscribed
+    school they fall below its published admission number. Offers for entry
+    into another year, Year 9 at an upper school, are left out.
 
     Args:
-        year (str, optional): Admission year column to read, as the file
-        heads it. Defaults to PAN_YEAR.
+        years (list[int], optional): Admission years, as the file codes them,
+        202627 for 2026/27. Defaults to OFFER_YEARS.
 
     Returns:
-        pd.DataFrame: One row per school, carrying "LA (code)",
-        "EstablishmentNumber" and "PAN".
+        pd.DataFrame: One row per school that offered Year 7 places in
+        `years`, carrying "LA (code)", "EstablishmentNumber" and
+        "PlacesOffered".
     """
-    pan = pd.read_csv(PAN_CSV)
-    if year not in pan.columns:
-        raise ValueError(f"{PAN_CSV.name} holds no admission year {year!r}.")
-    return pan[["LA (code)", "EstablishmentNumber", year]].rename(columns={year: "PAN"})
+    offers = pd.read_csv(
+        OFFERS_CSV,
+        encoding="utf-8-sig",
+        usecols=[
+            "time_period",
+            "school_phase",
+            "school_laestab",
+            "total_number_places_offered",
+            "entry_year",
+        ],
+        dtype={"entry_year": str},
+    )
+    missing = sorted(set(years) - set(offers["time_period"]))
+    if missing:
+        raise ValueError(f"{OFFERS_CSV.name} holds no admission year {missing}.")
+    offers = offers[
+        (offers["school_phase"] == "Secondary")
+        & (offers["entry_year"] == "7")
+        & offers["time_period"].isin(years)
+    ]
+    places = offers.groupby("school_laestab")["total_number_places_offered"].mean()
+    # The file keys a school on its local authority's code and establishment
+    # number written together, the latter as the last four digits.
+    laestab = places.index.to_numpy()
+    return pd.DataFrame(
+        {
+            "LA (code)": laestab // 10000,
+            "EstablishmentNumber": laestab % 10000,
+            "PlacesOffered": np.floor(places.to_numpy()).astype(int),
+        }
+    )
 
 
 def load_nts_mode_shares(
@@ -185,15 +243,105 @@ def load_nts_mode_shares(
     return shares
 
 
-def load_areas() -> gpd.GeoDataFrame:
-    """Import Southampton's LSOAs with their population, deprivation and geometry.
+def authority_of_district(districts: pd.Series) -> pd.Series:
+    """The ONS code of the local authority each district falls under.
+
+    A two-tier district, coded E07, falls under its county, read from the ONS
+    lookup. Every other district, a unitary authority, metropolitan district
+    or London borough, is a local authority of its own. The lookup is read
+    for the two-tier districts alone: its April 2025 edition recodes Barnsley
+    and Sheffield, which the IoD's 2024 districts and the register both still
+    hold under their earlier codes.
+
+    Args:
+        districts (pd.Series): ONS district codes.
+
+    Returns:
+        pd.Series: The ONS code of each district's local authority, aligned
+        with `districts`.
+
+    Raises:
+        ValueError: If the lookup holds no county for a two-tier district.
+    """
+    lookup = pd.read_csv(
+        COUNTY_LOOKUP_CSV, encoding="utf-8-sig", usecols=["LAD25CD", "CTYUA25CD"]
+    ).set_index("LAD25CD")["CTYUA25CD"]
+    two_tier = districts.str.startswith("E07")
+    unlisted = two_tier & ~districts.isin(lookup.index)
+    if unlisted.any():
+        raise ValueError(
+            f"{COUNTY_LOOKUP_CSV.name} holds no county for these two-tier "
+            "districts: " + ", ".join(sorted(set(districts[unlisted])))
+        )
+    return districts.where(~two_tier, districts.map(lookup))
+
+
+def authority_codes(las: list[str]) -> pd.Series:
+    """The ONS code of each local authority in `las`, as the register holds it.
+
+    The register names the authority running each school and gives its ONS
+    code, so it is the one source that links an authority's name to the
+    districts the deprivation files code. Only open schools are read, since a
+    closed school can carry the code of an authority since abolished.
+
+    Args:
+        las (list[str]): Local authorities, as the register's "LA (name)"
+        spells them.
+
+    Returns:
+        pd.Series: The ONS code of each authority, indexed by its name in
+        `las` order.
+
+    Raises:
+        ValueError: If no open school is run by an authority of that name, or
+        its schools carry more than one code.
+    """
+    register = pd.read_csv(
+        REGISTER_CSV,
+        encoding="latin-1",
+        usecols=["LA (name)", "GSSLACode (name)", "EstablishmentStatus (name)"],
+    )
+    register = register[
+        (register["EstablishmentStatus (name)"] == "Open")
+        & (register["GSSLACode (name)"] != NO_GSS_CODE)
+    ]
+    codes = register.groupby("LA (name)")["GSSLACode (name)"].unique()
+    unknown = [la for la in las if la not in codes.index]
+    if unknown:
+        raise ValueError(
+            f"No open school in the register is run by a local authority named "
+            f"{unknown}."
+        )
+    ambiguous = {la: list(codes[la]) for la in las if len(codes[la]) != 1}
+    if ambiguous:
+        raise ValueError(
+            f"These local authorities' schools carry more than one ONS code: "
+            f"{ambiguous}."
+        )
+    return pd.Series({la: codes[la][0] for la in las})
+
+
+def load_areas(las: list[str] = LAS) -> gpd.GeoDataFrame:
+    """Import the LSOAs of the local authorities `las` with their population,
+    deprivation and geometry.
+
+    An LSOA belongs to the authority its district falls under, as
+    `authority_of_district` reads it from the IoD's 2024 districts.
+
+    Args:
+        las (list[str], optional): Local authorities, as the register's "LA
+        (name)" spells them. Defaults to LAS.
 
     Returns:
         gpd.GeoDataFrame: One row per LSOA, positionally indexed, carrying
-        "LSOA21CD", "LSOA21NM", "IDACI" (the rank), "IDACI Decile", "IDACI
-        Score" (the share of children living in income-deprived families),
-        "Total", "F4", "F11", "M4", "M11", a "Centroids" point and a
-        "Borders" polygon.
+        "LSOA21CD", "LSOA21NM", "LA (name)", "IDACI" (the rank), "IDACI
+        Decile", "IDACI Score" (the share of children living in
+        income-deprived families), "Total", "F4", "F11", "M4", "M11", a
+        "Centroids" point and a "Borders" polygon.
+
+    Raises:
+        ValueError: If an authority holds no LSOA the IoD ranks, as a Welsh
+        one does not.
     """
     population = load_population()
 
@@ -207,10 +355,25 @@ def load_areas() -> gpd.GeoDataFrame:
         },
         inplace=True,
     )
+    codes = authority_codes(las)
+    authority = authority_of_district(idaci["Local Authority District code (2024)"])
+    selected = authority.isin(codes)
+    idaci = idaci[selected].assign(
+        **{"LA (name)": authority[selected].map(pd.Series(codes.index, codes))}
+    )
+    empty = [la for la in las if la not in set(idaci["LA (name)"])]
+    if empty:
+        raise ValueError(f"{IDACI_CSV.name} ranks no LSOA in {empty}.")
 
     # Import spacial boundaries for LSOAs. The full-resolution file holds all 35672
-    # areas, so Southampton is selected during the read rather than after it.
-    geoborders = gpd.read_file(BOUNDARIES_DIR, where="LSOA21NM LIKE 'Southampton%'")
+    # areas, so the authorities' LSOAs are selected during the read rather than
+    # after it.
+    geoborders = gpd.read_file(
+        BOUNDARIES_DIR,
+        where="LSOA21CD IN ({})".format(
+            ",".join(f"'{code}'" for code in idaci["LSOA21CD"])
+        ),
+    )
     geoborders = geoborders.rename_geometry("Borders")
 
     # Import the locations of the LSOA population centroids. This layer carries no
@@ -239,7 +402,7 @@ def load_areas() -> gpd.GeoDataFrame:
     geomerge = geomerge.merge(population, "inner", "LSOA21CD")
     # Merges deprivation data with spacial data.
     geomerge = geomerge.merge(
-        idaci[["LSOA21CD", "IDACI", "IDACI Decile"]], "inner", "LSOA21CD"
+        idaci[["LSOA21CD", "LA (name)", "IDACI", "IDACI Decile"]], "inner", "LSOA21CD"
     )
 
     # Import the IDACI score, the share of an LSOA's children living in
@@ -269,6 +432,7 @@ def load_areas() -> gpd.GeoDataFrame:
         [
             "LSOA21CD",
             "LSOA21NM",
+            "LA (name)",
             "IDACI",
             "IDACI Decile",
             "IDACI Score",
@@ -283,15 +447,32 @@ def load_areas() -> gpd.GeoDataFrame:
     ]
 
 
-def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    """Import Southampton's open state schools, split by phase.
+def load_schools(
+    las: list[str] = LAS,
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Import the open state schools the local authorities `las` run, split by
+    phase.
+
+    Every row and plot of a secondary school is keyed on its name, so a name
+    two of the authorities' schools share takes the authority's name after it
+    in brackets.
+
+    Args:
+        las (list[str], optional): Local authorities, as the register's "LA
+        (name)" spells them. Defaults to LAS.
 
     Returns:
         tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]: The primary and the
         secondary schools, each carrying the register columns the model uses,
-        "P8MEA" and a point geometry, the secondary frame carrying "PAN" as
-        well. A secondary school without a Progress 8 score cannot be ranked
-        on performance, so it is dropped from the secondary frame.
+        "P8MEA" and a point geometry, the secondary frame carrying
+        "PlacesOffered" as well, as `load_places_offered` reads it. A
+        secondary school without a Progress 8 score cannot be ranked on
+        performance, and one that offered no Year 7 place takes no part in a
+        Year 7 matching, so both are dropped from the secondary frame.
+
+    Raises:
+        ValueError: If an authority runs no open state school, or a secondary
+        name repeats within one authority.
     """
     # Only 14 of the register's 135 columns are used, and reading the rest costs
     # more than everything the register is used for.
@@ -357,7 +538,13 @@ def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     schools = gpd.GeoDataFrame(
         schools, geometry=gpd.points_from_xy(schools.Easting, schools.Northing, crs=CRS)
     )
-    schools = schools[schools["LA (name)"].isin(["Southampton"])]
+    unknown = [la for la in las if la not in set(schools["LA (name)"])]
+    if unknown:
+        raise ValueError(
+            f"No open state school in the register is run by a local authority "
+            f"named {unknown}."
+        )
+    schools = schools[schools["LA (name)"].isin(las)]
 
     # Progress 8 is joined on establishment number rather than URN: Regents Park
     # Community College became an academy in 2026 and took a new URN, while its
@@ -372,6 +559,22 @@ def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     secondary_schools = schools[
         schools["PhaseOfEducation (name)"].isin(SECONDARY_PHASES)
     ]
+    names = secondary_schools["EstablishmentName"]
+    shared = names.duplicated(keep=False)
+    secondary_schools = secondary_schools.assign(
+        EstablishmentName=names.where(
+            ~shared, names + " (" + secondary_schools["LA (name)"] + ")"
+        )
+    )
+    repeated = secondary_schools["EstablishmentName"].duplicated(keep=False)
+    if repeated.any():
+        raise ValueError(
+            "These secondary schools share a name within one local authority, "
+            "so their rows and plots cannot be told apart: "
+            + ", ".join(
+                sorted(set(secondary_schools.loc[repeated, "EstablishmentName"]))
+            )
+        )
 
     # An all-through school that has never had a KS4 cohort has no Progress 8 score
     # and so cannot be ranked on performance. It still serves the primary phase.
@@ -383,17 +586,22 @@ def load_schools() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
         )
         secondary_schools = secondary_schools.dropna(subset=["P8MEA"])
 
-    # Only the secondary phase publishes an admission number, so only this
-    # frame carries one and only it is sized on an intake rather than on the
-    # register's capacity across every year group.
+    # The secondary phase is sized on its intake, the places each school offers
+    # for Year 7, rather than on the register's capacity across every year
+    # group. A school that offered none in OFFER_YEARS, as one admitting at 14
+    # or into Year 9 does not, has no Year 7 intake to be matched to.
     secondary_schools = secondary_schools.merge(
-        load_pan(), "left", ["LA (code)", "EstablishmentNumber"]
+        load_places_offered(), "left", ["LA (code)", "EstablishmentNumber"]
     )
-    missing_pan = secondary_schools[secondary_schools["PAN"].isna()]
-    if len(missing_pan):
-        raise ValueError(
-            "No published admission number held, so an intake cannot be sized: "
-            + ", ".join(missing_pan["EstablishmentName"])
+    places = secondary_schools["PlacesOffered"]
+    no_places = places.isna() | (places == 0)
+    if no_places.any():
+        print(
+            "No Year 7 place offered in admission years "
+            + ", ".join(map(str, OFFER_YEARS))
+            + ", dropped from the secondary choice set: "
+            + ", ".join(secondary_schools.loc[no_places, "EstablishmentName"])
         )
+        secondary_schools = secondary_schools[~no_places]
 
-    return primary_schools, secondary_schools.astype({"PAN": int})
+    return primary_schools, secondary_schools.astype({"PlacesOffered": int})

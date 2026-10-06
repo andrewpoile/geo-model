@@ -33,33 +33,34 @@ from geo_model.dissimilarity import (
     settings_routes,
     student_samples,
 )
-from geo_model.load_data import (
-    NTS_YEARS,
-    load_areas,
-    load_nts_mode_shares,
-    load_schools,
-)
+from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
 from geo_model.utils import (
     CIRCUITY,
     MILE,
     MODES,
+    add_region_arguments,
     disadvantaged_group,
     dissimilarity_terms,
     gini,
     lorenz_curve,
     mode_change,
+    region_dir,
+    regions,
 )
 
-SWEEP_DIR = Path("temp/sweep")
-RESULTS_CSV = SWEEP_DIR / "sweep.csv"
-SCHOOLS_CSV = SWEEP_DIR / "schools.csv"
-MODES_CSV = SWEEP_DIR / "modes.csv"
-PLOT_PNG = SWEEP_DIR / "sweep.png"
-MAP_PNG = SWEEP_DIR / "map.png"
-LORENZ_PNG = SWEEP_DIR / "lorenz.png"
+# The sweep's folder within each region's, and the files written to it.
+SWEEP_DIR = Path("sweep")
+RESULTS_CSV = "sweep.csv"
+SCHOOLS_CSV = "schools.csv"
+MODES_CSV = "modes.csv"
+PLOT_PNG = "sweep.png"
+MAP_PNG = "map.png"
+LORENZ_PNG = "lorenz.png"
 
 # One-at-a-time grids: a parameter runs over its values while the others hold
-# DEFAULTS, so every grid carries its own default.
+# DEFAULTS, so every grid carries its own default. The spans were chosen on
+# Southampton, whose figures the comments give; in another region a cell can
+# leave no route, which stops the sweep with EmptyRouteSet.
 GRID = {
     # The decile sets the districts routes are built from and T of the
     # progressive weight. Under DISADVANTAGE "decile" it also sets the group the
@@ -70,14 +71,15 @@ GRID = {
     # would make every student disadvantaged and the index undefined, so the
     # grid stops at 9 under every choice, and every choice sweeps one grid.
     "decile": [replace(DEFAULTS, decile=d) for d in range(1, 10)],
-    # Whole miles in metres. Every district lies within 9.9km of every school,
-    # so the route set stays non-empty throughout.
+    # Whole miles in metres. In Southampton every district lies within 9.9km
+    # of every school, so the route set stays non-empty throughout.
     "min_distance": [
         replace(DEFAULTS, min_distance=m) for m in (0, 1609, 3218, 4828, 6437, 8047)
     ],
-    # 1 is the fair share of the PAN. The smallest PAN is 120 and the city's
-    # cohort 2918, so from 2918 / 120 = 24.3 every route holds its district's
-    # whole cohort and no route capacity binds.
+    # 1 is the fair share of the places a school offers. In Southampton the
+    # fewest places offered is 126 and the cohort 2918, so from 2918 / 126 =
+    # 23.2 every route holds its district's whole cohort and no route capacity
+    # binds.
     "capacity_scale": [
         replace(DEFAULTS, capacity_scale=k)
         for k in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 10.0, 15.0, 20.0, 25.0)
@@ -86,14 +88,14 @@ GRID = {
     # times the threshold decile T, the total seats held fixed throughout.
     "progressivity": [replace(DEFAULTS, progressivity=p / 4) for p in range(13)],
     # Quarter steps over the spread of P8MEA, which runs from -0.99 to 0.82 over
-    # the 12 secondary schools: above 0.82 no school is above the threshold, so
-    # the condition is inert and the route set is whole. At LOCAL_RADIUS no
+    # Southampton's 12 secondary schools: above 0.82 no school is above the
+    # threshold, so the condition is inert and the route set is whole. At LOCAL_RADIUS no
     # value empties it, since a district with no school inside the radius at all
     # keeps its routes however low the threshold.
     "max_local_p8": [replace(DEFAULTS, max_local_p8=p / 4) for p in range(-2, 5)],
-    # Half miles in metres. Every district at or below the default decile has a
-    # school above MAX_LOCAL_P8 within 5.6km, so the route set empties from
-    # there.
+    # Half miles in metres. Every Southampton district at or below the default
+    # decile has a school above MAX_LOCAL_P8 within 5.6km, so there the route
+    # set empties from that radius.
     "local_radius": [
         replace(DEFAULTS, local_radius=r)
         for r in (0, 805, 1609, 2414, 3218, 4023, 4828)
@@ -115,7 +117,7 @@ GRID = {
 AXIS_LABELS = {
     "decile": "Routes from LSOAs at or below IDACI decile",
     "min_distance": "Minimum route distance (m)",
-    "capacity_scale": "Route capacity scale (× fair share of PAN)",
+    "capacity_scale": "Route capacity scale (× fair share of places offered)",
     "progressivity": "Route seat progressivity (weight f(D)^p)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
     "local_radius": "Local performance radius (m)",
@@ -146,7 +148,7 @@ GROUP_COLOURS = {
 }
 DEFAULT_LINE = {"color": "#898781", "linestyle": "--", "linewidth": 1}
 # What the intake panels and the FSM strip show of each school: its term of the
-# dissimilarity index, diverging either side of the city-wide mix, or the
+# dissimilarity index, diverging either side of the region-wide mix, or the
 # disadvantaged share of its intake, in one hue from light to dark.
 INTAKE_MEASURES = {
     "dissimilarity": {
@@ -170,8 +172,8 @@ INK = "#1f2933"
 # the purple fill so the plain trips stand out against it.
 LINK_COLOURS = {"without a route": "#029e73", "on a route": "#de8f05"}
 # The map's scale bar, kilometres ticked above the line and miles below: the
-# metres in each unit and the units the bar reaches, near a third of the
-# city's 10.9km width either way.
+# metres in each unit and the units the bar reaches, near a third of
+# Southampton's 10.9km width either way.
 SCALE_BAR = {"km": (1000.0, 3), "miles": (MILE, 2)}
 
 
@@ -197,6 +199,7 @@ def sweep(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     shares: pd.DataFrame,
+    out_dir: Path,
     circuity: float = CIRCUITY,
     workers: int = 1,
     round_up: bool = ROUND_UP_SEATS,
@@ -221,15 +224,20 @@ def sweep(
 
         shares (pd.DataFrame): Passed to `score_settings`.
 
+        out_dir (Path): Folder the rows are written to.
+
         circuity (float, optional): Passed to `score_settings`. Defaults to
         CIRCUITY.
 
         workers (int, optional): Processes to score the cells in, one cell
-        per task. A routed instance carries a priority array of up to
-        150MB, so memory rather than cores bounds the gain: on a 24-core,
-        32GB machine 4 workers ran the sweep 2.2x faster than one, 8 ran it
-        3x faster, and 16 ran out of memory. Threads were slower than one
-        process. Defaults to 1, which scores in this process.
+        per task. A routed instance's preferences and their ranks take under
+        1MB in Southampton and 37MB for Southampton and Hampshire merged.
+        The speed-ups last measured, on a 24-core, 32GB machine, predate
+        them: 4 workers ran the sweep 2.2x faster than one and 8 ran it 3x
+        faster, while 16 ran out of memory holding priority arrays over
+        every school, route and student, of up to 150MB each. Threads were
+        slower than one process. Defaults to 1, which scores in this
+        process.
 
         round_up (bool, optional): Passed to `score_settings`. Defaults to
         ROUND_UP_SEATS.
@@ -246,7 +254,7 @@ def sweep(
         (parameter, value, seed, scenario, school), and the mode rows, one
         per (parameter, value, seed, scenario, mode), each with "parameter"
         and "value" ahead of the columns `score_settings` returns. Also
-        written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV.
+        written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV in `out_dir`.
     """
     cells = [(p, settings) for p in swept(disadvantage) for settings in GRID[p]]
     score = functools.partial(
@@ -277,10 +285,10 @@ def sweep(
         pd.DataFrame(school_rows),
         pd.DataFrame(mode_rows),
     )
-    SWEEP_DIR.mkdir(parents=True, exist_ok=True)
-    results.to_csv(RESULTS_CSV, index=False)
-    schools.to_csv(SCHOOLS_CSV, index=False)
-    modes.to_csv(MODES_CSV, index=False)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results.to_csv(out_dir / RESULTS_CSV, index=False)
+    schools.to_csv(out_dir / SCHOOLS_CSV, index=False)
+    modes.to_csv(out_dir / MODES_CSV, index=False)
     return results, schools, modes
 
 
@@ -392,7 +400,7 @@ def fsm_term(secondary_schools: pd.DataFrame) -> pd.Series:
     school meals against the rest, as the register counts them.
 
     The register's own measure of how a school's intake departs from the
-    city's, on the scale of the terms the model seats, though not the same
+    region's, on the scale of the terms the model seats, though not the same
     measure: the model draws students disadvantaged in proportion to their
     district's IDACI score, or under DISADVANTAGE "decile" counts them by
     their district's decile, while the register counts pupils by their own
@@ -734,12 +742,13 @@ def plot(
     modes: pd.DataFrame,
     fsm: pd.Series,
     parameters: list[str],
+    out_dir: Path,
     measure: str = "dissimilarity",
 ) -> None:
     """Plot every parameter on its own and all of them side by side.
 
-    Each parameter is written to SWEEP_DIR as its own PNG, and the matrix of
-    every column to PLOT_PNG.
+    Each parameter is written to `out_dir` as its own PNG, and the matrix of
+    every column to PLOT_PNG there.
 
     Args:
         results (pd.DataFrame): The scenario rows `sweep` returns.
@@ -754,19 +763,21 @@ def plot(
         parameters (list[str]): Keys of GRID the frames sweep, as `swept`
         names them.
 
+        out_dir (Path): Folder the PNGs are written to.
+
         measure (str, optional): Passed to `draw_columns`. Defaults to
         "dissimilarity".
     """
-    SWEEP_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     for parameter in parameters:
         # A bare Figure draws without a display backend, which pyplot would need.
         fig = Figure(figsize=(9, 19), layout="constrained")
         draw_columns(fig, results, schools, modes, fsm, [parameter], measure)
-        fig.savefig(SWEEP_DIR / f"{parameter}.png", dpi=200)
+        fig.savefig(out_dir / f"{parameter}.png", dpi=200)
 
     fig = Figure(figsize=(4.5 * len(parameters), 20), layout="constrained")
     draw_columns(fig, results, schools, modes, fsm, parameters, measure)
-    fig.savefig(PLOT_PNG, dpi=200)
+    fig.savefig(out_dir / PLOT_PNG, dpi=200)
 
 
 def settings_matchings(
@@ -948,8 +959,8 @@ def draw_scale(ax: Axes) -> None:
     above the line and its second below, both from the same origin.
 
     Lengths are British National Grid metres, the metres every distance in the
-    model is measured in; over the city a grid metre is 0.9996 of a metre on
-    the ground. The bar is placed by the panel's limits and leaves them as
+    model is measured in; over Southampton a grid metre is 0.9996 of a metre
+    on the ground. The bar is placed by the panel's limits and leaves them as
     they are, so it is drawn last.
 
     Args:
@@ -1121,7 +1132,7 @@ def main() -> None:
         "--workers",
         type=int,
         default=1,
-        help="processes to score cells in; bounded by memory, see `sweep`",
+        help="processes to score cells in, see `sweep`",
     )
     parser.add_argument(
         "--years",
@@ -1180,70 +1191,88 @@ def main() -> None:
         "students over schools at the default settings, with routes and "
         "without, and its Gini coefficient",
     )
+    add_region_arguments(parser)
     args = parser.parse_args()
 
-    areas = load_areas()
-    _, secondary_schools = load_schools()
-    samples = list(student_samples(areas, cohort_sizes(areas, "secondary"), args.seeds))
     shares = load_nts_mode_shares(args.years)
-
-    results, schools, modes = sweep(
-        samples,
-        areas,
-        secondary_schools,
-        shares,
-        args.circuity,
-        args.workers,
-        args.round_up_seats,
-        args.linear_progressivity,
-        args.disadvantage,
-    )
     parameters = swept(args.disadvantage)
-    summary = results.pivot_table(
-        index=["parameter", "value"],
-        columns="scenario",
-        values="dissimilarity",
-        aggfunc="mean",
-    )
-    print(summary.loc[parameters].round(3))
-    change = mode_change(modes).pivot_table(
-        index=["parameter", "value"], columns="mode", values="change", aggfunc="mean"
-    )
-    print("Change in students per mode with routes:")
-    print(change.loc[parameters, MODES].round(1))
-    unassigned = unassigned_rows(results).pivot_table(
-        index=["parameter", "value"],
-        columns=["group", "scenario"],
-        values="unassigned",
-        aggfunc="mean",
-    )
-    print("Students of each group left unassigned:")
-    # Four columns under a two-level header fold at the default width.
-    with pd.option_context("display.width", 100):
-        print(unassigned.loc[parameters].round(1))
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
-    plot(results, schools, modes, fsm(secondary_schools), parameters, args.intake)
-    if args.map:
-        plot_map(
+    for las, areas in regions(args.la, args.merge):
+        out_dir = region_dir(las) / SWEEP_DIR
+        _, secondary_schools = load_schools(las)
+        samples = list(
+            student_samples(areas, cohort_sizes(areas, "secondary"), args.seeds)
+        )
+
+        results, schools, modes = sweep(
+            samples,
             areas,
             secondary_schools,
-            samples[0][0],
-            settings_matchings(
-                DEFAULTS,
-                samples[0],
+            shares,
+            out_dir,
+            args.circuity,
+            args.workers,
+            args.round_up_seats,
+            args.linear_progressivity,
+            args.disadvantage,
+        )
+        print(" + ".join(las) + ":")
+        summary = results.pivot_table(
+            index=["parameter", "value"],
+            columns="scenario",
+            values="dissimilarity",
+            aggfunc="mean",
+        )
+        print(summary.loc[parameters].round(3))
+        change = mode_change(modes).pivot_table(
+            index=["parameter", "value"],
+            columns="mode",
+            values="change",
+            aggfunc="mean",
+        )
+        print("Change in students per mode with routes:")
+        print(change.loc[parameters, MODES].round(1))
+        unassigned = unassigned_rows(results).pivot_table(
+            index=["parameter", "value"],
+            columns=["group", "scenario"],
+            values="unassigned",
+            aggfunc="mean",
+        )
+        print("Students of each group left unassigned:")
+        # Four columns under a two-level header fold at the default width.
+        with pd.option_context("display.width", 100):
+            print(unassigned.loc[parameters].round(1))
+        plot(
+            results,
+            schools,
+            modes,
+            fsm(secondary_schools),
+            parameters,
+            out_dir,
+            args.intake,
+        )
+        if args.map:
+            plot_map(
                 areas,
                 secondary_schools,
-                args.round_up_seats,
-                args.linear_progressivity,
-                args.disadvantage,
-            ),
-            MAP_PNG,
+                samples[0][0],
+                settings_matchings(
+                    DEFAULTS,
+                    samples[0],
+                    areas,
+                    secondary_schools,
+                    args.round_up_seats,
+                    args.linear_progressivity,
+                    args.disadvantage,
+                ),
+                out_dir / MAP_PNG,
+            )
+        if args.lorenz:
+            plot_lorenz(default_cell(schools), out_dir / LORENZ_PNG, args.disadvantage)
+        print(
+            f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in "
+            f"{out_dir}."
         )
-    if args.lorenz:
-        plot_lorenz(default_cell(schools), LORENZ_PNG, args.disadvantage)
-    print(
-        f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in {SWEEP_DIR}."
-    )
 
 
 if __name__ == "__main__":

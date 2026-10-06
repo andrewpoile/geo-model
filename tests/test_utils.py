@@ -1,14 +1,18 @@
+from pathlib import Path
+
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
 import shapely
 
+from geo_model import utils
 from geo_model.load_data import NTS_BANDS
 from geo_model.utils import (
     MILE,
     MODES,
     _spread,
+    adjacent_groups,
     cohort_capacity,
     disadvantaged_group,
     disadvantaged_students,
@@ -20,6 +24,8 @@ from geo_model.utils import (
     lorenz_curve,
     mode_change,
     rank_bundles,
+    region_dir,
+    regions,
     sample_in_polygon,
     sample_students,
     school_intake,
@@ -175,29 +181,29 @@ def test_rank_bundles_full_route_discount_puts_routed_bundles_first():
     np.testing.assert_array_equal(preferences[1, 0], [0, 0])
 
 
-def test_rank_bundles_priorities_bracket_local_and_routed_students_together():
-    _, priorities = rank_two_districts(route_discount=0.5)
+def test_rank_bundles_ranks_bracket_local_and_routed_students_together():
+    preferences, ranks = rank_two_districts(route_discount=0.5)
 
-    assert priorities.shape == (2, 2, 2)  # (school, route + routeless, student)
+    # Each rank sits beside its bundle on the student's list, s0's being
+    # (c0, -1), (c1, -1) and padding, s1's (c0, r0), (c0, -1) and (c1, -1).
+    assert ranks.shape == preferences.shape[:2]
     # c0 sits in district 0. Its top bracket holds local s0 (0m) and routed s1
-    # (10m); s1 without a route falls to the bottom bracket. The (r0, s0) cell
-    # is a bundle c0 never hears from, so it takes the filler rank 3.
-    np.testing.assert_array_equal(priorities[0], [[3, 1], [0, 2]])
-    # c1 has no route, and only s1 is local to its district.
-    np.testing.assert_array_equal(priorities[1], [[2, 2], [1, 0]])
+    # (10m); s1 without a route falls to the bottom bracket. c1 has no route,
+    # and only s1 is local to its district.
+    np.testing.assert_array_equal(ranks, [[0, 1, -1], [1, 2, 0]])
 
 
 def test_rank_bundles_offers_no_route_to_a_student_not_eligible_for_one():
-    preferences, priorities = rank_two_districts(
+    preferences, ranks = rank_two_districts(
         route_discount=0.5, route_eligible=[True, False]
     )
 
     # s1 is the only student r0 serves, and without eligibility it ranks the
     # two schools alone, as a student whose district has no route does.
     np.testing.assert_array_equal(preferences[1], [[0, -1], [1, -1], [-1, -1]])
-    # c0 no longer hears from (r0, s1), so its cell takes the filler rank 2,
-    # and s1 without a route stays in the bottom bracket.
-    np.testing.assert_array_equal(priorities[0], [[2, 2], [0, 1]])
+    # c0 no longer hears from (r0, s1), and s1 without a route stays in its
+    # bottom bracket, behind local s0.
+    np.testing.assert_array_equal(ranks[:, 0], [0, 1])
 
 
 def test_rank_bundles_eligibility_leaves_a_student_no_route_serves_as_it_is():
@@ -209,8 +215,8 @@ def test_rank_bundles_eligibility_leaves_a_student_no_route_serves_as_it_is():
         np.testing.assert_array_equal(ranked, default)
 
 
-def test_rank_bundles_priorities_put_a_distant_local_above_a_near_outsider():
-    _, priorities = rank_bundles(
+def test_rank_bundles_ranks_put_a_distant_local_above_a_near_outsider():
+    _, ranks = rank_bundles(
         np.array([[100.0, 0.0], [1.0, 0.0]]),
         np.array([0, 1]),
         np.array([[0.0, 0.0]]),
@@ -218,11 +224,11 @@ def test_rank_bundles_priorities_put_a_distant_local_above_a_near_outsider():
         np.empty(0, dtype=np.int64),
         np.empty(0, dtype=np.int64),
     )
-    np.testing.assert_array_equal(priorities[0, 0], [0, 1])
+    np.testing.assert_array_equal(ranks[:, 0], [0, 1])
 
 
 def test_rank_bundles_without_routes_ranks_schools_by_distance_alone():
-    preferences, priorities = rank_bundles(
+    preferences, ranks = rank_bundles(
         np.array([[0.0, 0.0], [10.0, 0.0]]),
         np.array([0, 0]),
         np.array([[0.0, 0.0], [5.0, 0.0], [20.0, 0.0]]),
@@ -234,8 +240,9 @@ def test_rank_bundles_without_routes_ranks_schools_by_distance_alone():
     assert preferences.shape == (2, 3, 2)
     np.testing.assert_array_equal(preferences[:, :, 0], [[0, 1, 2], [1, 0, 2]])
     assert (preferences[:, :, 1] == -1).all()
-    # A routeless instance still carries the route axis, of length one.
-    assert priorities.shape == (3, 1, 2)
+    # Every school ranks both students by distance, the tie at c1 going to the
+    # lower index, and each rank sits beside its school on the list.
+    np.testing.assert_array_equal(ranks, [[0, 0, 1], [1, 1, 0]])
 
 
 def test_rank_bundles_full_performance_weight_ranks_on_score_alone():
@@ -273,6 +280,12 @@ def test_rank_bundles_ranks_each_student_on_its_own_weights():
     np.testing.assert_array_equal(mixed[1], second[1])
 
 
+def by_bundle(preferences, ranks):
+    """Each student's ranks ordered by bundle rather than by preference."""
+    key = preferences[..., 0] * (preferences[..., 1].max() + 2) + preferences[..., 1]
+    return np.take_along_axis(ranks, np.argsort(key, axis=1), axis=1)
+
+
 def test_rank_bundles_noise_perturbs_preferences_but_not_priorities():
     rng = np.random.default_rng(3)
     student_xy = rng.normal(size=(40, 2)) * 1000
@@ -300,8 +313,9 @@ def test_rank_bundles_noise_perturbs_preferences_but_not_priorities():
     )
 
     assert not np.array_equal(quiet[0], noisy[0])
-    # Priorities are always ranked on the unperturbed distances.
-    np.testing.assert_array_equal(quiet[1], noisy[1])
+    # Priorities are always ranked on the unperturbed distances, so every
+    # bundle keeps its rank wherever the noise moves it on the list.
+    np.testing.assert_array_equal(by_bundle(*quiet), by_bundle(*noisy))
 
 
 @pytest.mark.parametrize(
@@ -425,9 +439,9 @@ def make_schools(capacity, low, high, names=None):
     )
 
 
-def test_cohort_capacity_takes_a_published_admission_number_as_it_stands():
+def test_cohort_capacity_takes_the_places_offered_as_they_stand():
     schools = make_schools([500.0, 210.0], [4.0, 11.0], [11.0, 16.0]).assign(
-        PAN=[60, 180]
+        PlacesOffered=[60, 180]
     )
     capacity = cohort_capacity(schools)
 
@@ -793,3 +807,80 @@ def test_mode_change_subtracts_the_unrouted_count_within_every_key():
         "walk": -20.0,
         "route": 20.0,
     }
+
+
+# --------------------------------------------------------------------------
+# region_dir, adjacent_groups and regions
+# --------------------------------------------------------------------------
+
+
+def test_region_dir_names_a_region_for_its_authorities_in_order():
+    assert region_dir(["Southampton"]) == Path("output/Southampton")
+    # The same authorities write to the same folder however they were named.
+    assert region_dir(["Southampton", "Hampshire"]) == region_dir(
+        ["Hampshire", "Southampton"]
+    )
+    assert region_dir(["Southampton", "Hampshire"]) == Path(
+        "output/Hampshire+Southampton"
+    )
+
+
+@pytest.fixture
+def four_authorities():
+    """LSOAs of four authorities along a line: A's two squares share an edge
+    with each other and with B's, C's meets B's at a corner alone, and D's
+    stands apart."""
+    return gpd.GeoDataFrame(
+        {
+            "LA (name)": ["A", "A", "B", "C", "D"],
+            "Borders": [
+                shapely.box(0, 0, 1, 1),
+                shapely.box(1, 0, 2, 1),
+                shapely.box(2, 0, 3, 1),
+                shapely.box(3, 1, 4, 2),
+                shapely.box(10, 10, 11, 11),
+            ],
+        },
+        geometry="Borders",
+    )
+
+
+def test_adjacent_groups_joins_authorities_sharing_a_stretch_of_boundary(
+    four_authorities,
+):
+    # Ordered as named, and C, touching B at a single point, stays apart.
+    assert adjacent_groups(four_authorities, ["D", "B", "C", "A"]) == [
+        ["D"],
+        ["B", "A"],
+        ["C"],
+    ]
+
+
+def test_adjacent_groups_chains_neighbours_into_one_region(four_authorities):
+    # C now shares an edge with B, so A and C share a region through B.
+    areas = four_authorities.copy()
+    areas.loc[3, "Borders"] = shapely.box(3, 0, 4, 1)
+
+    assert adjacent_groups(areas, ["A", "B", "C", "D"]) == [["A", "B", "C"], ["D"]]
+
+
+@pytest.mark.parametrize(
+    ("merge", "expected"),
+    [(False, [["A"], ["B"], ["C"], ["D"]]), (True, [["A", "B"], ["C"], ["D"]])],
+)
+def test_regions_yields_each_region_its_own_lsoas_positionally_indexed(
+    four_authorities, monkeypatch, merge, expected
+):
+    monkeypatch.setattr(utils, "load_areas", lambda las: four_authorities)
+
+    yielded = list(regions(["A", "B", "C", "D"], merge))
+
+    assert [las for las, _ in yielded] == expected
+    for las, areas in yielded:
+        assert set(areas["LA (name)"]) == set(las)
+        assert areas.index.equals(pd.RangeIndex(len(areas)))
+
+
+def test_regions_rejects_an_authority_named_twice():
+    with pytest.raises(ValueError, match="named once"):
+        list(regions(["A", "B", "A"], merge=False))

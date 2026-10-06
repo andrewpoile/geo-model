@@ -64,26 +64,29 @@ from geo_model.dissimilarity import (
 )
 from geo_model.dissimilarity import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.dissimilarity import plot as plot_dissimilarity
-from geo_model.load_data import (
-    NTS_YEARS,
-    load_areas,
-    load_nts_mode_shares,
-    load_schools,
+from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
+from geo_model.utils import (
+    CIRCUITY,
+    MODES,
+    add_region_arguments,
+    mode_change,
+    region_dir,
+    regions,
 )
-from geo_model.utils import CIRCUITY, MODES, mode_change
 
-OUT_DIR = Path("temp/optimise")
-EVALUATIONS_CSV = OUT_DIR / "evaluations.csv"
-FRONT_CSV = OUT_DIR / "front.csv"
-FRONT_PNG = OUT_DIR / "front.png"
+# The search's folder within each region's, and the files written to it.
+OUT_DIR = Path("optimise")
+EVALUATIONS_CSV = "evaluations.csv"
+FRONT_CSV = "front.csv"
+FRONT_PNG = "front.png"
 # The compromise setting against the same students without routes: every
 # metric the sweep draws, the Lorenz curves and the map.
-DISSIMILARITY_PNG = OUT_DIR / "dissimilarity.png"
-UNASSIGNED_PNG = OUT_DIR / "unassigned.png"
-INTAKE_PNG = OUT_DIR / "intake.png"
-MODES_PNG = OUT_DIR / "car_displacement.png"
-LORENZ_PNG = OUT_DIR / "lorenz.png"
-MAP_PNG = OUT_DIR / "map.png"
+DISSIMILARITY_PNG = "dissimilarity.png"
+UNASSIGNED_PNG = "unassigned.png"
+INTAKE_PNG = "intake.png"
+MODES_PNG = "car_displacement.png"
+LORENZ_PNG = "lorenz.png"
+MAP_PNG = "map.png"
 
 # Several samples rather than the 30 `dissimilarity` draws, since every
 # candidate scores them all. The comparison is drawn on HELD_OUT_SEEDS more,
@@ -327,6 +330,7 @@ def optimise(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     shares: pd.DataFrame,
+    out_dir: Path,
     parameters: list[str] = LEVERS,
     objectives: list[str] = DEFAULT_OBJECTIVES,
     pop_size: int = POP_SIZE,
@@ -355,6 +359,9 @@ def optimise(
 
         shares (pd.DataFrame): Passed to `score_settings`.
 
+        out_dir (Path): Folder the settings scored and the front are written
+        to.
+
         parameters (list[str], optional): Keys of OPTIMISABLE to search, each
         over its `bounds`, every one `searchable` under `disadvantage`.
         Defaults to LEVERS.
@@ -369,8 +376,8 @@ def optimise(
         random initial population. Defaults to GENERATIONS.
 
         workers (int, optional): Processes to score a generation's candidates
-        in, one candidate per task, bounded by memory as `sweep`'s are.
-        Defaults to 1, which scores in this process.
+        in, one candidate per task, as `sweep` scores its cells. Defaults to
+        1, which scores in this process.
 
         circuity (float, optional): Passed to `score_settings`. Defaults to
         CIRCUITY.
@@ -388,7 +395,8 @@ def optimise(
         tuple[pd.DataFrame, pd.DataFrame]: Every setting scored, one row each
         with its "generation", parameter values, objectives and "feasible";
         and the feasible settings on the front, sorted by the first
-        objective. Also written to EVALUATIONS_CSV and FRONT_CSV.
+        objective. Also written to EVALUATIONS_CSV and FRONT_CSV in
+        `out_dir`.
     """
     if not samples:
         raise ValueError("No student sample to score, so every objective is undefined.")
@@ -440,9 +448,9 @@ def optimise(
         .sort_values(objectives[0])
         .reset_index(drop=True)
     )
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    evaluations.to_csv(EVALUATIONS_CSV, index=False)
-    front.to_csv(FRONT_CSV, index=False)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    evaluations.to_csv(out_dir / EVALUATIONS_CSV, index=False)
+    front.to_csv(out_dir / FRONT_CSV, index=False)
     return evaluations, front
 
 
@@ -591,6 +599,7 @@ def compare(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     shares: pd.DataFrame,
+    out_dir: Path,
     circuity: float = CIRCUITY,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
@@ -598,7 +607,7 @@ def compare(
     measure: str = "dissimilarity",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and plot the
-    two against each other.
+    two against each other in `out_dir`.
 
     Draws every metric the sweep draws: the index per scenario to
     DISSIMILARITY_PNG, who is left unassigned to UNASSIGNED_PNG, each
@@ -618,6 +627,8 @@ def compare(
         secondary_schools (gpd.GeoDataFrame): Passed to `score_settings`.
 
         shares (pd.DataFrame): Passed to `score_settings`.
+
+        out_dir (Path): Folder the plots are written to.
 
         circuity (float, optional): Passed to `score_settings`. Defaults to
         CIRCUITY.
@@ -654,19 +665,19 @@ def compare(
             disadvantage,
         )
     )
-    plot_dissimilarity(results, DISSIMILARITY_PNG)
+    plot_dissimilarity(results, out_dir / DISSIMILARITY_PNG)
     # A bare Figure draws without a display backend, which pyplot would need.
     fig = Figure(figsize=(5, 4.5), layout="constrained")
     draw_unassigned(fig.subplots(), results)
-    save(fig, UNASSIGNED_PNG)
+    save(fig, out_dir / UNASSIGNED_PNG)
     fig = Figure(
         figsize=(8, 1.5 + 0.4 * schools["school"].nunique()), layout="constrained"
     )
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[measure]
     draw_school_intake(fig, schools, fsm(secondary_schools), measure)
-    save(fig, INTAKE_PNG)
-    plot_modes(modes, MODES_PNG)
-    plot_lorenz(schools, LORENZ_PNG, disadvantage)
+    save(fig, out_dir / INTAKE_PNG)
+    plot_modes(modes, out_dir / MODES_PNG)
+    plot_lorenz(schools, out_dir / LORENZ_PNG, disadvantage)
     plot_map(
         areas,
         secondary_schools,
@@ -680,7 +691,7 @@ def compare(
             linear,
             disadvantage,
         ),
-        MAP_PNG,
+        out_dir / MAP_PNG,
     )
     return results, schools, modes
 
@@ -691,10 +702,11 @@ def plot_front(
     chosen: pd.Series,
     reference: dict[str, float],
     objectives: list[str],
+    path: Path,
 ) -> None:
     """Plot every feasible setting scored against two objectives, the front
     drawn over them, the compromise ringed and the defaults marked, to
-    FRONT_PNG.
+    `path`.
 
     Args:
         evaluations (pd.DataFrame): As returned by `optimise`.
@@ -709,6 +721,8 @@ def plot_front(
 
         objectives (list[str]): The two keys of OBJECTIVES to plot, along x
         then y.
+
+        path (Path): PNG to write.
     """
     if len(objectives) != 2:
         raise ValueError(f"The front is plotted in two objectives, got {objectives}.")
@@ -759,7 +773,142 @@ def plot_front(
     ax.legend(frameon=False)
     sns.despine(ax=ax)
 
-    save(fig, FRONT_PNG)
+    save(fig, path)
+
+
+def search(
+    args: argparse.Namespace,
+    las: list[str],
+    areas: gpd.GeoDataFrame,
+    secondary_schools: gpd.GeoDataFrame,
+    shares: pd.DataFrame,
+    out_dir: Path,
+) -> None:
+    """Search one region's settings, then compare its compromise with and
+    without routes on held-out samples, as `main`'s arguments set out.
+
+    Args:
+        args (argparse.Namespace): `main`'s parsed arguments.
+
+        las (list[str]): The region's local authorities.
+
+        areas (gpd.GeoDataFrame): The region's districts, as `regions`
+        yields them.
+
+        secondary_schools (gpd.GeoDataFrame): The region's schools, as
+        `load_schools` returns them.
+
+        shares (pd.DataFrame): NTS mode shares, as `load_nts_mode_shares`
+        returns them.
+
+        out_dir (Path): Folder everything is written to.
+    """
+    print(" + ".join(las) + ":")
+    # A seed's sample depends on its place in the stream alone, so the first
+    # samples are the ones a search of as many seeds alone would draw.
+    samples = list(
+        student_samples(
+            areas, cohort_sizes(areas, "secondary"), args.seeds + args.held_out_seeds
+        )
+    )
+    searched, held_out = samples[: args.seeds], samples[args.seeds :]
+
+    reference = objective_values(
+        score_settings(
+            DEFAULTS,
+            searched,
+            areas,
+            secondary_schools,
+            shares,
+            args.circuity,
+            args.round_up_seats,
+            args.linear_progressivity,
+            args.disadvantage,
+        ),
+        args.objectives,
+    )
+    evaluations, front = optimise(
+        searched,
+        areas,
+        secondary_schools,
+        shares,
+        out_dir,
+        args.parameters,
+        args.objectives,
+        args.pop_size,
+        args.generations,
+        args.workers,
+        args.circuity,
+        args.round_up_seats,
+        args.linear_progressivity,
+        args.disadvantage,
+    )
+    print(
+        f"{len(front)} settings on the Pareto front, of the "
+        f"{evaluations['feasible'].sum()} feasible among {len(evaluations)} scored:"
+    )
+    print(front.round(3).to_string(index=False))
+    print(
+        "At the defaults: "
+        + ", ".join(f"{name} {value:.3f}" for name, value in reference.items())
+    )
+    chosen = compromise(front, args.objectives)
+    print("Compromise setting:")
+    print(chosen.round(3).to_string())
+
+    results, _, modes = compare(
+        replace(DEFAULTS, **cast({p: chosen[p] for p in args.parameters})),
+        held_out,
+        areas,
+        secondary_schools,
+        shares,
+        out_dir,
+        args.circuity,
+        args.round_up_seats,
+        args.linear_progressivity,
+        args.disadvantage,
+        args.intake,
+    )
+    print(
+        f"At the compromise with routes and without, mean over "
+        f"{len(held_out)} held-out samples:"
+    )
+    print(
+        results.groupby("scenario")[
+            ["dissimilarity", "n_unmatched", "unassigned_disadvantaged"]
+        ]
+        .mean()
+        .round(3)
+        .to_string()
+    )
+    print("Change in students per mode with routes:")
+    print(
+        mode_change(modes).groupby("mode")["change"].mean()[MODES].round(1).to_string()
+    )
+
+    plots = [
+        DISSIMILARITY_PNG,
+        UNASSIGNED_PNG,
+        INTAKE_PNG,
+        MODES_PNG,
+        LORENZ_PNG,
+        MAP_PNG,
+    ]
+    if len(args.objectives) == 2:
+        plot_front(
+            evaluations,
+            front,
+            chosen,
+            reference,
+            args.objectives,
+            out_dir / FRONT_PNG,
+        )
+        plots.append(FRONT_PNG)
+    else:
+        print("The front is plotted in two objectives only, so no front plot.")
+    print(
+        f"Wrote {EVALUATIONS_CSV}, {FRONT_CSV}, " + ", ".join(plots) + f" in {out_dir}."
+    )
 
 
 def main() -> None:
@@ -801,7 +950,7 @@ def main() -> None:
         "--workers",
         type=int,
         default=1,
-        help="processes to score candidates in; bounded by memory, see `sweep`",
+        help="processes to score candidates in, see `sweep`",
     )
     parser.add_argument(
         "--years",
@@ -847,105 +996,14 @@ def main() -> None:
         help="what the intake heatmap shows of each school: its term of the "
         "dissimilarity index, or the disadvantaged share of its intake",
     )
+    add_region_arguments(parser)
     args = parser.parse_args()
 
-    areas = load_areas()
-    _, secondary_schools = load_schools()
-    # A seed's sample depends on its place in the stream alone, so the first
-    # samples are the ones a search of as many seeds alone would draw.
-    samples = list(
-        student_samples(
-            areas, cohort_sizes(areas, "secondary"), args.seeds + args.held_out_seeds
-        )
-    )
-    searched, held_out = samples[: args.seeds], samples[args.seeds :]
     shares = load_nts_mode_shares(args.years)
-
-    reference = objective_values(
-        score_settings(
-            DEFAULTS,
-            searched,
-            areas,
-            secondary_schools,
-            shares,
-            args.circuity,
-            args.round_up_seats,
-            args.linear_progressivity,
-            args.disadvantage,
-        ),
-        args.objectives,
-    )
-    evaluations, front = optimise(
-        searched,
-        areas,
-        secondary_schools,
-        shares,
-        args.parameters,
-        args.objectives,
-        args.pop_size,
-        args.generations,
-        args.workers,
-        args.circuity,
-        args.round_up_seats,
-        args.linear_progressivity,
-        args.disadvantage,
-    )
-    print(
-        f"{len(front)} settings on the Pareto front, of the "
-        f"{evaluations['feasible'].sum()} feasible among {len(evaluations)} scored:"
-    )
-    print(front.round(3).to_string(index=False))
-    print(
-        "At the defaults: "
-        + ", ".join(f"{name} {value:.3f}" for name, value in reference.items())
-    )
-    chosen = compromise(front, args.objectives)
-    print("Compromise setting:")
-    print(chosen.round(3).to_string())
-
-    results, _, modes = compare(
-        replace(DEFAULTS, **cast({p: chosen[p] for p in args.parameters})),
-        held_out,
-        areas,
-        secondary_schools,
-        shares,
-        args.circuity,
-        args.round_up_seats,
-        args.linear_progressivity,
-        args.disadvantage,
-        args.intake,
-    )
-    print(
-        f"At the compromise with routes and without, mean over "
-        f"{len(held_out)} held-out samples:"
-    )
-    print(
-        results.groupby("scenario")[
-            ["dissimilarity", "n_unmatched", "unassigned_disadvantaged"]
-        ]
-        .mean()
-        .round(3)
-        .to_string()
-    )
-    print("Change in students per mode with routes:")
-    print(
-        mode_change(modes).groupby("mode")["change"].mean()[MODES].round(1).to_string()
-    )
-
-    plots = [
-        DISSIMILARITY_PNG,
-        UNASSIGNED_PNG,
-        INTAKE_PNG,
-        MODES_PNG,
-        LORENZ_PNG,
-        MAP_PNG,
-    ]
-    if len(args.objectives) == 2:
-        plot_front(evaluations, front, chosen, reference, args.objectives)
-        plots.append(FRONT_PNG)
-    else:
-        print("The front is plotted in two objectives only, so no front plot.")
-    print(f"Wrote {EVALUATIONS_CSV}, {FRONT_CSV}, " + ", ".join(map(str, plots)) + ".")
+    for las, areas in regions(args.la, args.merge):
+        out_dir = region_dir(las) / OUT_DIR
+        _, secondary_schools = load_schools(las)
+        search(args, las, areas, secondary_schools, shares, out_dir)
 
 
 if __name__ == "__main__":

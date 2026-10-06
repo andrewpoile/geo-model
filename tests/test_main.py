@@ -59,10 +59,6 @@ def test_swept_runs_every_grid_when_routes_are_open_to_every_student():
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
-    monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path)
-    monkeypatch.setattr(sweep_main, "RESULTS_CSV", tmp_path / "sweep.csv")
-    monkeypatch.setattr(sweep_main, "SCHOOLS_CSV", tmp_path / "schools.csv")
-    monkeypatch.setattr(sweep_main, "MODES_CSV", tmp_path / "modes.csv")
     monkeypatch.setattr(
         sweep_main,
         "GRID",
@@ -82,7 +78,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
 
     shares = ld.load_nts_mode_shares()
 
-    results, intake, modes = sweep_main.sweep(samples, areas, schools, shares)
+    results, intake, modes = sweep_main.sweep(samples, areas, schools, shares, tmp_path)
 
     assert len(results) == 3 * 1 * 2
     assert len(intake) == 3 * 1 * 2 * len(schools)
@@ -90,9 +86,12 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     for frame in (results, intake, modes):
         assert list(frame.columns[:2]) == ["parameter", "value"]
     assert results["dissimilarity"].between(0, 1).all()
-    pd.testing.assert_frame_equal(pd.read_csv(sweep_main.RESULTS_CSV), results)
-    pd.testing.assert_frame_equal(pd.read_csv(sweep_main.SCHOOLS_CSV), intake)
-    pd.testing.assert_frame_equal(pd.read_csv(sweep_main.MODES_CSV), modes)
+    for name, frame in (
+        (sweep_main.RESULTS_CSV, results),
+        (sweep_main.SCHOOLS_CSV, intake),
+        (sweep_main.MODES_CSV, modes),
+    ):
+        pd.testing.assert_frame_equal(pd.read_csv(tmp_path / name), frame)
 
     # Every seated student sits in exactly one school's intake.
     keys = ["parameter", "value", "seed", "scenario"]
@@ -110,7 +109,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     )
 
     # Scoring the cells in worker processes changes nothing but the wall time.
-    pooled = sweep_main.sweep(samples, areas, schools, shares, workers=2)
+    pooled = sweep_main.sweep(samples, areas, schools, shares, tmp_path, workers=2)
     for pooled_frame, frame in zip(pooled, (results, intake, modes)):
         pd.testing.assert_frame_equal(pooled_frame, frame)
 
@@ -203,14 +202,13 @@ def draw(parameters: list[str]) -> np.ndarray:
 
 
 @pytest.mark.parametrize("measure", list(sweep_main.INTAKE_MEASURES))
-def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch, measure):
-    monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path / "out")
-    monkeypatch.setattr(sweep_main, "PLOT_PNG", tmp_path / "out" / "sweep.png")
+def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, measure):
+    out_dir = tmp_path / "out"
 
-    sweep_main.plot(*synthetic_frames(), list(sweep_main.GRID), measure)
+    sweep_main.plot(*synthetic_frames(), list(sweep_main.GRID), out_dir, measure)
 
-    for name in [*sweep_main.GRID, "sweep"]:
-        png = sweep_main.SWEEP_DIR / f"{name}.png"
+    for name in [*(f"{p}.png" for p in sweep_main.GRID), sweep_main.PLOT_PNG]:
+        png = out_dir / name
         assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 

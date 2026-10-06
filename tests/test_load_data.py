@@ -114,6 +114,16 @@ def test_load_population_fails_loudly_when_the_workbook_is_missing(
         ld.load_population()
 
 
+def test_load_population_leaves_no_partial_cache_behind(population_source):
+    ld.load_population()
+
+    # The cache is written aside and moved into place, so nothing but the
+    # cache itself is left in its folder.
+    assert [path.name for path in ld.POPULATION_CACHE.parent.iterdir()] == [
+        ld.POPULATION_CACHE.name
+    ]
+
+
 # --------------------------------------------------------------------------
 # load_p8
 # --------------------------------------------------------------------------
@@ -192,53 +202,83 @@ def test_load_p8_fails_loudly_when_the_release_is_missing(tmp_path, monkeypatch)
 
 
 # --------------------------------------------------------------------------
-# load_pan
+# load_places_offered
 # --------------------------------------------------------------------------
 
-PAN_HEADER = "LA (code),EstablishmentNumber,EstablishmentName,PAN2026,PAN2027\n"
+OFFERS_HEADER = (
+    "time_period,school_phase,school_laestab,school_name,"
+    "total_number_places_offered,entry_year,school_urn\n"
+)
+
+
+def write_offers(path, rows):
+    """A stand-in for the DfE school-level file, published with a byte order
+    mark, holding the columns the loader reads and one it must ignore."""
+    path.write_text(
+        OFFERS_HEADER + "".join(f"{','.join(map(str, row))},1\n" for row in rows),
+        encoding="utf-8-sig",
+    )
 
 
 @pytest.fixture
-def pan_source(tmp_path, monkeypatch):
-    def write(body):
-        path = tmp_path / "secondary_pan.csv"
-        path.write_text(PAN_HEADER + body)
-        monkeypatch.setattr(ld, "PAN_CSV", path)
+def offers_source(tmp_path, monkeypatch):
+    def write(rows):
+        path = tmp_path / "offers.csv"
+        write_offers(path, rows)
+        monkeypatch.setattr(ld, "OFFERS_CSV", path)
         return path
 
     return write
 
 
-def test_load_pan_reads_the_admission_year_it_is_asked_for(pan_source):
-    pan_source(
-        "852,4278,Bitterne Park School,360,370\n852,4311,Cantell School,250,260\n"
+def test_load_places_offered_floors_the_mean_of_year_7_offers_in_the_years_named(
+    offers_source,
+):
+    offers_source(
+        [
+            # 150 and 153 in the years named: a mean of 151.5, floored to 151.
+            # The year before them is left out.
+            (202425, "Secondary", 1014001, "Hill School", 300, 7),
+            (202526, "Secondary", 1014001, "Hill School", 150, 7),
+            (202627, "Secondary", 1014001, "Hill School", 153, 7),
+            # An upper school's offers are for Year 9, and a primary school's
+            # for reception, so neither is a Year 7 intake.
+            (202526, "Secondary", 1014002, "Upper School", 90, 9),
+            (202627, "Secondary", 1014002, "Upper School", 90, 9),
+            (202627, "Primary", 1012001, "Low Primary", 30, "R"),
+            # A new school is averaged over the one year it offered places.
+            (202627, "Secondary", 1024003, "New School", 121, 7),
+            # One that offered none in the years named is left out.
+            (202425, "Secondary", 1024004, "Closing School", 80, 7),
+        ]
     )
 
-    pan = ld.load_pan("PAN2027")
+    places = ld.load_places_offered([202526, 202627])
 
-    assert list(pan.columns) == ["LA (code)", "EstablishmentNumber", "PAN"]
-    np.testing.assert_array_equal(pan["EstablishmentNumber"], [4278, 4311])
-    np.testing.assert_array_equal(pan["PAN"], [370, 260])
-
-
-def test_load_pan_defaults_to_the_year_the_model_runs_on(pan_source):
-    pan_source("852,4278,Bitterne Park School,360,370\n")
-
-    np.testing.assert_array_equal(ld.load_pan()["PAN"], [360])
+    assert list(places.columns) == ["LA (code)", "EstablishmentNumber", "PlacesOffered"]
+    assert places.to_dict("list") == {
+        "LA (code)": [101, 102],
+        "EstablishmentNumber": [4001, 4003],
+        "PlacesOffered": [151, 121],
+    }
 
 
-def test_load_pan_rejects_an_admission_year_the_file_does_not_hold(pan_source):
-    pan_source("852,4278,Bitterne Park School,360,370\n")
+def test_load_places_offered_rejects_an_admission_year_the_file_does_not_hold(
+    offers_source,
+):
+    offers_source([(202627, "Secondary", 1014001, "Hill School", 150, 7)])
 
-    with pytest.raises(ValueError, match="PAN2099"):
-        ld.load_pan("PAN2099")
+    with pytest.raises(ValueError, match="209900"):
+        ld.load_places_offered([202627, 209900])
 
 
-def test_load_pan_fails_loudly_when_the_file_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(ld, "PAN_CSV", tmp_path / "absent.csv")
+def test_load_places_offered_fails_loudly_when_the_file_is_missing(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(ld, "OFFERS_CSV", tmp_path / "absent.csv")
 
     with pytest.raises(FileNotFoundError):
-        ld.load_pan()
+        ld.load_places_offered()
 
 
 # --------------------------------------------------------------------------
@@ -257,3 +297,242 @@ def test_load_areas_carries_an_idaci_score_the_decile_ranks():
     # scores above one in a more deprived decile.
     by_decile = areas.groupby("IDACI Decile")["IDACI Score"].agg(["min", "max"])
     assert (by_decile["max"].iloc[1:].to_numpy() <= by_decile["min"].iloc[:-1]).all()
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_load_areas_holds_every_lsoa_of_the_authority_and_no_other():
+    areas = ld.load_areas(["Southampton"])
+
+    # Southampton is a unitary authority, so its LSOAs are those its own name
+    # heads, as they were selected before authorities could be named.
+    assert len(areas) == 152
+    assert (areas["LA (name)"] == "Southampton").all()
+    assert areas["LSOA21NM"].str.startswith("Southampton ").all()
+    assert areas.index.equals(pd.RangeIndex(152))
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_load_areas_reads_a_county_through_its_districts():
+    areas = ld.load_areas(["Hampshire"])
+
+    # Hampshire's LSOAs are named for its districts, never for the county,
+    # and the lookup places those districts in it.
+    assert not areas["LSOA21NM"].str.startswith("Hampshire").any()
+    assert areas["LSOA21NM"].str.startswith("Winchester ").any()
+    assert not areas["LSOA21NM"].str.startswith("Southampton ").any()
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_load_areas_rejects_an_authority_the_deprivation_files_do_not_rank():
+    # Welsh LSOAs are ranked by an index of their own, outside the IoD.
+    with pytest.raises(ValueError, match=r"ranks no LSOA in \['Cardiff'\]"):
+        ld.load_areas(["Cardiff"])
+
+
+# --------------------------------------------------------------------------
+# authority_of_district
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def county_lookup(tmp_path, monkeypatch):
+    """Point the loader at a lookup of one unitary authority and two of a
+    county's districts, written as the ONS publishes it."""
+    path = tmp_path / "lookup.csv"
+    path.write_text(
+        "LAD25CD,LAD25NM,LAD25NMW,CTYUA25CD,CTYUA25NM,CTYUA25NMW,ObjectId\n"
+        "E06000045,Southampton,,E06000045,Southampton,,1\n"
+        "E07000086,Eastleigh,,E10000014,Hampshire,,2\n"
+        "E07000094,Winchester,,E10000014,Hampshire,,3\n",
+        encoding="utf-8-sig",
+    )
+    monkeypatch.setattr(ld, "COUNTY_LOOKUP_CSV", path)
+
+
+def test_authority_of_district_maps_a_two_tier_district_to_its_county(
+    county_lookup,
+):
+    districts = pd.Series(["E07000086", "E06000045", "E07000094", "E08000016"])
+
+    authority = ld.authority_of_district(districts)
+
+    # Every other district is an authority of its own, whether the lookup
+    # lists it or, as with Barnsley's earlier code, does not.
+    assert list(authority) == ["E10000014", "E06000045", "E10000014", "E08000016"]
+
+
+def test_authority_of_district_rejects_a_two_tier_district_it_cannot_place(
+    county_lookup,
+):
+    with pytest.raises(ValueError, match="E07000099"):
+        ld.authority_of_district(pd.Series(["E07000086", "E07000099"]))
+
+
+# --------------------------------------------------------------------------
+# authority_codes and load_schools: against a register of their own
+# --------------------------------------------------------------------------
+
+REGISTER_COLUMNS = [
+    "LSOA (code)",
+    "LA (code)",
+    "LA (name)",
+    "GSSLACode (name)",
+    "EstablishmentNumber",
+    "EstablishmentName",
+    "EstablishmentStatus (name)",
+    "TypeOfEstablishment (name)",
+    "EstablishmentTypeGroup (name)",
+    "PhaseOfEducation (name)",
+    "StatutoryLowAge",
+    "StatutoryHighAge",
+    "SchoolCapacity",
+    "PercentageFSM",
+    "FSM",
+    "Easting",
+    "Northing",
+]
+
+
+def register_row(la_code, la, gss, estab, name, phase="Secondary", status="Open"):
+    """One school of a stand-in register, carrying every column the loaders
+    read."""
+    low, high = (11, 16) if phase == "Secondary" else (4, 11)
+    return [
+        "E01000001",
+        la_code,
+        la,
+        gss,
+        estab,
+        name,
+        status,
+        "Academy converter",
+        "Academies",
+        phase,
+        low,
+        high,
+        1000,
+        20.0,
+        200,
+        440000,
+        110000,
+    ]
+
+
+@pytest.fixture
+def register_source(tmp_path, monkeypatch):
+    """Point the loaders at a register, a KS4 release and an offers file of
+    their own. Alpha and Beta each run a "Hill School" under the same
+    establishment number, one of Beta's schools carries the register's
+    placeholder code, its Upper School admits into Year 9 and its Empty
+    School offered no place, Gamma's only school is closed and Delta's
+    schools carry two codes."""
+    register = pd.DataFrame(
+        [
+            register_row(101, "Alpha", "E06000001", 4001, "Hill School"),
+            register_row(101, "Alpha", "E06000001", 2001, "Low Primary", "Primary"),
+            register_row(102, "Beta", "E10000002", 4001, "Hill School"),
+            register_row(102, "Beta", ld.NO_GSS_CODE, 4002, "Vale School"),
+            register_row(102, "Beta", "E10000002", 4006, "Upper School"),
+            register_row(102, "Beta", "E10000002", 4007, "Empty School"),
+            register_row(
+                103, "Gamma", "E06000009", 4003, "Shut School", status="Closed"
+            ),
+            register_row(104, "Delta", "E06000004", 4004, "One School"),
+            register_row(104, "Delta", "E06000005", 4005, "Two School"),
+        ],
+        columns=REGISTER_COLUMNS,
+    )
+    register.to_csv(tmp_path / "register.csv", index=False, encoding="latin-1")
+    (tmp_path / "ks4.csv").write_text(
+        KS4_HEADER
+        + "1,101,4001,1,Hill School,0.1\n"
+        + "1,102,4001,2,Hill School,-0.2\n"
+        + "1,102,4002,3,Vale School,0.3\n"
+        + "1,102,4006,4,Upper School,0.0\n"
+        + "1,102,4007,5,Empty School,0.5\n",
+        encoding="utf-8-sig",
+    )
+    write_offers(
+        tmp_path / "offers.csv",
+        [
+            row
+            for year in ld.OFFER_YEARS
+            for row in (
+                (year, "Secondary", 1014001, "Hill School", 150, 7),
+                (year, "Secondary", 1024001, "Hill School", 180, 7),
+                (year, "Secondary", 1024002, "Vale School", 210, 7),
+                (year, "Secondary", 1024006, "Upper School", 90, 9),
+                (year, "Secondary", 1024007, "Empty School", 0, 7),
+            )
+        ],
+    )
+    monkeypatch.setattr(ld, "REGISTER_CSV", tmp_path / "register.csv")
+    monkeypatch.setattr(ld, "KS4_CSV", tmp_path / "ks4.csv")
+    monkeypatch.setattr(ld, "OFFERS_CSV", tmp_path / "offers.csv")
+
+
+def test_authority_codes_reads_each_authority_its_one_code(register_source):
+    codes = ld.authority_codes(["Beta", "Alpha"])
+
+    # Beta's placeholder is no code, so its one real code stands.
+    assert codes.to_dict() == {"Beta": "E10000002", "Alpha": "E06000001"}
+    assert list(codes.index) == ["Beta", "Alpha"]
+
+
+@pytest.mark.parametrize(
+    ("las", "message"),
+    [
+        (["Alpha", "Omega"], r"named \['Omega'\]"),
+        # Gamma's only school is closed, so no open school is run by it.
+        (["Gamma"], r"named \['Gamma'\]"),
+        (["Delta"], "more than one ONS code"),
+    ],
+)
+def test_authority_codes_rejects_an_authority_it_cannot_code(
+    register_source, las, message
+):
+    with pytest.raises(ValueError, match=message):
+        ld.authority_codes(las)
+
+
+def test_load_schools_keeps_the_authorities_named_alone(register_source):
+    primary, secondary = ld.load_schools(["Alpha"])
+
+    assert list(primary["EstablishmentName"]) == ["Low Primary"]
+    # No other authority named runs a school of the same name, so the name
+    # stands as the register has it.
+    assert list(secondary["EstablishmentName"]) == ["Hill School"]
+    assert list(secondary["PlacesOffered"]) == [150]
+
+
+def test_load_schools_tells_apart_a_name_two_authorities_share(register_source):
+    _, secondary = ld.load_schools(["Alpha", "Beta"])
+
+    assert list(secondary["EstablishmentName"]) == [
+        "Hill School (Alpha)",
+        "Hill School (Beta)",
+        "Vale School",
+    ]
+    # Each keeps its own score and places, joined on its own authority.
+    assert list(secondary["P8MEA"]) == [0.1, -0.2, 0.3]
+    assert list(secondary["PlacesOffered"]) == [150, 180, 210]
+
+
+def test_load_schools_drops_a_school_that_offered_no_year_7_place(
+    register_source, capsys
+):
+    _, secondary = ld.load_schools(["Beta"])
+
+    # Upper School admits into Year 9 and Empty School offered none, so
+    # neither has a Year 7 intake to be matched to.
+    assert list(secondary["EstablishmentName"]) == ["Hill School", "Vale School"]
+    out = capsys.readouterr().out
+    assert "No Year 7 place offered" in out
+    assert "Upper School, Empty School" in out
+
+
+def test_load_schools_rejects_an_authority_running_no_open_state_school(
+    register_source,
+):
+    with pytest.raises(ValueError, match=r"named \['Gamma'\]"):
+        ld.load_schools(["Alpha", "Gamma"])

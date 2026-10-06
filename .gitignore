@@ -36,5 +36,8 @@ data/
 # Temporary files
 temp/
 
+# Simulation outputs, one folder per region
+output/
+
 # Loose testing
 experiments.ipynb

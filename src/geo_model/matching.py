@@ -9,13 +9,17 @@ from numpy.typing import NDArray
 @njit(cache=True)
 def fast_DAT(
     student_preferences: NDArray[np.int32],
-    school_priorities: NDArray[np.int32],
+    preference_ranks: NDArray[np.int32],
     school_capacities: NDArray[np.int32],
     route_capacities: NDArray[np.int32],
 ) -> NDArray[np.int32]:
     """Fast Deferred Acceptance with Transportation.
     Takes student preferences, school priorities, and
     school and route capacities, then outputs a matching.
+
+    A school's priority is only ever read for the bundle a student proposes,
+    so it is taken as the rank beside each bundle on the student's list
+    rather than as an array over every school, route and student.
 
     A student holds at most one seat, so the rank of the bundle each student
     holds is kept per student, and a full school finds its worst-ranked
@@ -25,7 +29,7 @@ def fast_DAT(
 
     Args:
         student_preferences (np.ndarray[student, preference, object]): Elements of the array are schools and routes.
-        school_priorities (np.ndarray[school, route, student]): Elements of the array are school priority rankings.
+        preference_ranks (np.ndarray[student, preference]): Elements of the array are the rank the school of each bundle in `student_preferences` gives it, lower being a stronger claim on a seat.
         school_capacities (np.ndarray[school]): Elements of the array are school capacities.
         route_capacities (np.ndarray[route]): Elements of the array are route capacities.
 
@@ -33,7 +37,7 @@ def fast_DAT(
         np.ndarray[student, object]: Final matching of students to schools and/or routes.
     """
     n_students, max_preferences, _ = student_preferences.shape
-    n_schools = school_priorities.shape[0]
+    n_schools = school_capacities.shape[0]
     n_routes = route_capacities.shape[0]
     matching = np.full((n_students, 2), -1, dtype=np.int32)
 
@@ -60,7 +64,7 @@ def fast_DAT(
             pointer += 1
             continue
 
-        c_rank = school_priorities[target_school, target_route, s_id]
+        c_rank = preference_ranks[s_id, s_rank]
         c_acc_num = school_acceptance_numbers[target_school]
         school_is_full = c_acc_num >= school_capacities[target_school]
         if target_route > -1:

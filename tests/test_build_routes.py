@@ -39,12 +39,12 @@ def make_areas(deciles, spacing=10_000.0, index=None, scores=None):
 
 
 def network(areas, school_xy=SCHOOL_XY, school_scores=SCHOOL_P8, **kwargs):
-    """`route_network` with every school admitting 100 and every district
-    holding 10 students, unless a test passes its own."""
-    school_pan = kwargs.pop("school_pan", np.full(len(school_xy), 100))
+    """`route_network` with every school offering 100 places and every
+    district holding 10 students, unless a test passes its own."""
+    school_places = kwargs.pop("school_places", np.full(len(school_xy), 100))
     district_cohort = kwargs.pop("district_cohort", np.full(len(areas), 10))
     return br.route_network(
-        areas, school_xy, school_scores, school_pan, district_cohort, **kwargs
+        areas, school_xy, school_scores, school_places, district_cohort, **kwargs
     )
 
 
@@ -249,9 +249,9 @@ def test_route_network_rejects_school_scores_that_do_not_align_with_the_coordina
         network(make_areas([1, 1]), school_scores=np.array([0.0]))
 
 
-def test_route_network_rejects_admission_numbers_that_do_not_align_with_the_schools():
-    with pytest.raises(ValueError, match="school_pan must align"):
-        network(make_areas([1, 1]), school_pan=np.array([100]))
+def test_route_network_rejects_places_that_do_not_align_with_the_schools():
+    with pytest.raises(ValueError, match="school_places must align"):
+        network(make_areas([1, 1]), school_places=np.array([100]))
 
 
 def test_route_network_rejects_cohorts_that_do_not_align_with_the_areas():
@@ -265,13 +265,14 @@ def test_route_network_rejects_a_capacity_scale_that_is_not_positive(scale):
         network(make_areas([1, 1]), capacity_scale=scale)
 
 
-def test_route_network_seats_every_route_on_its_fair_share_of_the_pan():
-    # 100 students in the city, district 2 sits above the decile, and the
-    # schools admit 100 and 200: a route holds k * PAN * n_d / 100 seats.
+def test_route_network_seats_every_route_on_its_fair_share_of_the_places():
+    # 100 students in the region, district 2 sits above the decile, and the
+    # schools offer 100 and 200 places: a route holds k * places * n_d / 100
+    # seats.
     areas = make_areas([1, 1, 5])
     routes = network(
         areas,
-        school_pan=np.array([100, 200]),
+        school_places=np.array([100, 200]),
         district_cohort=np.array([20, 30, 50]),
         capacity_scale=1.5,
     )
@@ -287,7 +288,7 @@ def test_route_network_drops_a_route_rounding_to_no_seat_unless_rounding_up(caps
     # school 0, so rounding to the nearest seat leaves district 0 unrouted.
     areas = make_areas([1, 1, 5])
     kwargs = {
-        "school_pan": np.array([12, 4]),
+        "school_places": np.array([12, 4]),
         "district_cohort": np.array([10, 10, 80]),
         "capacity_scale": 1.0,
     }
@@ -319,7 +320,7 @@ def test_route_network_leans_seats_towards_the_deprived_districts(progressivity,
         make_areas([1, 3, 5]),
         np.array([[100_000.0, 0.0]]),
         SCHOOL_P8[:1],
-        school_pan=np.array([100]),
+        school_places=np.array([100]),
         district_cohort=np.array([10, 10, 80]),
         decile=3,
         capacity_scale=1.0,
@@ -340,7 +341,7 @@ def test_route_network_weights_the_middle_deciles_by_the_profile_chosen(linear, 
         make_areas([1, 2, 5]),
         np.array([[100_000.0, 0.0]]),
         SCHOOL_P8[:1],
-        school_pan=np.array([100]),
+        school_places=np.array([100]),
         district_cohort=np.array([10, 10, 80]),
         decile=3,
         capacity_scale=1.0,
@@ -370,7 +371,7 @@ def test_route_network_seats_the_students_who_may_ride(disadvantage, seats):
         make_areas([1, 1, 5], scores=[0.3, 0.6, 0.5]),
         np.array([[100_000.0, 0.0]]),
         SCHOOL_P8[:1],
-        school_pan=np.array([100]),
+        school_places=np.array([100]),
         district_cohort=np.array([10, 20, 70]),
         capacity_scale=1.0,
         progressivity=0.0,
@@ -413,17 +414,18 @@ def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrou
 # --------------------------------------------------------------------------
 
 
-def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path, monkeypatch):
-    monkeypatch.setattr(br, "ROUTES_CSV", tmp_path / "out" / "routes.csv")
-    monkeypatch.setattr(br, "ROUTES_NPZ", tmp_path / "out" / "routes.npz")
+def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path):
+    out_dir = tmp_path / "out"
     routes = br.build_routes(
         make_areas([1, 1]), SCHOOL_XY, br.MIN_ROUTE_DISTANCE, SEATS
     )
 
-    br.save_routes(routes)
+    br.save_routes(routes, out_dir)
 
-    pd.testing.assert_frame_equal(pd.read_csv(br.ROUTES_CSV), routes, check_dtype=False)
-    with np.load(br.ROUTES_NPZ) as axes:
+    pd.testing.assert_frame_equal(
+        pd.read_csv(out_dir / br.ROUTES_CSV), routes, check_dtype=False
+    )
+    with np.load(out_dir / br.ROUTES_NPZ) as axes:
         np.testing.assert_array_equal(axes["route_capacities"], routes["capacity"])
         np.testing.assert_array_equal(axes["route_school_idx"], routes["school_idx"])
         np.testing.assert_array_equal(

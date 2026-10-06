@@ -69,7 +69,7 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
         areas,
         schools[["Easting", "Northing"]].to_numpy(),
         schools["P8MEA"].to_numpy(),
-        schools["PAN"].to_numpy(),
+        schools["PlacesOffered"].to_numpy(),
         sizes,
     )
     student_xy, student_lsoa, disadvantaged = next(ds.student_samples(areas, sizes, 1))
@@ -165,13 +165,13 @@ def test_plot_writes_a_png_of_the_results(tmp_path):
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_run_scores_both_scenarios_of_every_seed(tmp_path, monkeypatch):
-    monkeypatch.setattr(ds, "RESULTS_CSV", tmp_path / "dissimilarity.csv")
     monkeypatch.setattr(ld, "POPULATION_CACHE", tmp_path / "population_lsoa.pkl")
+    _, schools = ld.load_schools()
 
-    results = ds.run(n_seeds=1)
+    results = ds.run(1, ld.load_areas(), schools, tmp_path)
 
     assert list(results["scenario"]) == ["with routes", "without routes"]
     assert results["dissimilarity"].between(0, 1).all()
     # Both scenarios match the same student sample.
     assert results["n_matched"].add(results["n_unmatched"]).nunique() == 1
-    pd.testing.assert_frame_equal(pd.read_csv(ds.RESULTS_CSV), results)
+    pd.testing.assert_frame_equal(pd.read_csv(tmp_path / ds.RESULTS_CSV), results)

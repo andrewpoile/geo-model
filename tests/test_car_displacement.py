@@ -15,16 +15,16 @@ DATA = ld.NTS_MODE_BY_LENGTH_ODS.parent.parent.parent
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_run_counts_every_mode_of_both_scenarios_of_every_seed(tmp_path, monkeypatch):
-    monkeypatch.setattr(cd, "RESULTS_CSV", tmp_path / "car_displacement.csv")
     monkeypatch.setattr(ld, "POPULATION_CACHE", tmp_path / "population_lsoa.pkl")
+    _, schools = ld.load_schools()
 
-    results = cd.run(n_seeds=1)
+    results = cd.run(1, ld.load_areas(), schools, tmp_path)
 
     assert list(results.columns) == ["seed", "scenario", "mode", "students"]
     assert len(results) == 2 * len(MODES)
     # Both scenarios seat the same students, each travelling by one mode.
     assert results.groupby("scenario")["students"].sum().round(6).nunique() == 1
-    pd.testing.assert_frame_equal(pd.read_csv(cd.RESULTS_CSV), results)
+    pd.testing.assert_frame_equal(pd.read_csv(tmp_path / cd.RESULTS_CSV), results)
 
 
 # --------------------------------------------------------------------------

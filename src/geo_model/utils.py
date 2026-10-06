@@ -1,13 +1,23 @@
+import argparse
+from collections.abc import Iterator
+from pathlib import Path
+
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 import shapely
 from numpy.typing import ArrayLike
+from scipy.sparse import coo_array
+from scipy.sparse.csgraph import connected_components
 from scipy.spatial import distance as spdist
 from shapely.geometry.base import BaseGeometry
 
 from geo_model.build_routes import DISADVANTAGE_CHOICES, disadvantaged_cohort
-from geo_model.load_data import NTS_BANDS, NTS_MODES
+from geo_model.load_data import LAS, NTS_BANDS, NTS_MODES, load_areas
 
+# Every region's outputs are written to a folder of its own in here, so runs
+# for different regions never write over each other.
+OUTPUT_DIR = Path("output")
 MILE = 1609.344  # metres
 # Miles, the lower edge of every NTS trip-length band but the first.
 BAND_EDGES = np.array([1.0, 2.0, 5.0])
@@ -173,7 +183,10 @@ def rank_bundles(
     every student living in the school's own district, the bottom bracket
     holds the routeless bundles of everyone else, and distance orders both.
     Every bundle takes its own rank, since the mechanism compares ranks across
-    the whole route axis when it evicts.
+    the whole route axis when it evicts. The mechanism only ever reads the
+    rank of the bundle a student proposes, so each rank is returned beside
+    the bundle on the student's list rather than in an array over every
+    school, route and student, which would grow with all three at once.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -228,10 +241,10 @@ def rank_bundles(
     Returns:
         tuple[np.ndarray, np.ndarray]: Student preferences of shape
         (n_students, max_options, 2) holding (school, route) pairs best-first
-        and right-padded with (-1, -1), and school priorities of shape
-        (n_schools, n_routes + 1, n_students) holding the rank of every
-        (student, route) bundle. Routeless bundles sit last on the route axis,
-        where the mechanism's index of -1 lands.
+        and right-padded with (-1, -1), and preference ranks of shape
+        (n_students, max_options) holding the rank the school of each of
+        those bundles gives it, 0 being its strongest claim on a seat, padded
+        with -1.
     """
     n_students = len(student_xy)
     n_schools = len(school_xy)
@@ -303,12 +316,40 @@ def rank_bundles(
 
     noise_rng = (rng or np.random.default_rng()) if noise_scale > 0 else None
 
+    # Every school ranks its own bundles, the routeless one of every student
+    # and then those of each route arriving at it, so the routeless ranks are
+    # kept per school and student and the routed ones per route and rider.
+    routeless_rank = np.empty((n_schools, n_students), dtype=np.int32)
+    routed_rank = [np.empty(0, dtype=np.int32)] * n_routes
+    for school in range(n_schools):
+        routes = np.flatnonzero(route_school == school)
+        riders = [
+            np.flatnonzero((student_district == route_district[route]) & route_eligible)
+            for route in routes
+        ]
+        bundle_student = np.concatenate([np.arange(n_students), *riders])
+        bracket = np.concatenate(
+            [
+                np.where(student_district == school_district[school], 0, 1),
+                *(np.zeros(len(r), dtype=np.int64) for r in riders),
+            ]
+        )
+        order = np.lexsort((distances[bundle_student, school], bracket))
+        rank = np.empty(len(order), dtype=np.int32)
+        rank[order] = np.arange(len(order), dtype=np.int32)
+
+        routeless_rank[school] = rank[:n_students]
+        ends = np.cumsum([n_students, *map(len, riders)])
+        for route, start, stop in zip(routes, ends[:-1], ends[1:]):
+            routed_rank[route] = rank[start:stop]
+
     # Every eligible student in a district is offered that district's routes,
     # and every other student none, so option sets are built once per
     # (district, eligibility) pair rather than once per student.
     routes_per_district = np.bincount(route_district) if n_routes else np.zeros(1)
     max_options = n_schools + int(routes_per_district.max())
     preferences = np.full((n_students, max_options, 2), -1, dtype=np.int32)
+    ranks = np.full((n_students, max_options), -1, dtype=np.int32)
     routeless = np.column_stack((np.arange(n_schools), np.full(n_schools, -1)))
 
     for district, eligible in np.unique(
@@ -335,34 +376,15 @@ def rank_bundles(
         # ranks below it and a seat is only taken when the route earns it.
         order = np.argsort(cost, axis=1, kind="stable")
         preferences[students, : len(options)] = options[order]
+        # A route's riders are the eligible students of its district, these
+        # students in the same order, so its ranks line up with them as they
+        # stand.
+        option_rank = np.column_stack(
+            (routeless_rank[:, students].T, *(routed_rank[route] for route in routes))
+        )
+        ranks[students, : len(options)] = np.take_along_axis(option_rank, order, axis=1)
 
-    priorities = np.empty((n_schools, n_routes + 1, n_students), dtype=np.int32)
-    for school in range(n_schools):
-        bundle_student = [np.arange(n_students)]
-        bundle_route = [np.full(n_students, n_routes)]
-        bracket = [np.where(student_district == school_district[school], 0, 1)]
-
-        for route in np.flatnonzero(route_school == school):
-            riders = np.flatnonzero(
-                (student_district == route_district[route]) & route_eligible
-            )
-            bundle_student.append(riders)
-            bundle_route.append(np.full(len(riders), route))
-            bracket.append(np.zeros(len(riders), dtype=np.int64))
-
-        bundle_student = np.concatenate(bundle_student)
-        bundle_route = np.concatenate(bundle_route)
-        order = np.lexsort((distances[bundle_student, school], np.concatenate(bracket)))
-        rank = np.empty(len(order), dtype=np.int32)
-        rank[order] = np.arange(len(order), dtype=np.int32)
-
-        # Bundles on another school's routes are never proposed here, so their
-        # cells take a rank worse than any real one rather than being left to
-        # masquerade as a strong claim on a seat.
-        priorities[school] = len(order)
-        priorities[school, bundle_route, bundle_student] = rank
-
-    return preferences, priorities
+    return preferences, ranks
 
 
 def district_index(schools: pd.DataFrame, areas: pd.DataFrame) -> np.ndarray:
@@ -403,22 +425,22 @@ def district_index(schools: pd.DataFrame, areas: pd.DataFrame) -> np.ndarray:
 def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
     """Seats one year group holds at each school.
 
-    A secondary school publishes an admission number, the places it offers in
-    the year it admits, which is the cohort the matching fills, so a frame
-    carrying one is sized on it as it stands. Nothing equivalent is published
-    for the primary phase, so there the register's capacity across every year
-    group a school teaches is spread evenly over the years the school spans.
+    A secondary school is sized on the Year 7 places it offers, as
+    `load_places_offered` reads them, Year 7 being the cohort the matching
+    fills, so a frame carrying them is sized on them as they stand. A primary
+    school is sized on the register's capacity across every year group it
+    teaches, spread evenly over the years it spans.
 
     Args:
-        schools (pd.DataFrame): Schools carrying a "PAN" column, or else
-        "EstablishmentName", "SchoolCapacity", "StatutoryLowAge" and
+        schools (pd.DataFrame): Schools carrying a "PlacesOffered" column, or
+        else "EstablishmentName", "SchoolCapacity", "StatutoryLowAge" and
         "StatutoryHighAge" columns.
 
     Returns:
         np.ndarray: Seats for one cohort at each school.
     """
-    if "PAN" in schools.columns:
-        return schools["PAN"].to_numpy(dtype=np.int32)
+    if "PlacesOffered" in schools.columns:
+        return schools["PlacesOffered"].to_numpy(dtype=np.int32)
 
     unsized = (
         schools[["SchoolCapacity", "StatutoryLowAge", "StatutoryHighAge"]]
@@ -605,7 +627,7 @@ def dissimilarity_index(
         D = 1/2 * sum_c | a_c / A - b_c / B |
 
     the share of either group that would have to change school for every
-    school to hold the city-wide mix. 0 is that mix everywhere, 1 is complete
+    school to hold the region-wide mix. 0 is that mix everywhere, 1 is complete
     segregation. The counts are those of `school_intake`, so unmatched
     students are left out of both groups.
 
@@ -678,7 +700,7 @@ def gini(x: np.ndarray, y: np.ndarray) -> float:
 
     One less twice the area under the curve, taken by the trapezoid rule,
     which is exact for a curve joining its points by straight lines. 0 is
-    every school holding the city-wide mix. Against every student, as
+    every school holding the region-wide mix. Against every student, as
     `lorenz_curve` draws it, complete segregation reaches 1 - P rather than
     1, with P the share of students in the first group.
 
@@ -769,3 +791,117 @@ def mode_change(results: pd.DataFrame) -> pd.DataFrame:
     change = results.pivot(index=keys, columns="scenario", values="students")
     change = change["with routes"] - change["without routes"]
     return change.rename("change").reset_index()
+
+
+def region_dir(las: list[str]) -> Path:
+    """The folder a region's outputs are written to: its local authorities'
+    names, as the register spells them, joined by "+" in alphabetical order.
+
+    Args:
+        las (list[str]): The region's local authorities.
+
+    Returns:
+        Path: A folder in OUTPUT_DIR.
+    """
+    return OUTPUT_DIR / "+".join(sorted(las))
+
+
+def adjacent_groups(areas: gpd.GeoDataFrame, las: list[str]) -> list[list[str]]:
+    """Group `las` into regions of neighbouring local authorities.
+
+    Two authorities are neighbours where an LSOA of each shares a stretch of
+    boundary with the other; meeting at a single point does not count. A
+    region holds every authority a chain of neighbours reaches, so two that
+    do not border each other share a region through one bordering both.
+
+    Args:
+        areas (gpd.GeoDataFrame): LSOAs carrying "LA (name)" and a "Borders"
+        polygon, uniquely indexed, as `load_areas` returns them.
+
+        las (list[str]): The authorities to group, each holding LSOAs in
+        `areas`.
+
+    Returns:
+        list[list[str]]: The regions, each naming its authorities in `las`
+        order, ordered by where their first authority stands in `las`.
+    """
+    borders = areas[["LA (name)", "Borders"]]
+    pairs = gpd.sjoin(borders, borders, predicate="intersects")
+    across = pairs[pairs["LA (name)_left"] != pairs["LA (name)_right"]]
+    shared = shapely.length(
+        shapely.intersection(
+            np.asarray(across["Borders"]),
+            np.asarray(areas.loc[across["index_right"], "Borders"]),
+        )
+    )
+    neighbours = across[shared > 0]
+
+    position = pd.Series(np.arange(len(las)), index=las)
+    graph = coo_array(
+        (
+            np.ones(len(neighbours)),
+            (
+                position[neighbours["LA (name)_left"]].to_numpy(),
+                position[neighbours["LA (name)_right"]].to_numpy(),
+            ),
+        ),
+        shape=(len(las), len(las)),
+    )
+    _, region = connected_components(graph, directed=False)
+    groups: dict[int, list[str]] = {}
+    for la, label in zip(las, region):
+        groups.setdefault(int(label), []).append(la)
+    return list(groups.values())
+
+
+def regions(
+    las: list[str], merge: bool
+) -> Iterator[tuple[list[str], gpd.GeoDataFrame]]:
+    """The regions to simulate: one per local authority in `las`, or with
+    `merge` one per group of neighbours, as `adjacent_groups` forms them.
+
+    Every authority's LSOAs are read at once and each region takes its own,
+    so a region simulated alone holds the same LSOAs in the same order as
+    one read by itself.
+
+    Args:
+        las (list[str]): Local authorities, as the register's "LA (name)"
+        spells them.
+
+        merge (bool): Simulate neighbouring authorities as one region.
+
+    Yields:
+        tuple[list[str], gpd.GeoDataFrame]: The region's authorities, and its
+        LSOAs as `load_areas` returns them, positionally indexed.
+    """
+    if len(set(las)) != len(las):
+        raise ValueError(f"Each local authority may be named once, got {las}.")
+    areas = load_areas(las)
+    groups = adjacent_groups(areas, las) if merge else [[la] for la in las]
+    print("Simulating " + "; ".join(" + ".join(group) for group in groups) + ".")
+    for group in groups:
+        yield group, areas[areas["LA (name)"].isin(group)].reset_index(drop=True)
+
+
+def add_region_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the options choosing the regions an entry point simulates.
+
+    Args:
+        parser (argparse.ArgumentParser): The entry point's parser.
+    """
+    parser.add_argument(
+        "--la",
+        nargs="+",
+        default=LAS,
+        metavar="NAME",
+        help="local authorities to simulate, as the school register names "
+        "them (e.g. Southampton, Hampshire); each is simulated on its own, "
+        f"one after another, into {OUTPUT_DIR}/<NAME>",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="simulate the named authorities that border each other as one "
+        f"region, into {OUTPUT_DIR}/<NAME>+<NAME>; one bordering none of the "
+        "others is still simulated on its own",
+    )

@@ -29,11 +29,11 @@ DISADVANTAGE = "score"
 # rights to free home-to-school travel held by low-income 11-16 year olds.
 MIN_ROUTE_DISTANCE = 3218
 
-# Seats on a route, as a multiple of its district's fair share of the school's
-# PAN: k * PAN * n_d / N, with n_d the district's Year 7 cohort and N the
-# city's. At 1 a route holds the seats its district would take at the school
-# if every intake matched the city's mix. Route capacities are exogenous to
-# the SCT instance.
+# Seats on a route, as a multiple of its district's fair share of the Year 7
+# places the school offers: k * places * n_d / N, with n_d the district's Year
+# 7 cohort and N the region's. At 1 a route holds the seats its district would
+# take at the school if every intake matched the region's mix. Route
+# capacities are exogenous to the SCT instance.
 ROUTE_CAPACITY_SCALE = 5.0
 
 # How far a route's seats lean towards the more deprived districts, p >= 0.
@@ -63,8 +63,9 @@ MAX_LOCAL_P8 = 0.0
 # it must be carried. The two are independent, so they are swept apart.
 LOCAL_RADIUS = 1609
 
-ROUTES_CSV = Path("temp/secondary_routes.csv")
-ROUTES_NPZ = Path("temp/secondary_routes.npz")
+# Written to each region's folder.
+ROUTES_CSV = "secondary_routes.csv"
+ROUTES_NPZ = "secondary_routes.npz"
 
 
 class EmptyRouteSet(ValueError):
@@ -162,7 +163,7 @@ def route_network(
     areas: gpd.GeoDataFrame,
     school_xy: np.ndarray,
     school_scores: np.ndarray,
-    school_pan: np.ndarray,
+    school_places: np.ndarray,
     district_cohort: np.ndarray,
     decile: int = DISADVANTAGED_DECILE,
     min_distance: float = MIN_ROUTE_DISTANCE,
@@ -187,10 +188,11 @@ def route_network(
     route-eligible or not. Under every `disadvantage` but "decile" it is drawn
     from IDACI scores, so the decile does not move it either.
 
-    A route from district d to school s holds k * PAN_s * n_d * w_d / N seats,
-    with n_d the students of the district who may ride and N the city's
-    cohort, so at k = 1 and w_d = 1 it holds the seats the district's riders
-    would take at the school if every intake matched the city's mix. Under
+    A route from district d to school s holds k * P_s * n_d * w_d / N seats,
+    with P_s the Year 7 places the school offers, n_d the students of the
+    district who may ride and N the region's cohort, so at k = 1 and w_d = 1
+    it holds the seats the district's riders would take at the school if
+    every intake matched the region's mix. Under
     "score" only the district's disadvantaged students ride, so n_d is its
     disadvantaged cohort, as `disadvantaged_cohort` gives it; otherwise every
     student of the district rides and n_d is its whole cohort. The weight
@@ -213,8 +215,9 @@ def route_network(
         without a published score, so such a school is absent from both arrays
         and takes no part in this condition.
 
-        school_pan (np.ndarray): Published admission number per school, shape
-        (n_schools,), aligned with `school_xy`.
+        school_places (np.ndarray): Year 7 places each school offers, as
+        `load_places_offered` reads them, shape (n_schools,), aligned with
+        `school_xy`.
 
         district_cohort (np.ndarray): Students in the cohort of every district,
         positionally aligned with `areas`, as `cohort_sizes` gives it.
@@ -226,8 +229,8 @@ def route_network(
         further away than this, in metres. Defaults to MIN_ROUTE_DISTANCE.
 
         capacity_scale (float, optional): k, the seats on a route as a
-        multiple of its district's fair share of the school's PAN. Defaults to
-        ROUTE_CAPACITY_SCALE.
+        multiple of its district's fair share of the school's places.
+        Defaults to ROUTE_CAPACITY_SCALE.
 
         max_local_p8 (float, optional): A district with a school scoring above
         this within `local_radius` is not route-eligible. Defaults to
@@ -277,10 +280,10 @@ def route_network(
             f"school_scores must align with school_xy: got {len(school_scores)} "
             f"scores for {len(school_xy)} schools."
         )
-    if len(school_pan) != len(school_xy):
+    if len(school_places) != len(school_xy):
         raise ValueError(
-            f"school_pan must align with school_xy: got {len(school_pan)} "
-            f"admission numbers for {len(school_xy)} schools."
+            f"school_places must align with school_xy: got {len(school_places)} "
+            f"places for {len(school_xy)} schools."
         )
     if len(district_cohort) != len(areas):
         raise ValueError(
@@ -329,7 +332,7 @@ def route_network(
     weight *= eligible_riders.sum() / (eligible_riders * weight).sum()
     seats = (
         capacity_scale
-        * np.outer(eligible_riders * weight, np.asarray(school_pan, dtype=float))
+        * np.outer(eligible_riders * weight, np.asarray(school_places, dtype=float))
         / cohort.sum()
     )
     capacity = (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int32)
@@ -365,16 +368,19 @@ def route_network(
     return routes
 
 
-def save_routes(routes: pd.DataFrame) -> None:
-    """Write the route set out, whole as a CSV and by axis as arrays.
+def save_routes(routes: pd.DataFrame, out_dir: Path) -> None:
+    """Write the route set out, whole as a CSV and by axis as arrays, to
+    ROUTES_CSV and ROUTES_NPZ in `out_dir`.
 
     Args:
         routes (pd.DataFrame): The route set, as returned by `route_network`.
+
+        out_dir (Path): Folder the route set is written to.
     """
-    ROUTES_CSV.parent.mkdir(parents=True, exist_ok=True)
-    routes.to_csv(ROUTES_CSV, index=False)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    routes.to_csv(out_dir / ROUTES_CSV, index=False)
     np.savez(
-        ROUTES_NPZ,
+        out_dir / ROUTES_NPZ,
         route_capacities=routes["capacity"].to_numpy(dtype=np.int32),
         route_school_idx=routes["school_idx"].to_numpy(dtype=np.int32),
         route_district_idx=routes["district_idx"].to_numpy(dtype=np.int32),

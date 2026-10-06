@@ -9,7 +9,7 @@ DATA = ld.POPULATION_XLSX.parent.parent
 
 
 # --------------------------------------------------------------------------
-# main: the whole pipeline, against the real data folder
+# build: the whole pipeline, against the real data folder
 # --------------------------------------------------------------------------
 
 pytestmark_data = pytest.mark.skipif(
@@ -18,49 +18,52 @@ pytestmark_data = pytest.mark.skipif(
 
 
 @pytest.fixture
-def redirected_outputs(tmp_path, monkeypatch):
-    """Send every file the pipeline writes to a temporary folder.
+def build(tmp_path, monkeypatch):
+    """Build Southampton's instance into a temporary folder, returned.
 
-    The real temp/ folder holds the artefacts the rest of the model is run
+    The real output folder holds the artefacts the rest of the model is run
     from, so a test must not overwrite them.
     """
-    monkeypatch.setattr(bp, "OUTPUT_NPZ", tmp_path / "prefprio.npz")
     monkeypatch.setattr(ld, "POPULATION_CACHE", tmp_path / "population_lsoa.pkl")
-    monkeypatch.setattr(br, "ROUTES_CSV", tmp_path / "secondary_routes.csv")
-    monkeypatch.setattr(br, "ROUTES_NPZ", tmp_path / "secondary_routes.npz")
-    return tmp_path
+
+    def built():
+        primary, secondary = ld.load_schools()
+        bp.build(ld.load_areas(), primary, secondary, tmp_path)
+        return tmp_path
+
+    return built
 
 
 @pytestmark_data
-def test_main_writes_a_consistent_instance_for_both_phases(redirected_outputs):
-    bp.main()
+def test_build_writes_a_consistent_instance_for_both_phases(build):
+    out_dir = build()
 
-    assert bp.OUTPUT_NPZ.exists()
-    assert br.ROUTES_CSV.exists() and br.ROUTES_NPZ.exists()
+    assert (out_dir / bp.OUTPUT_NPZ).exists()
+    assert (out_dir / br.ROUTES_CSV).exists() and (out_dir / br.ROUTES_NPZ).exists()
 
-    with np.load(bp.OUTPUT_NPZ) as built:
-        routes = np.load(br.ROUTES_NPZ)
+    with np.load(out_dir / bp.OUTPUT_NPZ) as built:
+        routes = np.load(out_dir / br.ROUTES_NPZ)
         n_routes = len(routes["route_capacities"])
 
         for phase, phase_routes in [("primary", 0), ("secondary", n_routes)]:
             preferences = built[f"{phase}_student_preferences"]
-            priorities = built[f"{phase}_school_priorities"]
+            ranks = built[f"{phase}_preference_ranks"]
             capacities = built[f"{phase}_school_capacities"]
 
-            n_schools, route_axis, n_students = priorities.shape
+            n_students, n_schools = len(preferences), len(capacities)
             assert preferences.shape == (n_students, preferences.shape[1], 2)
-            # The route axis carries every route plus the routeless bundle.
-            assert route_axis == phase_routes + 1
-            assert capacities.shape == (n_schools,)
+            assert ranks.shape == preferences.shape[:2]
             assert n_students > 0 and n_schools > 0
             assert (capacities >= 1).all()
 
             # Every ranked bundle is a real school, or the padding a short list
-            # carries, and every route index falls on the route axis.
+            # carries, and every route index is a route that was built.
             schools, bundle_routes = preferences[..., 0], preferences[..., 1]
             assert ((schools == -1) | (schools < n_schools)).all()
             assert ((bundle_routes == -1) | (bundle_routes < phase_routes)).all()
             assert (preferences[schools == -1] == -1).all()
+            # Every bundle on a list carries its school's rank, padding none.
+            np.testing.assert_array_equal(ranks == -1, schools == -1)
 
             # Every student carries the district it was drawn in and whether
             # it is disadvantaged, so the matching can be scored for
@@ -74,14 +77,10 @@ def test_main_writes_a_consistent_instance_for_both_phases(redirected_outputs):
 
 
 @pytestmark_data
-def test_main_only_routes_the_secondary_phase(redirected_outputs):
-    bp.main()
-
-    with np.load(bp.OUTPUT_NPZ) as built:
+def test_build_only_routes_the_secondary_phase(build):
+    with np.load(build() / bp.OUTPUT_NPZ) as built:
         # Routes serve the schools the disadvantaged districts cannot reach
         # unaided, which the model builds for the secondary phase alone.
-        assert built["primary_school_priorities"].shape[1] == 1
-        assert built["secondary_school_priorities"].shape[1] > 1
         assert (built["primary_student_preferences"][..., 1] == -1).all()
         assert (built["secondary_student_preferences"][..., 1] > -1).any()
 
@@ -89,6 +88,12 @@ def test_main_only_routes_the_secondary_phase(redirected_outputs):
 # --------------------------------------------------------------------------
 # secondary_instance
 # --------------------------------------------------------------------------
+
+
+def by_bundle(preferences, ranks):
+    """Each student's ranks ordered by bundle rather than by preference."""
+    key = preferences[..., 0] * (preferences[..., 1].max() + 2) + preferences[..., 1]
+    return np.take_along_axis(ranks, np.argsort(key, axis=1), axis=1)
 
 
 @pytestmark_data
@@ -134,7 +139,7 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights():
         areas,
         schools[["Easting", "Northing"]].to_numpy(),
         schools["P8MEA"].to_numpy(),
-        schools["PAN"].to_numpy(),
+        schools["PlacesOffered"].to_numpy(),
         bp.cohort_sizes(areas, "secondary"),
     )
     disadvantaged = bp.disadvantaged_students(
@@ -163,8 +168,9 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights():
     assert not np.array_equal(other[0][disadvantaged], own[0][disadvantaged])
     np.testing.assert_array_equal(mixed[0][~disadvantaged], other[0][~disadvantaged])
     np.testing.assert_array_equal(mixed[0][disadvantaged], own[0][disadvantaged])
-    # School priorities do not depend on how students weigh schools.
-    np.testing.assert_array_equal(mixed[1], other[1])
+    # School priorities do not depend on how students weigh schools, so every
+    # bundle keeps its rank wherever the weights move it on the list.
+    np.testing.assert_array_equal(by_bundle(*mixed[:2]), by_bundle(*other[:2]))
 
 
 @pytestmark_data
@@ -183,7 +189,7 @@ def test_secondary_instance_offers_other_students_routes_only_when_open():
         areas,
         schools[["Easting", "Northing"]].to_numpy(),
         schools["P8MEA"].to_numpy(),
-        schools["PAN"].to_numpy(),
+        schools["PlacesOffered"].to_numpy(),
         bp.cohort_sizes(areas, "secondary"),
     )
     offered = {}
@@ -210,11 +216,9 @@ def test_secondary_instance_offers_other_students_routes_only_when_open():
 
 
 @pytestmark_data
-def test_main_is_reproducible_from_the_seed(redirected_outputs):
-    bp.main()
-    first = dict(np.load(bp.OUTPUT_NPZ))
+def test_build_is_reproducible_from_the_seed(build):
+    first = dict(np.load(build() / bp.OUTPUT_NPZ))
 
-    bp.main()
-    with np.load(bp.OUTPUT_NPZ) as second:
+    with np.load(build() / bp.OUTPUT_NPZ) as second:
         for name, array in first.items():
             np.testing.assert_array_equal(array, second[name], err_msg=name)
