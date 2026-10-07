@@ -552,6 +552,8 @@ def plot(results: pd.DataFrame, path: Path) -> None:
     """Box-plot the index per scenario, one point per seed, to `path`, titled
     with the paired t-test of the index with routes against without.
 
+    The y-axis is fitted to the indices drawn, so it need not start at 0.
+
     Args:
         results (pd.DataFrame): As returned by `run`, or the scenario rows of
         one setting as `score_settings` returns them.
@@ -568,7 +570,6 @@ def plot(results: pd.DataFrame, path: Path) -> None:
     sns.stripplot(results, x="scenario", y="dissimilarity", color="#1f2933", ax=ax)
     ax.set_xlabel("")
     ax.set_ylabel("Dissimilarity index")
-    ax.set_ylim(0, 1)
     ax.yaxis.grid(True, color="#e5e7eb")
     ax.set_axisbelow(True)
     sns.despine(ax=ax)

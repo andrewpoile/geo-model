@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.figure import Figure
 
 from geo_model import build_prefs as bp
 from geo_model import build_routes as br
@@ -172,6 +173,27 @@ def test_plot_writes_a_png_of_the_results(tmp_path):
     ds.plot(results, png)
 
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_plot_fits_the_y_axis_to_the_indices(tmp_path, monkeypatch):
+    saved = []
+    monkeypatch.setattr(
+        Figure, "savefig", lambda fig, *args, **kwargs: saved.append(fig)
+    )
+    results = pd.DataFrame(
+        {
+            "seed": [0, 0, 1, 1],
+            "scenario": ["with routes", "without routes"] * 2,
+            "dissimilarity": [0.30, 0.35, 0.28, 0.36],
+        }
+    )
+
+    ds.plot(results, tmp_path / "dissimilarity.png")
+
+    low, high = saved[0].axes[0].get_ylim()
+    # Every index is in view, on an axis far narrower than the index's 0 to 1.
+    assert 0 < low <= 0.28 and 0.36 <= high
+    assert high - low < 0.2
 
 
 def test_plot_draws_one_seed_with_its_test_undefined(tmp_path):
