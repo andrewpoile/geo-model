@@ -61,6 +61,7 @@ from geo_model.dissimilarity import (
     Settings,
     score_settings,
     student_samples,
+    t_test_label,
 )
 from geo_model.dissimilarity import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.dissimilarity import plot as plot_dissimilarity
@@ -72,6 +73,7 @@ from geo_model.utils import (
     mode_change,
     region_dir,
     regions,
+    routes_t_test,
 )
 
 # The search's folder within each region's, and the files written to it.
@@ -729,10 +731,10 @@ def compare(
     """Score `settings` over `samples` with routes and without, and plot the
     two against each other in `out_dir`.
 
-    Draws every metric the sweep draws: the index per scenario to
-    DISSIMILARITY_PNG, who is left unassigned to UNASSIGNED_PNG, each
-    school's intake to INTAKE_PNG and the expected modes and their change to
-    MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map of the
+    Draws every metric the sweep draws: the index per scenario and its
+    paired t-test to DISSIMILARITY_PNG, who is left unassigned to
+    UNASSIGNED_PNG, each school's intake to INTAKE_PNG and the expected modes
+    and their change to MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map of the
     first sample's two matchings to MAP_PNG, and the seats each route
     provides and its riders take to ROUTES_PNG. Each plot the scripts share
     is drawn with the function its own script uses.
@@ -1010,6 +1012,7 @@ def search(
         .round(3)
         .to_string()
     )
+    print(t_test_label(routes_t_test(results)))
     print("Change in students per mode with routes:")
     print(
         mode_change(modes).groupby("mode")["change"].mean()[MODES].round(1).to_string()

@@ -15,7 +15,12 @@ import numpy as np
 from geo_model.__main__ import INTAKE_MEASURES
 from geo_model.build_prefs import cohort_sizes
 from geo_model.build_routes import DISADVANTAGE, DISADVANTAGE_CHOICES, save_routes
-from geo_model.dissimilarity import DEFAULTS, settings_routes, student_samples
+from geo_model.dissimilarity import (
+    DEFAULTS,
+    settings_routes,
+    student_samples,
+    t_test_label,
+)
 from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
 from geo_model.optimise import compare, route_utilisation, utilisation_summary
 from geo_model.utils import (
@@ -25,6 +30,7 @@ from geo_model.utils import (
     mode_change,
     region_dir,
     regions,
+    routes_t_test,
 )
 
 # The scenario's folder within each region's, and the score rows written to it.
@@ -154,6 +160,7 @@ def main() -> None:
             .round(3)
             .to_string()
         )
+        print(t_test_label(routes_t_test(results)))
         print("Change in students per mode with routes:")
         print(
             mode_change(modes)

@@ -43,6 +43,7 @@ from geo_model.utils import (
     expected_modes,
     region_dir,
     regions,
+    routes_t_test,
     sample_students,
     school_intake,
 )
@@ -531,8 +532,25 @@ def run(
     return results
 
 
+def t_test_label(test: pd.Series) -> str:
+    """A test `routes_t_test` returns, in two lines: the seeds it is taken
+    over, then its mean difference, t and p, or why it is undefined."""
+    seeds = int(test["seeds"])
+    if seeds < 2:
+        result = "undefined: one seed"
+    elif np.isnan(test["t"]):
+        result = "undefined: routes change no seed's index"
+    else:
+        result = (
+            f"mean difference {test['difference']:+.4f}, "
+            f"t = {test['t']:.2f}, p = {test['p']:.2g}"
+        )
+    return f"Paired t-test over {seeds} seed{'' if seeds == 1 else 's'}\n{result}"
+
+
 def plot(results: pd.DataFrame, path: Path) -> None:
-    """Box-plot the index per scenario, one point per seed, to `path`.
+    """Box-plot the index per scenario, one point per seed, to `path`, titled
+    with the paired t-test of the index with routes against without.
 
     Args:
         results (pd.DataFrame): As returned by `run`, or the scenario rows of
@@ -543,6 +561,7 @@ def plot(results: pd.DataFrame, path: Path) -> None:
     # A bare Figure draws without a display backend, which pyplot would need.
     fig = Figure(figsize=(5, 4))
     ax = fig.subplots()
+    ax.set_title(t_test_label(routes_t_test(results)), fontsize="small")
     sns.boxplot(
         results, x="scenario", y="dissimilarity", color="#d9dde3", width=0.5, ax=ax
     )
@@ -573,6 +592,7 @@ def main() -> None:
         results = run(args.seeds, areas, secondary_schools, out_dir)
         print(" + ".join(las) + ":")
         print(results.groupby("scenario")["dissimilarity"].describe())
+        print(t_test_label(routes_t_test(results)))
         plot(results, out_dir / PLOT_PNG)
         print(f"Wrote {RESULTS_CSV} and {PLOT_PNG} in {out_dir}.")
 

@@ -17,7 +17,9 @@ from geo_model.utils import (
     disadvantaged_group,
     dissimilarity_index,
     gini,
+    holm,
     lorenz_curve,
+    routes_t_test,
 )
 
 DATA = ld.POPULATION_XLSX.parent.parent
@@ -264,6 +266,73 @@ def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
         sweep_main.draw_columns(
             Figure(), pd.concat([results, stray]), intake, modes, fsm, ["decile"]
         )
+
+
+# --------------------------------------------------------------------------
+# sweep_tests, stars and the index panels' stars
+# --------------------------------------------------------------------------
+
+
+def test_sweep_tests_tests_every_cell_and_corrects_over_them_all():
+    results, *_ = synthetic_frames()
+
+    tests = sweep_main.sweep_tests(results)
+
+    cells = results[["parameter", "value"]].drop_duplicates()
+    expected = pd.DataFrame(
+        [
+            routes_t_test(
+                results[
+                    (results["parameter"] == parameter) & (results["value"] == value)
+                ]
+            )
+            for parameter, value in zip(cells["parameter"], cells["value"])
+        ],
+        index=pd.MultiIndex.from_frame(cells),
+    ).sort_index()
+    pd.testing.assert_frame_equal(tests.drop(columns="p_holm"), expected)
+    pd.testing.assert_series_equal(tests["p_holm"], holm(tests["p"]), check_names=False)
+
+
+@pytest.mark.parametrize(
+    ("p", "mark"),
+    [
+        (0.0005, "***"),
+        (0.001, "**"),
+        (0.005, "**"),
+        (0.01, "*"),
+        (0.049, "*"),
+        (0.05, "ns"),
+        (0.9, "ns"),
+        (np.nan, "–"),
+    ],
+)
+def test_stars_mark_the_level_a_p_value_falls_below(p, mark):
+    assert sweep_main.stars(p) == mark
+
+
+def test_draw_columns_stars_every_value_by_its_test_over_the_whole_frame():
+    results, intake, modes, fsm = synthetic_frames()
+    # Routes lower every decile cell's index by 0.1 in seed 0 and 0.1001 in
+    # seed 1, so t = -2001 over 1 degree of freedom and p = 3.2e-4: "***"
+    # alone, "**" corrected over the decile's 9 cells and "*" over every
+    # cell of GRID.
+    decile = results["parameter"] == "decile"
+    unrouted = results[decile & (results["scenario"] == "without routes")]
+    routed = decile & (results["scenario"] == "with routes")
+    results.loc[routed, "dissimilarity"] = (
+        unrouted["dissimilarity"].to_numpy() - 0.1 - 1e-4 * unrouted["seed"].to_numpy()
+    )
+    fig = Figure(figsize=(9, 20), layout="constrained")
+
+    sweep_main.draw_columns(fig, results, intake, modes, fsm, ["decile"])
+
+    marks = fig.axes[0].texts
+    assert [mark.get_text() for mark in marks] == ["*"] * 9
+    corrected = sweep_main.sweep_tests(results)["p_holm"].xs("decile")
+    at = sweep_main.positions("decile")
+    assert [mark.get_position()[0] for mark in marks] == list(at[corrected.index])
+    assert fig.legends[0].get_title().get_text() == sweep_main.SIGNIFICANCE_KEY
 
 
 # --------------------------------------------------------------------------

@@ -42,10 +42,12 @@ from geo_model.utils import (
     disadvantaged_group,
     dissimilarity_terms,
     gini,
+    holm,
     lorenz_curve,
     mode_change,
     region_dir,
     regions,
+    routes_t_test,
 )
 
 # The sweep's folder within each region's, and the files written to it.
@@ -53,6 +55,7 @@ SWEEP_DIR = Path("sweep")
 RESULTS_CSV = "sweep.csv"
 SCHOOLS_CSV = "schools.csv"
 MODES_CSV = "modes.csv"
+TESTS_CSV = "t_tests.csv"
 PLOT_PNG = "sweep.png"
 MAP_PNG = "map.png"
 LORENZ_PNG = "lorenz.png"
@@ -147,6 +150,14 @@ GROUP_COLOURS = {
     "other, without routes": "#a5a49f",
 }
 DEFAULT_LINE = {"color": "#898781", "linestyle": "--", "linewidth": 1}
+# The stars each value of the index panels takes, by the level its
+# Holm-corrected p-value falls below, and the key the figure gives them.
+SIGNIFICANCE = [(0.001, "***"), (0.01, "**"), (0.05, "*")]
+SIGNIFICANCE_KEY = (
+    "Above the index: paired t-test, with routes against without, "
+    "Holm-corrected over every cell\n"
+    "*** p < 0.001   ** p < 0.01   * p < 0.05   ns p ≥ 0.05   – undefined"
+)
 # What the intake panels and the FSM strip show of each school: its term of the
 # dissimilarity index, diverging either side of the region-wide mix, or the
 # disadvantaged share of its intake, in one hue from light to dark.
@@ -370,6 +381,58 @@ def plot_parameter(
     ax.yaxis.grid(True, color="#e1e0d9")
     ax.set_axisbelow(True)
     sns.despine(ax=ax)
+
+
+def sweep_tests(results: pd.DataFrame) -> pd.DataFrame:
+    """The paired t-test of the index with routes against without in every
+    cell, its p-value Holm-corrected over every cell `results` holds.
+
+    The family is the whole frame rather than the parameters drawn, so every
+    figure drawn from the same frame marks a cell alike. Every parameter's
+    default cell scores the same matchings yet counts as a test of its own,
+    which only makes the correction more conservative.
+
+    Args:
+        results (pd.DataFrame): The scenario rows `sweep` returns.
+
+    Returns:
+        pd.DataFrame: One row per (parameter, value), so indexed, with the
+        columns `routes_t_test` returns and "p_holm", the corrected p.
+    """
+    tests = results.groupby(["parameter", "value"]).apply(routes_t_test)
+    return tests.assign(p_holm=holm(tests["p"]))
+
+
+def stars(p: float) -> str:
+    """The stars of SIGNIFICANCE `p` reaches, "ns" short of every level, and
+    "–" where the test is undefined."""
+    if np.isnan(p):
+        return "–"
+    return next((mark for level, mark in SIGNIFICANCE if p < level), "ns")
+
+
+def plot_significance(ax: Axes, tests: pd.DataFrame, parameter: str) -> None:
+    """Mark every value of one parameter's index panel, above the panel,
+    with the stars of its Holm-corrected p-value.
+
+    Args:
+        ax (Axes): The parameter's index panel.
+
+        tests (pd.DataFrame): As returned by `sweep_tests`.
+
+        parameter (str): A key of GRID.
+    """
+    corrected = tests["p_holm"].xs(parameter)
+    for x, p in zip(positions(parameter)[corrected.index], corrected):
+        ax.text(
+            x,
+            1,
+            stars(p),
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="bottom",
+            fontsize="small",
+        )
 
 
 def fsm_share(secondary_schools: pd.DataFrame) -> pd.Series:
@@ -606,10 +669,11 @@ def draw_columns(
     parameters: list[str],
     measure: str = "dissimilarity",
 ) -> None:
-    """Fill `fig` with a column per parameter: the index on top, then who the
-    matching leaves unplaced, then each school's intake with routes and
-    without, the FSM strip closing both intake rows, and the change in travel
-    mode the routes induce at the foot.
+    """Fill `fig` with a column per parameter: the index on top, every value
+    starred by its test from `sweep_tests`, then who the matching leaves
+    unplaced, then each school's intake with routes and without, the FSM
+    strip closing both intake rows, and the change in travel mode the routes
+    induce at the foot.
 
     Every panel of a column shares one x-axis, drawn once at the foot, so the
     column reads top to bottom at a value. Every line row shares one y-axis
@@ -663,6 +727,7 @@ def draw_columns(
         limits = (-bound, bound)
     change = mode_change(modes)
     unassigned = unassigned_rows(results)
+    tests = sweep_tests(results)
 
     # The FSM strip takes a narrow last column of its own, so the intake
     # panels stay in the columns of the line panels above them.
@@ -684,6 +749,7 @@ def draw_columns(
         plot_parameter(
             column[0], results, parameter, "dissimilarity", "scenario", COLOURS
         )
+        plot_significance(column[0], tests, parameter)
         plot_stack(column[1], unassigned, parameter)
         for ax, scenario in zip(column[2:4], COLOURS):
             plot_intake(ax, schools, parameter, scenario, order.index, measure, limits)
@@ -717,13 +783,15 @@ def draw_columns(
 
     # The lines of the scenario panels and the patches the stacks are built
     # from share the top band: the stacks take their hue from the scenario
-    # and their tone from the group.
+    # and their tone from the group. The stars' key heads it.
     fig.legend(
         handles=legend_handles(COLOURS)
         + [Patch(color=colour, label=label) for label, colour in GROUP_COLOURS.items()],
         loc="outside upper center",
         ncol=4,
         frameon=False,
+        title=SIGNIFICANCE_KEY,
+        title_fontsize="small",
     )
     fig.legend(
         handles=legend_handles(MODE_COLOURS),
@@ -1221,13 +1289,25 @@ def main() -> None:
             args.disadvantage,
         )
         print(" + ".join(las) + ":")
+        tests = sweep_tests(results)
+        tests.to_csv(out_dir / TESTS_CSV)
         summary = results.pivot_table(
             index=["parameter", "value"],
             columns="scenario",
             values="dissimilarity",
             aggfunc="mean",
+        ).join(tests[["t", "p", "p_holm"]])
+        print(
+            "Mean index over seeds and its paired t-test, with routes against "
+            "without, p Holm-corrected over every cell as p_holm:"
         )
-        print(summary.loc[parameters].round(3))
+        # Whole, so no test is folded away, and the p-values left unrounded,
+        # so a small one does not print as 0.
+        print(
+            summary.loc[parameters]
+            .round({"with routes": 3, "without routes": 3, "t": 2})
+            .to_string()
+        )
         change = mode_change(modes).pivot_table(
             index=["parameter", "value"],
             columns="mode",
@@ -1274,8 +1354,8 @@ def main() -> None:
         if args.lorenz:
             plot_lorenz(default_cell(schools), out_dir / LORENZ_PNG, args.disadvantage)
         print(
-            f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in "
-            f"{out_dir}."
+            f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, {TESTS_CSV} and "
+            f"the plots in {out_dir}."
         )
 
 

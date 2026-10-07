@@ -174,6 +174,46 @@ def test_plot_writes_a_png_of_the_results(tmp_path):
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_plot_draws_one_seed_with_its_test_undefined(tmp_path):
+    png = tmp_path / "dissimilarity.png"
+    results = pd.DataFrame(
+        {
+            "seed": [0, 0],
+            "scenario": ["with routes", "without routes"],
+            "dissimilarity": [0.30, 0.35],
+        }
+    )
+
+    ds.plot(results, png)
+
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# --------------------------------------------------------------------------
+# t_test_label
+# --------------------------------------------------------------------------
+
+
+def test_t_test_label_gives_the_seeds_difference_t_and_p():
+    test = pd.Series({"seeds": 30, "difference": -0.0123, "t": -4.214, "p": 0.00023})
+
+    assert ds.t_test_label(test) == (
+        "Paired t-test over 30 seeds\nmean difference -0.0123, t = -4.21, p = 0.00023"
+    )
+
+
+def test_t_test_label_says_why_a_test_is_undefined():
+    one_seed = pd.Series({"seeds": 1, "difference": -0.05, "t": np.nan, "p": np.nan})
+    unchanged = pd.Series({"seeds": 5, "difference": 0.0, "t": np.nan, "p": np.nan})
+
+    assert ds.t_test_label(one_seed) == (
+        "Paired t-test over 1 seed\nundefined: one seed"
+    )
+    assert ds.t_test_label(unchanged).endswith(
+        "undefined: routes change no seed's index"
+    )
+
+
 # --------------------------------------------------------------------------
 # run: against the real data folder
 # --------------------------------------------------------------------------
