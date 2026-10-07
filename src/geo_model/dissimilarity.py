@@ -28,6 +28,7 @@ from geo_model.build_routes import (
     ROUND_UP_SEATS,
     ROUTE_CAPACITY_SCALE,
     ROUTE_PROGRESSIVITY,
+    SHORTEST_ROUTE_ONLY,
     route_network,
 )
 from geo_model.load_data import load_nts_mode_shares, load_schools
@@ -70,6 +71,7 @@ class Settings:
     route_discount: float = ROUTE_DISCOUNT
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT
+    shortest_only: bool = SHORTEST_ROUTE_ONLY
 
 
 DEFAULTS = Settings()
@@ -190,14 +192,15 @@ def score_sample(
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
     circuity: float = CIRCUITY,
     disadvantage: str = DISADVANTAGE,
-) -> tuple[list[dict], list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Match one student sample with and without routes and score both.
 
     Both matchings are scored for segregation on the same students, so the
     two scores differ by the routes alone. Each school's intake is counted by
-    group as well, so the composition behind the index can be seen, and the
+    group as well, so the composition behind the index can be seen, the
     students seated are counted by expected travel mode, so the modal shift
-    the routes induce can be seen too.
+    the routes induce can be seen too, and each route's riders by group, so
+    the use made of its seats can be seen.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -239,20 +242,22 @@ def score_sample(
         to DISADVANTAGE.
 
     Returns:
-        tuple[list[dict], list[dict], list[dict]]: One row per scenario, with
-        keys "scenario", "dissimilarity", "n_matched", "n_unmatched",
-        "n_disadvantaged" (students disadvantaged) and
+        tuple[list[dict], list[dict], list[dict], list[dict]]: One row per
+        scenario, with keys "scenario", "dissimilarity", "n_matched",
+        "n_unmatched", "n_disadvantaged" (students disadvantaged) and
         "unassigned_disadvantaged" (those of them left without a place); one
         row per (scenario, school), with keys "scenario", "school" (the
         establishment name), "disadvantaged" and "other" (students seated)
         and "dissimilarity_term" (the school's term of the index, as
-        `dissimilarity_terms` gives it);
-        and one row per (scenario, mode), with keys "scenario", "mode" and
-        "students" (expected).
+        `dissimilarity_terms` gives it); one row per (scenario, mode), with
+        keys "scenario", "mode" and "students" (expected); and one row per
+        route of the routed matching, with keys "route" (its route_id),
+        "LSOA21CD", "school" (the establishment name), "capacity" and
+        "disadvantaged" and "other" (students riding it).
     """
     n_schools = len(secondary_schools)
     school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
-    rows, school_rows, mode_rows = [], [], []
+    rows, school_rows, mode_rows, route_rows = [], [], [], []
     for scenario, matching in match_sample(
         student_xy,
         student_lsoa,
@@ -302,7 +307,33 @@ def score_sample(
             {"scenario": scenario, "mode": mode, "students": students}
             for mode, students in modes.items()
         ]
-    return rows, school_rows, mode_rows
+        if scenario == "with routes":
+            # A route's riders are counted as a school's intake is, over the
+            # route axis of the matching.
+            riders_a, riders_b = school_intake(
+                matching[:, 1], disadvantaged, len(routes)
+            )
+            route_rows = [
+                {
+                    "route": route,
+                    "LSOA21CD": lsoa,
+                    "school": name,
+                    "capacity": capacity,
+                    "disadvantaged": a,
+                    "other": b,
+                }
+                for route, lsoa, name, capacity, a, b in zip(
+                    routes["route_id"],
+                    routes["LSOA21CD"],
+                    secondary_schools["EstablishmentName"].to_numpy()[
+                        routes["school_idx"]
+                    ],
+                    routes["capacity"],
+                    riders_a,
+                    riders_b,
+                )
+            ]
+    return rows, school_rows, mode_rows, route_rows
 
 
 def settings_routes(
@@ -350,6 +381,7 @@ def settings_routes(
         progressivity=settings.progressivity,
         linear=linear,
         disadvantage=disadvantage,
+        shortest_only=settings.shortest_only,
     )
 
 
@@ -363,7 +395,8 @@ def score_settings(
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
-) -> tuple[list[dict], list[dict], list[dict]]:
+    utilisation: bool = False,
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Score every sample at one setting of the parameters.
 
     Lives here rather than in `__main__` so worker processes can import it:
@@ -396,18 +429,24 @@ def score_settings(
         `score_sample`, and sets each sample's disadvantaged group with
         `disadvantaged_group` at `settings.decile`. Defaults to DISADVANTAGE.
 
+        utilisation (bool, optional): Keep the route rows. A row per seed
+        and route would run to tens of millions over a sweep of a merged
+        region's whole network, so they are kept only where read. Defaults
+        to False.
+
     Returns:
-        tuple[list[dict], list[dict], list[dict]]: The scenario, school and
-        mode rows `score_sample` returns for every sample, each tagged with
-        "seed", the scenario rows with "n_routes" as well.
+        tuple[list[dict], list[dict], list[dict], list[dict]]: The scenario,
+        school, mode and route rows `score_sample` returns for every sample,
+        each tagged with "seed", the scenario rows with "n_routes" as well.
+        The route rows are empty unless `utilisation`.
     """
     print(f"Scoring {settings}")
     routes = settings_routes(
         settings, areas, secondary_schools, round_up, linear, disadvantage
     )
-    rows, school_rows, mode_rows = [], [], []
+    rows, school_rows, mode_rows, route_rows = [], [], [], []
     for seed, (student_xy, student_lsoa, drawn) in enumerate(samples):
-        scenario_rows, intake_rows, travel_rows = score_sample(
+        scenario_rows, intake_rows, travel_rows, rider_rows = score_sample(
             student_xy,
             student_lsoa,
             areas,
@@ -427,7 +466,9 @@ def score_settings(
         rows += [{"seed": seed, "n_routes": len(routes), **r} for r in scenario_rows]
         school_rows += [{"seed": seed, **r} for r in intake_rows]
         mode_rows += [{"seed": seed, **r} for r in travel_rows]
-    return rows, school_rows, mode_rows
+        if utilisation:
+            route_rows += [{"seed": seed, **r} for r in rider_rows]
+    return rows, school_rows, mode_rows, route_rows
 
 
 def run(
@@ -470,7 +511,7 @@ def run(
     for seed, (student_xy, student_lsoa, drawn) in enumerate(
         student_samples(areas, sizes, n_seeds)
     ):
-        scenario_rows, _, _ = score_sample(
+        scenario_rows, _, _, _ = score_sample(
             student_xy,
             student_lsoa,
             areas,

@@ -140,6 +140,23 @@ def test_build_routes_leaves_a_pair_holding_no_seat_unrouted(capsys):
     )
 
 
+def test_build_routes_keeps_only_the_shortest_route_holding_a_seat_of_each_school():
+    # Districts at 0, 10km and 20km, schools at 0, 10km and 50km. School 0 is
+    # nearest district 1, whose pair holds no seat, so it keeps district 2.
+    # School 1 lies 10km from districts 0 and 2 and keeps the first. School 2
+    # holds no seat for any district, so it keeps no route.
+    districts = make_areas([1, 1, 1])
+    school_xy = np.array([[0.0, 0.0], [10_000.0, 0.0], [50_000.0, 0.0]])
+    seats = np.array([[30, 30, 0], [0, 30, 0], [30, 30, 0]], dtype=np.int32)
+
+    routes = br.build_routes(districts, school_xy, 0.0, seats, shortest_only=True)
+
+    np.testing.assert_array_equal(routes["district_idx"], [0, 2])
+    np.testing.assert_array_equal(routes["school_idx"], [1, 0])
+    np.testing.assert_array_equal(routes["capacity"], [30, 30])
+    np.testing.assert_array_equal(routes["route_id"], [0, 1])
+
+
 # --------------------------------------------------------------------------
 # route_network
 # --------------------------------------------------------------------------
@@ -407,6 +424,28 @@ def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrou
     out = capsys.readouterr().out
     assert "No secondary school beyond" not in out
     assert "2 districts at IDACI decile 3 or below, 1 of them" in out
+
+
+def test_route_network_keeps_each_schools_shortest_route_on_its_usual_seats(capsys):
+    # School 0 is nearest district 1 and school 1 ties districts 0 and 2,
+    # keeping the first. District 2 is nearest no school, which is not the
+    # distance condition leaving it unrouted, so it is not named as such. Each
+    # route holds 5 * 100 * 10 / 30 = 166.7 seats, as in the whole network.
+    areas = make_areas([1, 1, 1])
+
+    routes = network(areas, shortest_only=True)
+
+    np.testing.assert_array_equal(routes["district_idx"], [0, 1])
+    np.testing.assert_array_equal(routes["school_idx"], [1, 0])
+    np.testing.assert_array_equal(routes["capacity"], [167, 167])
+    out = capsys.readouterr().out
+    assert "No secondary school beyond" not in out
+    assert "each school keeping only its route to the nearest district" in out
+    whole = network(areas)
+    columns = ["district_idx", "school_idx", "capacity"]
+    assert set(routes[columns].itertuples(index=False)) <= set(
+        whole[columns].itertuples(index=False)
+    )
 
 
 # --------------------------------------------------------------------------

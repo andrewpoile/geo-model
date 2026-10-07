@@ -275,9 +275,13 @@ def sweep(
             scored = list(pool.map(score, [settings for _, settings in cells]))
 
     rows, school_rows, mode_rows = [], [], []
-    for (parameter, settings), cell_rows in zip(cells, scored):
+    # The route rows are left empty, since `score_settings` keeps them only
+    # when asked.
+    for (parameter, settings), (*cell_rows, _) in zip(cells, scored):
         cell = {"parameter": parameter, "value": getattr(settings, parameter)}
-        for tagged, untagged in zip((rows, school_rows, mode_rows), cell_rows):
+        for tagged, untagged in zip(
+            (rows, school_rows, mode_rows), cell_rows, strict=True
+        ):
             tagged += [{**cell, **r} for r in untagged]
 
     results, schools, modes = (

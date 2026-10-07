@@ -93,7 +93,7 @@ def run(
     for seed, (student_xy, student_lsoa, drawn) in enumerate(
         student_samples(areas, sizes, n_seeds)
     ):
-        _, _, mode_rows = score_sample(
+        _, _, mode_rows, _ = score_sample(
             student_xy,
             student_lsoa,
             areas,

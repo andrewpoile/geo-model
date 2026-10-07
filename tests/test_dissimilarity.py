@@ -74,7 +74,7 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
     )
     student_xy, student_lsoa, disadvantaged = next(ds.student_samples(areas, sizes, 1))
 
-    rows, school_rows, mode_rows = ds.score_sample(
+    rows, school_rows, mode_rows, route_rows = ds.score_sample(
         student_xy,
         student_lsoa,
         areas,
@@ -83,7 +83,9 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
         disadvantaged,
         ld.load_nts_mode_shares(),
     )
-    rows, intake, modes = map(pd.DataFrame, (rows, school_rows, mode_rows))
+    rows, intake, modes, riders = map(
+        pd.DataFrame, (rows, school_rows, mode_rows, route_rows)
+    )
 
     assert list(rows["scenario"]) == ["with routes", "without routes"]
     assert rows["dissimilarity"].between(0, 1).all()
@@ -136,6 +138,20 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
     on_route = modes[modes["mode"] == "route"].set_index("scenario")["students"]
     assert on_route["with routes"] > 0
     assert on_route["without routes"] == 0
+
+    # Every route of the routed matching has its riders counted, none more
+    # than its seats, and together they are the students seated on a route.
+    pd.testing.assert_series_equal(
+        riders["route"], routes["route_id"], check_names=False, check_dtype=False
+    )
+    np.testing.assert_array_equal(riders["capacity"], routes["capacity"])
+    used = riders["disadvantaged"] + riders["other"]
+    assert (used <= riders["capacity"]).all()
+    assert used.sum() == on_route["with routes"]
+    assert (
+        riders["disadvantaged"].sum()
+        <= intake.groupby("scenario")["disadvantaged"].sum()["with routes"]
+    )
 
 
 # --------------------------------------------------------------------------

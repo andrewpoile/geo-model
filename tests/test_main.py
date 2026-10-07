@@ -286,7 +286,7 @@ def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
     matchings = sweep_main.settings_matchings(
         sweep_main.DEFAULTS, samples[0], areas, schools, disadvantage=disadvantage
     )
-    rows, _, _ = score_settings(
+    rows, _, _, route_rows = score_settings(
         sweep_main.DEFAULTS,
         samples,
         areas,
@@ -294,6 +294,8 @@ def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
         shares,
         disadvantage=disadvantage,
     )
+    # The route rows are kept only when asked for.
+    assert route_rows == []
 
     _, student_lsoa, drawn = samples[0]
     disadvantaged = disadvantaged_group(

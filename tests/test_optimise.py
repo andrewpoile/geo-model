@@ -33,7 +33,7 @@ def scored_rows(dissimilarity: float, car: tuple[float, float]):
         {"seed": 0, "scenario": scenario, "mode": "car", "students": students}
         for scenario, students in zip(("without routes", "with routes"), car)
     ]
-    return results, [], modes
+    return results, [], modes, []
 
 
 # --------------------------------------------------------------------------
@@ -488,6 +488,76 @@ def test_draw_school_intake_centres_the_terms_on_the_largest_drawn():
 
 
 # --------------------------------------------------------------------------
+# route_utilisation, utilisation_summary and draw_route_utilisation
+# --------------------------------------------------------------------------
+
+
+def route_rows(n_routes: int = 2) -> pd.DataFrame:
+    """Route rows over two seeds: route r holds 4 + r seats, and in seed s
+    carries r + s disadvantaged riders and 1 other."""
+    return pd.DataFrame(
+        [
+            {
+                "seed": seed,
+                "route": route,
+                "LSOA21CD": f"E{route:08d}",
+                "school": f"School {route}",
+                "capacity": 4 + route,
+                "disadvantaged": route + seed,
+                "other": 1,
+            }
+            for seed in (0, 1)
+            for route in range(n_routes)
+        ]
+    )
+
+
+def test_route_utilisation_averages_each_routes_riders_over_seeds():
+    per_route = op.route_utilisation(route_rows())
+
+    # Route 1 holds more seats, so it comes first.
+    np.testing.assert_array_equal(per_route["route"], [1, 0])
+    np.testing.assert_array_equal(per_route["capacity"], [5, 4])
+    np.testing.assert_array_equal(per_route["disadvantaged"], [1.5, 0.5])
+    np.testing.assert_array_equal(per_route["other"], [1.0, 1.0])
+    np.testing.assert_array_equal(per_route["used"], [2.5, 1.5])
+    np.testing.assert_array_equal(per_route["unused"], [2.5, 2.5])
+    np.testing.assert_array_equal(per_route["utilisation"], [0.5, 0.375])
+
+
+def test_utilisation_summary_totals_the_seats_and_those_used():
+    assert op.utilisation_summary(route_rows()) == (
+        "2 routes provide 9 seats, 4.0 of them used, the mean over seeds (44.4%)."
+    )
+
+
+@pytest.mark.parametrize(
+    ("n_routes", "labelled"), [(2, True), (op.MAX_LABELLED_ROUTES + 1, False)]
+)
+def test_draw_route_utilisation_stacks_the_riders_below_the_unused_seats(
+    n_routes, labelled
+):
+    fig = Figure()
+    op.draw_route_utilisation(fig, route_rows(n_routes))
+    ax = fig.axes[0]
+
+    per_route = op.route_utilisation(route_rows(n_routes))
+    bars = ax.containers[:3]
+    heights = np.array([[bar.get_height() for bar in stack] for stack in bars])
+    # Disadvantaged riders, then the others, then the unused seats, so every
+    # bar stands at its route's seats.
+    np.testing.assert_allclose(heights[0], per_route["disadvantaged"])
+    np.testing.assert_allclose(heights[1], per_route["other"])
+    np.testing.assert_allclose(heights.sum(axis=0), per_route["capacity"])
+    labels = [tick.get_text() for tick in ax.get_xticklabels()]
+    if labelled:
+        assert labels == ["E00000001 → School 1", "E00000000 → School 0"]
+    else:
+        assert labels == []
+        assert ax.get_xlabel() == "Routes, by seats provided"
+
+
+# --------------------------------------------------------------------------
 # compare: against the real data folder
 # --------------------------------------------------------------------------
 
@@ -497,16 +567,18 @@ def test_compare_scores_and_plots_the_setting_against_no_routes(secondary, tmp_p
     samples, areas, schools, shares = secondary
     settings = replace(DEFAULTS, capacity_scale=2.0, progressivity=0.5)
 
-    results, intake, modes = op.compare(
+    results, intake, modes, routes = op.compare(
         settings, samples, areas, schools, shares, tmp_path
     )
 
-    rows, school_rows, mode_rows = score_settings(
-        settings, samples, areas, schools, shares
+    rows, school_rows, mode_rows, route_rows = score_settings(
+        settings, samples, areas, schools, shares, utilisation=True
     )
     pd.testing.assert_frame_equal(results, pd.DataFrame(rows))
     pd.testing.assert_frame_equal(intake, pd.DataFrame(school_rows))
     pd.testing.assert_frame_equal(modes, pd.DataFrame(mode_rows))
+    pd.testing.assert_frame_equal(routes, pd.DataFrame(route_rows))
+    assert len(routes) == results["n_routes"].iloc[0] * len(samples)
     assert list(results["scenario"]) == ["with routes", "without routes"]
     for name in (
         op.DISSIMILARITY_PNG,
@@ -515,6 +587,7 @@ def test_compare_scores_and_plots_the_setting_against_no_routes(secondary, tmp_p
         op.MODES_PNG,
         op.LORENZ_PNG,
         op.MAP_PNG,
+        op.ROUTES_PNG,
     ):
         assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 

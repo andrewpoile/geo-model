@@ -87,6 +87,10 @@ INTAKE_PNG = "intake.png"
 MODES_PNG = "car_displacement.png"
 LORENZ_PNG = "lorenz.png"
 MAP_PNG = "map.png"
+ROUTES_PNG = "route_utilisation.png"
+
+# Past this many routes the utilisation bars go unlabelled, too narrow to name.
+MAX_LABELLED_ROUTES = 40
 
 # Several samples rather than the 30 `dissimilarity` draws, since every
 # candidate scores them all. The comparison is drawn on HELD_OUT_SEEDS more,
@@ -108,7 +112,7 @@ LEVERS = [
     "local_radius",
 ]
 
-Scored = tuple[list[dict], list[dict], list[dict]]
+Scored = tuple[list[dict], list[dict], list[dict], list[dict]]
 
 
 class Objective(NamedTuple):
@@ -214,7 +218,7 @@ def bounds(parameter: str) -> tuple[float, float]:
 def objective_values(scored: Scored, objectives: list[str]) -> dict[str, float]:
     """Each of `objectives`, keys of OBJECTIVES, measured on `scored`, the
     rows `score_settings` returns."""
-    results, schools, modes = (pd.DataFrame(rows) for rows in scored)
+    results, schools, modes = (pd.DataFrame(rows) for rows in scored[:3])
     return {
         name: OBJECTIVES[name].score(results, schools, modes) for name in objectives
     }
@@ -593,6 +597,122 @@ def draw_school_intake(
     ax.tick_params(axis="y", rotation=0)
 
 
+def route_utilisation(routes: pd.DataFrame) -> pd.DataFrame:
+    """Each route's seats and the riders it carries, the mean over seeds.
+
+    Args:
+        routes (pd.DataFrame): The route rows of one setting, as
+        `score_settings` returns them with `utilisation`.
+
+    Returns:
+        pd.DataFrame: One row per route, with "route", "LSOA21CD", "school"
+        and "capacity", the mean "disadvantaged", "other" and "used"
+        riders, the "unused" seats (capacity less those used) and
+        "utilisation" (used over capacity), the routes with the most seats
+        first.
+    """
+    per_route = (
+        routes.assign(used=routes["disadvantaged"] + routes["other"])
+        .groupby(["route", "LSOA21CD", "school", "capacity"], as_index=False)[
+            ["disadvantaged", "other", "used"]
+        ]
+        .mean()
+    )
+    # A route is only built holding a seat, so no capacity is 0.
+    return per_route.assign(
+        unused=per_route["capacity"] - per_route["used"],
+        utilisation=per_route["used"] / per_route["capacity"],
+    ).sort_values(["capacity", "route"], ascending=[False, True], ignore_index=True)
+
+
+def utilisation_summary(routes: pd.DataFrame) -> str:
+    """The seats every route provides and the share of them used, as a line
+    to print, from the route rows of one setting."""
+    per_route = route_utilisation(routes)
+    seats, used = per_route["capacity"].sum(), per_route["used"].sum()
+    return (
+        f"{len(per_route)} routes provide {seats} seats, {used:.1f} of them "
+        f"used, the mean over seeds ({used / seats:.1%})."
+    )
+
+
+def draw_route_utilisation(fig: Figure, routes: pd.DataFrame) -> None:
+    """Fill `fig` with a bar per route: the seats its disadvantaged and its
+    other riders take, the mean over seeds, stacked below its unused seats,
+    so every bar stands at the seats the route provides.
+
+    The used seats carry the seeds' range. Routes are ordered as
+    `route_utilisation` orders them, and named by district and school up to
+    MAX_LABELLED_ROUTES of them.
+
+    Args:
+        fig (Figure): Figure to draw on, using constrained layout.
+
+        routes (pd.DataFrame): The route rows of one setting, as
+        `score_settings` returns them with `utilisation`.
+    """
+    per_route = route_utilisation(routes)
+    used = routes.assign(used=routes["disadvantaged"] + routes["other"]).groupby(
+        "route"
+    )["used"]
+    low = used.min().reindex(per_route["route"]).to_numpy()
+    high = used.max().reindex(per_route["route"]).to_numpy()
+    mean = per_route["used"].to_numpy()
+    labelled = len(per_route) <= MAX_LABELLED_ROUTES
+    x = np.arange(len(per_route))
+
+    ax = fig.subplots()
+    bottom = np.zeros(len(per_route))
+    for column, colour, label in (
+        (
+            "disadvantaged",
+            GROUP_COLOURS["disadvantaged, with routes"],
+            "disadvantaged riders",
+        ),
+        ("other", GROUP_COLOURS["other, with routes"], "other riders"),
+        ("unused", "#e1e0d9", "unused seats"),
+    ):
+        ax.bar(
+            x,
+            per_route[column],
+            0.8,
+            bottom=bottom,
+            color=colour,
+            # White edges would hide bars too narrow to label.
+            edgecolor="white",
+            linewidth=0.5 if labelled else 0,
+            label=label,
+        )
+        bottom += per_route[column].to_numpy()
+    ax.errorbar(
+        x,
+        mean,
+        yerr=[mean - low, high - mean],
+        fmt="none",
+        ecolor=INK,
+        elinewidth=1,
+        capsize=2 if labelled else 0,
+        label="seeds' range of seats used",
+    )
+    if labelled:
+        ax.set_xticks(
+            x,
+            per_route["LSOA21CD"] + " → " + per_route["school"],
+            rotation=90,
+            fontsize="small",
+        )
+    else:
+        ax.set_xticks([])
+        ax.set_xlabel("Routes, by seats provided")
+    ax.set_xlim(-0.5, len(per_route) - 0.5)
+    # Above the axis, where no bar reaches.
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1), ncol=2, frameon=False)
+    ax.set_ylabel("Seats on route (mean over seeds)")
+    ax.yaxis.grid(True, color="#e1e0d9")
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+
 def compare(
     settings: Settings,
     samples: list[Sample],
@@ -605,16 +725,17 @@ def compare(
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
     measure: str = "dissimilarity",
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and plot the
     two against each other in `out_dir`.
 
     Draws every metric the sweep draws: the index per scenario to
     DISSIMILARITY_PNG, who is left unassigned to UNASSIGNED_PNG, each
     school's intake to INTAKE_PNG and the expected modes and their change to
-    MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, and a map of the
-    first sample's two matchings to MAP_PNG. Each plot the scripts share is
-    drawn with the function its own script uses.
+    MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map of the
+    first sample's two matchings to MAP_PNG, and the seats each route
+    provides and its riders take to ROUTES_PNG. Each plot the scripts share
+    is drawn with the function its own script uses.
 
     Args:
         settings (Settings): The parameter values to compare.
@@ -646,12 +767,13 @@ def compare(
         heatmap shows. Defaults to "dissimilarity".
 
     Returns:
-        tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: The scenario, school
-        and mode rows `score_settings` returns.
+        tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]: The
+        scenario, school, mode and route rows `score_settings` returns with
+        `utilisation`.
     """
     if not samples:
         raise ValueError("No student sample to compare on.")
-    results, schools, modes = (
+    results, schools, modes, routes = (
         pd.DataFrame(rows)
         for rows in score_settings(
             settings,
@@ -663,6 +785,7 @@ def compare(
             round_up,
             linear,
             disadvantage,
+            utilisation=True,
         )
     )
     plot_dissimilarity(results, out_dir / DISSIMILARITY_PNG)
@@ -693,7 +816,13 @@ def compare(
         ),
         out_dir / MAP_PNG,
     )
-    return results, schools, modes
+    n_routes = routes["route"].nunique()
+    fig = Figure(
+        figsize=(min(max(8.0, 2 + 0.3 * n_routes), 30.0), 9), layout="constrained"
+    )
+    draw_route_utilisation(fig, routes)
+    save(fig, out_dir / ROUTES_PNG)
+    return results, schools, modes, routes
 
 
 def plot_front(
@@ -856,7 +985,7 @@ def search(
     print("Compromise setting:")
     print(chosen.round(3).to_string())
 
-    results, _, modes = compare(
+    results, _, modes, routes = compare(
         replace(DEFAULTS, **cast({p: chosen[p] for p in args.parameters})),
         held_out,
         areas,
@@ -885,6 +1014,7 @@ def search(
     print(
         mode_change(modes).groupby("mode")["change"].mean()[MODES].round(1).to_string()
     )
+    print(utilisation_summary(routes))
 
     plots = [
         DISSIMILARITY_PNG,
@@ -893,6 +1023,7 @@ def search(
         MODES_PNG,
         LORENZ_PNG,
         MAP_PNG,
+        ROUTES_PNG,
     ]
     if len(args.objectives) == 2:
         plot_front(

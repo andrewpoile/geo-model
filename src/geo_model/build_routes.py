@@ -53,6 +53,10 @@ LINEAR_PROGRESSIVITY = False
 # not built. True rounds up instead, so every route keeps at least one seat.
 ROUND_UP_SEATS = False
 
+# True keeps, for each school, only its route to the nearest district holding
+# a seat on one, so every school offers a single route.
+SHORTEST_ROUTE_ONLY = False
+
 # A route carries a student past their local schools, so a district already
 # within reach of a school performing above this needs none. P8MEA is centred
 # on the England average, so 0 is an average school.
@@ -110,13 +114,16 @@ def build_routes(
     school_xy: np.ndarray,
     min_distance: float,
     capacity: np.ndarray,
+    shortest_only: bool = False,
 ) -> pd.DataFrame:
     """Build the routes connecting route-eligible districts to schools.
 
     A route joins one district to one school, so the route set is the subset of
     (district, school) pairs lying more than `min_distance` apart and holding
     at least one seat. Distance is measured from the population centroid of the
-    district, the point its students are sampled around, to the school.
+    district, the point its students are sampled around, to the school. With
+    `shortest_only` each school keeps only the shortest of its routes, the
+    first district winning a tie.
 
     Args:
         districts (gpd.GeoDataFrame): Route-eligible districts, carrying an
@@ -134,6 +141,9 @@ def build_routes(
         would hold, shape (n_districts, n_schools). A pair with no seat is not
         routed.
 
+        shortest_only (bool, optional): Keep only each school's shortest
+        route. Defaults to False.
+
     Returns:
         pd.DataFrame: One row per route, with columns "route_id" (contiguous
         from 0, the route axis `fast_DAT` indexes), "district_idx", "LSOA21CD",
@@ -146,7 +156,12 @@ def build_routes(
             f"{(far & ~seated).sum()} of the {far.sum()} routes beyond "
             f"{min_distance}m would hold no seat, so are not built."
         )
-    district_pos, school_idx = np.nonzero(far & seated)
+    routed = far & seated
+    if shortest_only:
+        # A school with no route has every distance masked, and stays unrouted.
+        nearest = np.where(routed, distances, np.inf).argmin(axis=0)
+        routed &= np.arange(len(districts))[:, None] == nearest
+    district_pos, school_idx = np.nonzero(routed)
 
     return pd.DataFrame(
         {
@@ -174,6 +189,7 @@ def route_network(
     progressivity: float = ROUTE_PROGRESSIVITY,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
+    shortest_only: bool = SHORTEST_ROUTE_ONLY,
 ) -> pd.DataFrame:
     """Select the route-eligible districts of `areas` and route them to schools.
 
@@ -254,6 +270,10 @@ def route_network(
 
         disadvantage (str, optional): One of DISADVANTAGE_CHOICES, which sets
         who may ride a route. Defaults to DISADVANTAGE.
+
+        shortest_only (bool, optional): Keep only each school's route to the
+        nearest route-eligible district holding a seat on one, its seats as
+        any route's. Defaults to SHORTEST_ROUTE_ONLY.
 
     Returns:
         pd.DataFrame: The route set, as returned by `build_routes`.
@@ -337,7 +357,7 @@ def route_network(
     )
     capacity = (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int32)
 
-    routes = build_routes(eligible, school_xy, min_distance, capacity)
+    routes = build_routes(eligible, school_xy, min_distance, capacity, shortest_only)
     if routes.empty:
         raise EmptyRouteSet(
             f"No school lies more than {min_distance}m from any of the "
@@ -350,9 +370,10 @@ def route_network(
     # real result at a large min_distance or a small capacity_scale rather than
     # an error, but it is silent, so it is named here. Districts the
     # performance condition excludes are counted in the summary instead, since
-    # it excludes them by the dozen.
+    # it excludes them by the dozen. Under `shortest_only` most districts are
+    # nearest no school, which leaves them unrouted for that reason instead.
     unrouted = eligible.loc[~eligible.index.isin(routes["district_idx"]), "LSOA21CD"]
-    if len(unrouted):
+    if len(unrouted) and not shortest_only:
         print(
             f"No secondary school beyond {min_distance}m holds a seat on a "
             "route, so no routes: " + ", ".join(unrouted)
@@ -363,7 +384,12 @@ def route_network(
         f"below, {len(eligible)} of them with no school above Progress 8 "
         f"{max_local_p8} within {local_radius}m, {len(routes)} routes to "
         f"{len(school_xy)} secondary schools, "
-        f"{len(routes) / len(eligible):.1f} per district."
+        f"{len(routes) / len(eligible):.1f} per district"
+        + (
+            ", each school keeping only its route to the nearest district."
+            if shortest_only
+            else "."
+        )
     )
     return routes
 
