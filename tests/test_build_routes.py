@@ -131,6 +131,52 @@ def test_bottleneck_pairs_rejects_schools_that_cannot_each_have_a_district():
 
 
 # --------------------------------------------------------------------------
+# largest_first_pairs
+# --------------------------------------------------------------------------
+
+
+def test_largest_first_pairs_gives_the_first_district_the_school_of_most_places():
+    # District 0 is nearer school 0 but takes school 1, which offers more
+    # places, leaving district 1 school 0.
+    pairs = br.largest_first_pairs(
+        np.array([[1.0, 9.0], [2.0, 3.0]]), np.array([100, 200])
+    )
+
+    np.testing.assert_array_equal(pairs, [[False, True], [True, False]])
+
+
+def test_largest_first_pairs_skips_a_barred_school():
+    # District 0 is barred from school 1, so takes school 0.
+    inf = np.inf
+    pairs = br.largest_first_pairs(
+        np.array([[1.0, inf], [5.0, 5.0]]), np.array([100, 200])
+    )
+
+    np.testing.assert_array_equal(pairs, [[True, False], [False, True]])
+
+
+def test_largest_first_pairs_gives_a_tie_in_places_to_the_nearer_school():
+    pairs = br.largest_first_pairs(
+        np.array([[5.0, 2.0], [1.0, 1.0]]), np.array([100, 100])
+    )
+
+    np.testing.assert_array_equal(pairs, [[False, True], [True, False]])
+
+
+def test_largest_first_pairs_rejects_a_district_left_no_school():
+    # District 0 takes school 1, which district 1 alone may be paired with,
+    # though pairing district 0 with school 0 would have served both.
+    inf = np.inf
+    with pytest.raises(ValueError, match="turn 2 of 2 finds every school"):
+        br.largest_first_pairs(np.array([[1.0, 2.0], [inf, 2.0]]), np.array([100, 200]))
+
+
+def test_largest_first_pairs_rejects_fewer_districts_than_schools():
+    with pytest.raises(ValueError, match="1 districts for 2 schools"):
+        br.largest_first_pairs(np.array([[1.0, 2.0]]), np.array([100, 200]))
+
+
+# --------------------------------------------------------------------------
 # build_routes
 # --------------------------------------------------------------------------
 
@@ -580,9 +626,43 @@ def test_route_network_pairs_each_school_with_one_of_the_lowest_ranked_districts
     assert "the longest route 25000m" in out
 
 
-def test_route_network_rejects_shortest_only_and_bottleneck_together():
+def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(capsys):
+    # Districts at 0, 10, 20 and 30km hold 1, 9, 5 and 5 disadvantaged
+    # students. District 1 is routed on its count, and district 3 wins the tie
+    # with district 2 on its lower rank; district 0, of lowest rank, is not
+    # routed, nor does the decile matter. District 1 takes its turn first and
+    # takes school 1, at 5km, which offers more places than school 0, leaving
+    # district 3 school 0, though the other way round the longest route would
+    # be shorter. Each route holds all 1 * places * 20 / 40 seats of its
+    # school.
+    areas = make_areas([1, 5, 1, 5], scores=[0.1, 0.9, 0.5, 0.5], ranks=[1, 4, 3, 2])
+
+    routes = network(
+        areas,
+        np.array([[0.0, 0.0], [5_000.0, 0.0]]),
+        school_places=np.array([100, 200]),
+        largest_first=True,
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [1, 3])
+    np.testing.assert_array_equal(routes["school_idx"], [1, 0])
+    np.testing.assert_array_equal(routes["capacity"], [100, 50])
+    out = capsys.readouterr().out
+    assert "2 districts holding the most disadvantaged students" in out
+    assert "each paired with the free school offering the most places" in out
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        {"shortest_only": True, "bottleneck": True},
+        {"shortest_only": True, "largest_first": True},
+        {"bottleneck": True, "largest_first": True},
+    ],
+)
+def test_route_network_rejects_two_one_route_rules_together(rules):
     with pytest.raises(ValueError, match="only one may be set"):
-        network(make_areas([1, 1]), shortest_only=True, bottleneck=True)
+        network(make_areas([1, 1]), **rules)
 
 
 # --------------------------------------------------------------------------
