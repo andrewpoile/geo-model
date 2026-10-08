@@ -1,6 +1,6 @@
 """Scenario 1: every school offers a single route, its shortest, to the
-route-eligible districts, with no condition on distance or on nearby schools
-and seats on each district's fair share alone.
+route-eligible districts, with no condition on distance or on nearby schools,
+holding all of the school's route seats.
 
 The scenario's students are matched with and without routes over fresh
 samples, and every plot `optimise` draws of a setting is drawn of it.
@@ -42,10 +42,10 @@ ROUTE_UTILISATION_CSV = "route_utilisation.csv"
 
 N_SEEDS = 100
 
-# A route to any school however near, seats on every district's fair share
-# alone, and no school scoring above Progress 8 infinity, so no district is
-# served by its local schools and the local radius is inert. Each school keeps
-# only its route to the nearest district.
+# A route to any school however near, and no school scoring above Progress 8
+# infinity, so no district is served by its local schools and the local radius
+# is inert. Each school keeps only its route to the nearest district, which
+# holds all of the school's route seats, so progressivity is inert too.
 SCENARIO = replace(
     DEFAULTS,
     min_distance=0.0,
@@ -53,8 +53,8 @@ SCENARIO = replace(
     max_local_p8=np.inf,
     shortest_only=True,
 )
-# Seats are rounded up, so a school's shortest route keeps a seat where its
-# fair share falls below half of one.
+# Seats are rounded up, so a school's shortest route keeps a seat where the
+# school's route seats fall below half of one.
 ROUND_UP = True
 
 
@@ -68,8 +68,8 @@ def main() -> None:
         "--capacity-scale",
         type=float,
         default=SCENARIO.capacity_scale,
-        help="seats on a route as a multiple of its district's fair share of "
-        "the places its school offers",
+        help="seats on a school's route as a multiple of the disadvantaged "
+        "students' fair share of the places it offers",
     )
     parser.add_argument(
         "--years",
@@ -88,8 +88,8 @@ def main() -> None:
         "--round-up-seats",
         action=argparse.BooleanOptionalAction,
         default=ROUND_UP,
-        help="round route seats up, so every route keeps one, rather than to "
-        "the nearest seat, which leaves a route rounding to none unbuilt",
+        help="round each school's route seats up rather than to the nearest "
+        "seat, before they are split between its routes",
     )
     parser.add_argument(
         "--disadvantage",

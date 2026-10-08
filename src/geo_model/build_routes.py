@@ -13,14 +13,13 @@ DISADVANTAGED_DECILE = 3
 
 # Who is disadvantaged, and who may ride a route leaving their district:
 #   "score"       Each LSOA's students are drawn disadvantaged in proportion to
-#                 its IDACI score, and only they ride, so a route's seats are
-#                 sized on its district's disadvantaged cohort.
+#                 its IDACI score, and only they ride.
 #   "score-open"  Drawn the same way, but every student of a route's district
-#                 rides, as the SCT model's district-level routes, so seats are
-#                 sized on the district's whole cohort.
+#                 rides, as the SCT model's district-level routes.
 #   "decile"      Every student of an LSOA at or below the decile is
-#                 disadvantaged and rides, seats sized on the whole cohort: the
-#                 model as it was before the scores were drawn from.
+#                 disadvantaged and rides: the model as it was before the
+#                 scores were drawn from.
+# Under every choice route seats are sized on the disadvantaged students.
 DISADVANTAGE_CHOICES = ("score", "score-open", "decile")
 DISADVANTAGE = "score"
 
@@ -29,28 +28,32 @@ DISADVANTAGE = "score"
 # rights to free home-to-school travel held by low-income 11-16 year olds.
 MIN_ROUTE_DISTANCE = 3218
 
-# Seats on a route, as a multiple of its district's fair share of the Year 7
-# places the school offers: k * places * n_d / N, with n_d the district's Year
-# 7 cohort and N the region's. At 1 a route holds the seats its district would
-# take at the school if every intake matched the region's mix. Route
-# capacities are exogenous to the SCT instance.
+# Seats on the routes into a school, as a multiple of the disadvantaged
+# students' fair share of the Year 7 places it offers: k * places * D / N, with
+# D the region's disadvantaged students and N its Year 7 cohort. At 1 a
+# school's routes hold the seats its disadvantaged students would take if
+# every intake matched the region's mix. The seats are split between the
+# school's routes in proportion to the disadvantaged students of each route's
+# district. Route capacities are exogenous to the SCT instance.
 ROUTE_CAPACITY_SCALE = 5.0
 
-# How far a route's seats lean towards the more deprived districts, p >= 0.
-# A district at IDACI decile D at or below the threshold T is weighted f(D)^p,
-# f running from 1 at decile 1 to 1 / T at decile T, so 0 seats every district
-# on its fair share alone and p weights decile 1 T^p times decile T. The
-# weights are rescaled to a cohort-weighted mean of 1 over the route-eligible
-# districts, so they move seats between districts without changing how many
-# there are.
+# How far a school's route seats lean towards the more deprived districts,
+# p >= 0. A district at IDACI decile D at or below the threshold T is weighted
+# f(D)^p, f running from 1 at decile 1 to 1 / T at decile T, so 0 splits a
+# school's seats on its routes' disadvantaged students alone and p weights
+# decile 1 T^p times decile T. The weights only split each school's seats
+# between its routes, so they move seats between districts without changing
+# how many the school holds.
 ROUTE_PROGRESSIVITY = 1.0
 
 # The profile f of the progressive weight: 1 / D, or with True the linear
 # (T + 1 - D) / T. The two agree at deciles 1 and T and differ between them.
 LINEAR_PROGRESSIVITY = False
 
-# Seats are rounded to the nearest whole seat, and a route rounding to none is
-# not built. True rounds up instead, so every route keeps at least one seat.
+# A school's route seats are rounded to the nearest whole seat, then split
+# between its routes by largest remainder, so they sum to it exactly, and a
+# route apportioned none is not built. True rounds each school's seats up
+# instead, so a school with a route keeps at least one seat on it.
 ROUND_UP_SEATS = False
 
 # True keeps, for each school, only its route to the nearest district holding
@@ -109,21 +112,49 @@ def disadvantaged_cohort(areas: pd.DataFrame, sizes: np.ndarray) -> np.ndarray:
     return np.rint(areas["IDACI Score"].to_numpy() * sizes).astype(np.int64)
 
 
+def apportion(quotas: np.ndarray, totals: np.ndarray) -> np.ndarray:
+    """Round each column of `quotas` to whole seats summing to its total.
+
+    By largest remainder: every entry takes the floor of its quota, and the
+    seats a column still lacks go one each to its largest remainders, the
+    first row winning a tie.
+
+    Args:
+        quotas (np.ndarray): Non-negative quotas, shape (n_rows, n_columns),
+        each column summing to its total.
+
+        totals (np.ndarray): Whole seats in each column, shape (n_columns,).
+
+    Returns:
+        np.ndarray: Whole seats, shape (n_rows, n_columns), each column
+        summing to its total.
+    """
+    seats = np.floor(quotas)
+    order = np.argsort(seats - quotas, axis=0, kind="stable")
+    rank = np.empty_like(order)
+    np.put_along_axis(rank, order, np.arange(len(quotas))[:, None], axis=0)
+    return (seats + (rank < totals - seats.sum(axis=0))).astype(np.int32)
+
+
 def build_routes(
     districts: gpd.GeoDataFrame,
     school_xy: np.ndarray,
     min_distance: float,
-    capacity: np.ndarray,
+    weight: np.ndarray,
+    school_seats: np.ndarray,
     shortest_only: bool = False,
 ) -> pd.DataFrame:
     """Build the routes connecting route-eligible districts to schools.
 
     A route joins one district to one school, so the route set is the subset of
-    (district, school) pairs lying more than `min_distance` apart and holding
-    at least one seat. Distance is measured from the population centroid of the
-    district, the point its students are sampled around, to the school. With
-    `shortest_only` each school keeps only the shortest of its routes, the
-    first district winning a tie.
+    (district, school) pairs lying more than `min_distance` apart, the district
+    carrying some weight, and holding at least one seat. Distance is measured
+    from the population centroid of the district, the point its students are
+    sampled around, to the school. With `shortest_only` each school keeps only
+    the shortest of its routes, the first district winning a tie. A school's
+    seats are split between its routes in proportion to their districts'
+    weight, by `apportion`, so they sum to its seats exactly; a route
+    apportioned none is not built.
 
     Args:
         districts (gpd.GeoDataFrame): Route-eligible districts, carrying an
@@ -137,9 +168,12 @@ def build_routes(
         min_distance (float): Districts are routed only to schools further away
         than this, in the units of the CRS.
 
-        capacity (np.ndarray): Seats a route from each district to each school
-        would hold, shape (n_districts, n_schools). A pair with no seat is not
+        weight (np.ndarray): Each district's claim on the seats of the schools
+        it is routed to, shape (n_districts,). A district of no weight is not
         routed.
+
+        school_seats (np.ndarray): Whole seats on the routes into each school,
+        shape (n_schools,).
 
         shortest_only (bool, optional): Keep only each school's shortest
         route. Defaults to False.
@@ -150,17 +184,26 @@ def build_routes(
         "school_idx" and "capacity".
     """
     distances = spdist.cdist(centroid_xy(districts), school_xy)
-    far, seated = distances > min_distance, capacity > 0
-    if (far & ~seated).any():
-        print(
-            f"{(far & ~seated).sum()} of the {far.sum()} routes beyond "
-            f"{min_distance}m would hold no seat, so are not built."
-        )
-    routed = far & seated
+    routed = (distances > min_distance) & (np.asarray(weight) > 0)[:, None]
     if shortest_only:
         # A school with no route has every distance masked, and stays unrouted.
         nearest = np.where(routed, distances, np.inf).argmin(axis=0)
         routed &= np.arange(len(districts))[:, None] == nearest
+
+    # A school no district is routed to has no route to hold its seats.
+    share = np.where(routed, np.asarray(weight, dtype=float)[:, None], 0.0)
+    total = share.sum(axis=0)
+    held = total > 0
+    quotas = np.divide(
+        share * school_seats, total, out=np.zeros_like(share), where=held
+    )
+    capacity = apportion(quotas, np.where(held, school_seats, 0))
+    if (routed & (capacity == 0)).any():
+        print(
+            f"{(routed & (capacity == 0)).sum()} of the {routed.sum()} routes "
+            f"beyond {min_distance}m would hold no seat, so are not built."
+        )
+    routed &= capacity > 0
     district_pos, school_idx = np.nonzero(routed)
 
     return pd.DataFrame(
@@ -204,19 +247,18 @@ def route_network(
     route-eligible or not. Under every `disadvantage` but "decile" it is drawn
     from IDACI scores, so the decile does not move it either.
 
-    A route from district d to school s holds k * P_s * n_d * w_d / N seats,
-    with P_s the Year 7 places the school offers, n_d the students of the
-    district who may ride and N the region's cohort, so at k = 1 and w_d = 1
-    it holds the seats the district's riders would take at the school if
-    every intake matched the region's mix. Under
-    "score" only the district's disadvantaged students ride, so n_d is its
-    disadvantaged cohort, as `disadvantaged_cohort` gives it; otherwise every
-    student of the district rides and n_d is its whole cohort. The weight
-    w_d is (1 / D_d)^p for a district at IDACI decile D_d, or
-    ((decile + 1 - D_d) / decile)^p when `linear`, rescaled so its
-    rider-weighted mean over the route-eligible districts is 1: p moves seats
-    towards the more deprived districts without changing how many seats each
-    school offers before rounding.
+    The routes into school s hold k * P_s * D / N seats between them, with P_s
+    the Year 7 places the school offers, D the region's disadvantaged students
+    and N its cohort, so at k = 1 they hold the seats the region's
+    disadvantaged students would take at the school if every intake matched
+    the region's mix. Those seats are split between the school's routes in
+    proportion to n_d * w_d, with n_d the disadvantaged students of the route's
+    district: its `disadvantaged_cohort` under "score" and "score-open", and
+    its whole cohort under "decile", where every student of a district at or
+    below the decile is disadvantaged. The weight w_d is (1 / D_d)^p for a
+    district at IDACI decile D_d, or ((decile + 1 - D_d) / decile)^p when
+    `linear`: p moves a school's seats towards the more deprived districts
+    without changing how many it holds.
 
     Args:
         areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IDACI
@@ -244,9 +286,9 @@ def route_network(
         min_distance (float, optional): Districts are routed only to schools
         further away than this, in metres. Defaults to MIN_ROUTE_DISTANCE.
 
-        capacity_scale (float, optional): k, the seats on a route as a
-        multiple of its district's fair share of the school's places.
-        Defaults to ROUTE_CAPACITY_SCALE.
+        capacity_scale (float, optional): k, the seats on the routes into a
+        school as a multiple of the disadvantaged students' fair share of its
+        places. Defaults to ROUTE_CAPACITY_SCALE.
 
         max_local_p8 (float, optional): A district with a school scoring above
         this within `local_radius` is not route-eligible. Defaults to
@@ -256,24 +298,25 @@ def route_network(
         that its local schools are read from, in metres. Defaults to
         LOCAL_RADIUS.
 
-        round_up (bool, optional): Round seats up, so every route keeps at
-        least one, rather than to the nearest seat, which leaves a route
-        rounding to none unbuilt. Defaults to ROUND_UP_SEATS.
+        round_up (bool, optional): Round each school's route seats up rather
+        than to the nearest seat, before they are split between its routes.
+        Defaults to ROUND_UP_SEATS.
 
-        progressivity (float, optional): p >= 0, how far seats lean towards
-        the more deprived districts: 0 is flat, p weights decile 1 `decile`^p
-        times decile `decile`. Defaults to ROUTE_PROGRESSIVITY.
+        progressivity (float, optional): p >= 0, how far a school's seats lean
+        towards the more deprived districts: 0 is flat, p weights decile 1
+        `decile`^p times decile `decile`. Defaults to ROUTE_PROGRESSIVITY.
 
         linear (bool, optional): Weight by the linear profile
         (decile + 1 - D) / decile rather than by 1 / D. Defaults to
         LINEAR_PROGRESSIVITY.
 
         disadvantage (str, optional): One of DISADVANTAGE_CHOICES, which sets
-        who may ride a route. Defaults to DISADVANTAGE.
+        who is disadvantaged. Defaults to DISADVANTAGE.
 
         shortest_only (bool, optional): Keep only each school's route to the
-        nearest route-eligible district holding a seat on one, its seats as
-        any route's. Defaults to SHORTEST_ROUTE_ONLY.
+        nearest route-eligible district holding a disadvantaged student, which
+        then holds all of the school's route seats. Defaults to
+        SHORTEST_ROUTE_ONLY.
 
     Returns:
         pd.DataFrame: The route set, as returned by `build_routes`.
@@ -339,25 +382,33 @@ def route_network(
         )
 
     cohort = np.asarray(district_cohort, dtype=float)
-    riders = disadvantaged_cohort(areas, cohort) if disadvantage == "score" else cohort
-    eligible_riders = riders[eligible.index]
-    if eligible_riders.sum() == 0:
+    disadvantaged = (
+        np.where(areas["IDACI Decile"].to_numpy() <= decile, cohort, 0.0)
+        if disadvantage == "decile"
+        else disadvantaged_cohort(areas, cohort)
+    )
+    eligible_disadvantaged = disadvantaged[eligible.index]
+    if eligible_disadvantaged.sum() == 0:
         raise EmptyRouteSet(
-            f"The {len(eligible)} route-eligible districts hold no student who "
-            "may ride, so no route can hold a seat."
+            f"The {len(eligible)} route-eligible districts hold no disadvantaged "
+            "student, so no route can hold a seat."
         )
     district_decile = eligible["IDACI Decile"].to_numpy()
     rank = (decile + 1 - district_decile) / decile if linear else 1 / district_decile
-    weight = rank**progressivity
-    weight *= eligible_riders.sum() / (eligible_riders * weight).sum()
     seats = (
         capacity_scale
-        * np.outer(eligible_riders * weight, np.asarray(school_places, dtype=float))
+        * np.asarray(school_places, dtype=float)
+        * disadvantaged.sum()
         / cohort.sum()
     )
-    capacity = (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int32)
-
-    routes = build_routes(eligible, school_xy, min_distance, capacity, shortest_only)
+    routes = build_routes(
+        eligible,
+        school_xy,
+        min_distance,
+        eligible_disadvantaged * rank**progressivity,
+        (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int64),
+        shortest_only,
+    )
     if routes.empty:
         raise EmptyRouteSet(
             f"No school lies more than {min_distance}m from any of the "

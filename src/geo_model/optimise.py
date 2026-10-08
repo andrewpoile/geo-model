@@ -1103,8 +1103,8 @@ def main() -> None:
         "--round-up-seats",
         action=argparse.BooleanOptionalAction,
         default=ROUND_UP_SEATS,
-        help="round route seats up, so every route keeps one, rather than to "
-        "the nearest seat, which leaves a route rounding to none unbuilt",
+        help="round each school's route seats up rather than to the nearest "
+        "seat, before they are split between its routes",
     )
     parser.add_argument(
         "--linear-progressivity",

@@ -79,16 +79,16 @@ GRID = {
     "min_distance": [
         replace(DEFAULTS, min_distance=m) for m in (0, 1609, 3218, 4828, 6437, 8047)
     ],
-    # 1 is the fair share of the places a school offers. In Southampton the
-    # fewest places offered is 126 and the cohort 2918, so from 2918 / 126 =
-    # 23.2 every route holds its district's whole cohort and no route capacity
-    # binds.
+    # At 1 a school's routes hold the disadvantaged students' fair share of
+    # the places it offers. In Southampton 1254 of the cohort of 2918 are
+    # disadvantaged under DISADVANTAGE "score", so from 2918 / 1254 = 2.33
+    # every school's routes hold at least the places it offers.
     "capacity_scale": [
         replace(DEFAULTS, capacity_scale=k)
         for k in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 10.0, 15.0, 20.0, 25.0)
     ],
     # From every district on its fair share alone to decile 1 weighted T^3
-    # times the threshold decile T, the total seats held fixed throughout.
+    # times the threshold decile T, each school's seats held fixed throughout.
     "progressivity": [replace(DEFAULTS, progressivity=p / 4) for p in range(13)],
     # Quarter steps over the spread of P8MEA, which runs from -0.99 to 0.82 over
     # Southampton's 12 secondary schools: above 0.82 no school is above the
@@ -120,7 +120,7 @@ GRID = {
 AXIS_LABELS = {
     "decile": "Routes from LSOAs at or below IDACI decile",
     "min_distance": "Minimum route distance (m)",
-    "capacity_scale": "Route capacity scale (× fair share of places offered)",
+    "capacity_scale": "Route capacity scale (× disadvantaged share of places)",
     "progressivity": "Route seat progressivity (weight f(D)^p)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
     "local_radius": "Local performance radius (m)",
@@ -1223,8 +1223,8 @@ def main() -> None:
         "--round-up-seats",
         action=argparse.BooleanOptionalAction,
         default=ROUND_UP_SEATS,
-        help="round route seats up, so every route keeps one, rather than to "
-        "the nearest seat, which leaves a route rounding to none unbuilt",
+        help="round each school's route seats up rather than to the nearest "
+        "seat, before they are split between its routes",
     )
     parser.add_argument(
         "--linear-progressivity",

@@ -15,8 +15,10 @@ SCHOOL_XY = np.array([[0.0, 0.0], [10_000.0, 0.0]])
 # passes every district unless a test raises a score itself.
 SCHOOL_P8 = np.array([-0.5, -0.5])
 
-# Seats a route would hold between every pair, for `build_routes` directly.
-SEATS = np.full((2, 2), 30, dtype=np.int32)
+# District weights and the seats on the routes into each school, for
+# `build_routes` directly.
+WEIGHT = np.ones(2)
+SCHOOL_SEATS = np.full(2, 30)
 
 
 def make_areas(deciles, spacing=10_000.0, index=None, scores=None):
@@ -76,6 +78,22 @@ def test_disadvantaged_cohort_rounds_each_share_to_the_nearest_student():
 
 
 # --------------------------------------------------------------------------
+# apportion
+# --------------------------------------------------------------------------
+
+
+def test_apportion_hands_the_seats_left_over_to_the_largest_remainders():
+    # 10 seats on weights 1, 2 and 3 are quotas 1.67, 3.33 and 5: the floors
+    # take 9 and the largest remainder, 0.67, the tenth. On equal weights the
+    # quotas tie at 3.33 and the first row takes the tenth.
+    quotas = 10 * np.array([[1, 1], [2, 1], [3, 1]]) / np.array([6, 3])
+
+    seats = br.apportion(quotas, np.array([10, 10]))
+
+    np.testing.assert_array_equal(seats, [[2, 4], [3, 3], [5, 3]])
+
+
+# --------------------------------------------------------------------------
 # build_routes
 # --------------------------------------------------------------------------
 
@@ -83,7 +101,9 @@ def test_disadvantaged_cohort_rounds_each_share_to_the_nearest_student():
 def test_build_routes_joins_every_district_to_the_schools_beyond_the_threshold():
     # Distances are district 0: [0, 10000] and district 1: [10000, 0].
     districts = make_areas([1, 1])
-    routes = br.build_routes(districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, SEATS)
+    routes = br.build_routes(
+        districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
+    )
 
     pd.testing.assert_frame_equal(
         routes,
@@ -103,7 +123,9 @@ def test_build_routes_keeps_the_district_frame_index_as_district_idx():
     # The frame handed over is a disadvantaged subset, so its index labels are
     # positions in the full area frame and must survive unrenumbered.
     districts = make_areas([1, 1], index=[4, 7])
-    routes = br.build_routes(districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, SEATS)
+    routes = br.build_routes(
+        districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
+    )
 
     np.testing.assert_array_equal(routes["district_idx"], [4, 7])
     np.testing.assert_array_equal(routes["route_id"], [0, 1])  # contiguous from 0
@@ -111,7 +133,7 @@ def test_build_routes_keeps_the_district_frame_index_as_district_idx():
 
 def test_build_routes_returns_nothing_when_every_school_is_within_reach():
     districts = make_areas([1, 1])
-    routes = br.build_routes(districts, SCHOOL_XY, 50_000, SEATS)
+    routes = br.build_routes(districts, SCHOOL_XY, 50_000, WEIGHT, SCHOOL_SEATS)
     assert routes.empty
 
 
@@ -120,17 +142,48 @@ def test_build_routes_measures_from_the_population_centroid():
     # not, so the cut is made on the centroid distance and nothing else.
     districts = make_areas([1, 1], spacing=1.0)
     districts["Centroids"] = gpd.points_from_xy([3_000.0, 4_000.0], [0.0, 0.0])
-    routes = br.build_routes(districts, np.array([[0.0, 0.0]]), 3218, SEATS[:, :1])
+    routes = br.build_routes(
+        districts, np.array([[0.0, 0.0]]), 3218, WEIGHT, SCHOOL_SEATS[:1]
+    )
 
     np.testing.assert_array_equal(routes["district_idx"], [1])
 
 
-def test_build_routes_leaves_a_pair_holding_no_seat_unrouted(capsys):
-    # Both pairs lie beyond the threshold, but the first holds no seat, so only
-    # the second is routed and route_id still runs contiguously from 0.
+def test_build_routes_splits_a_schools_seats_between_the_routes_feeding_it():
+    # Districts at 0, 10km and 20km and one school at 0. District 0 is within
+    # the threshold, so the school's 30 seats go to the other two alone, by
+    # their weights of 1 and 2.
+    districts = make_areas([1, 1, 1])
+    routes = br.build_routes(
+        districts,
+        np.array([[0.0, 0.0]]),
+        br.MIN_ROUTE_DISTANCE,
+        np.array([5.0, 1.0, 2.0]),
+        np.array([30]),
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [1, 2])
+    np.testing.assert_array_equal(routes["capacity"], [10, 20])
+
+
+def test_build_routes_leaves_a_district_of_no_weight_unrouted():
     districts = make_areas([1, 1])
-    seats = np.array([[30, 0], [30, 30]], dtype=np.int32)
-    routes = br.build_routes(districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, seats)
+    routes = br.build_routes(
+        districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, np.array([0.0, 1.0]), SCHOOL_SEATS
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [1])
+    np.testing.assert_array_equal(routes["school_idx"], [0])
+
+
+def test_build_routes_leaves_a_route_apportioned_no_seat_unrouted(capsys):
+    # Both pairs lie beyond the threshold, but the second school holds no seat,
+    # so only the route into the first is built and route_id still runs
+    # contiguously from 0.
+    districts = make_areas([1, 1])
+    routes = br.build_routes(
+        districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, WEIGHT, np.array([30, 0])
+    )
 
     np.testing.assert_array_equal(routes["district_idx"], [1])
     np.testing.assert_array_equal(routes["school_idx"], [0])
@@ -142,18 +195,24 @@ def test_build_routes_leaves_a_pair_holding_no_seat_unrouted(capsys):
 
 def test_build_routes_keeps_only_the_shortest_route_holding_a_seat_of_each_school():
     # Districts at 0, 10km and 20km, schools at 0, 10km and 50km. School 0 is
-    # nearest district 1, whose pair holds no seat, so it keeps district 2.
+    # nearest district 1, which carries no weight, so it keeps district 2.
     # School 1 lies 10km from districts 0 and 2 and keeps the first. School 2
-    # holds no seat for any district, so it keeps no route.
+    # holds no seat, so it keeps no route. Each route holds its school's seats.
     districts = make_areas([1, 1, 1])
     school_xy = np.array([[0.0, 0.0], [10_000.0, 0.0], [50_000.0, 0.0]])
-    seats = np.array([[30, 30, 0], [0, 30, 0], [30, 30, 0]], dtype=np.int32)
 
-    routes = br.build_routes(districts, school_xy, 0.0, seats, shortest_only=True)
+    routes = br.build_routes(
+        districts,
+        school_xy,
+        0.0,
+        np.array([1.0, 0.0, 1.0]),
+        np.array([30, 40, 0]),
+        shortest_only=True,
+    )
 
     np.testing.assert_array_equal(routes["district_idx"], [0, 2])
     np.testing.assert_array_equal(routes["school_idx"], [1, 0])
-    np.testing.assert_array_equal(routes["capacity"], [30, 30])
+    np.testing.assert_array_equal(routes["capacity"], [40, 30])
     np.testing.assert_array_equal(routes["route_id"], [0, 1])
 
 
@@ -187,9 +246,9 @@ def test_route_network_uses_the_module_defaults():
     areas = make_areas([1, 1, 1])
     routes = network(areas)
 
-    # At the default scale a route holds that multiple of its fair share,
-    # rounded to the nearest seat.
-    assert (routes["capacity"] == 167).all()  # rint(5 * 100 * 10 / 30)
+    # Every student is disadvantaged, so at the default scale each school's
+    # two routes share 5 * 100 * 30 / 30 seats.
+    assert (routes["capacity"] == 250).all()
     # 3218m is the threshold, so the school a district sits on is never routed.
     assert not ((routes["district_idx"] == 1) & (routes["school_idx"] == 1)).any()
     # Neither school scores above the default P8, so every district is eligible.
@@ -282,11 +341,12 @@ def test_route_network_rejects_a_capacity_scale_that_is_not_positive(scale):
         network(make_areas([1, 1]), capacity_scale=scale)
 
 
-def test_route_network_seats_every_route_on_its_fair_share_of_the_places():
-    # 100 students in the region, district 2 sits above the decile, and the
-    # schools offer 100 and 200 places: a route holds k * places * n_d / 100
-    # seats.
-    areas = make_areas([1, 1, 5])
+def test_route_network_seats_each_school_on_the_regions_disadvantaged_share():
+    # 100 students in the region, 26 of them disadvantaged, counting the 10 of
+    # district 2 though it sits above the decile, and the schools offer 100
+    # and 200 places: the routes into a school hold k * places * 26 / 100
+    # seats between them.
+    areas = make_areas([1, 1, 5], scores=[0.5, 0.2, 0.2])
     routes = network(
         areas,
         school_places=np.array([100, 200]),
@@ -294,47 +354,58 @@ def test_route_network_seats_every_route_on_its_fair_share_of_the_places():
         capacity_scale=1.5,
     )
 
-    # District 0 sits on school 0 and district 1 on school 1.
+    # District 0 sits on school 0 and district 1 on school 1, so each school
+    # has one route.
     np.testing.assert_array_equal(routes["district_idx"], [0, 1])
     np.testing.assert_array_equal(routes["school_idx"], [1, 0])
-    np.testing.assert_array_equal(routes["capacity"], [60, 45])  # 1.5*200*20/100
+    np.testing.assert_array_equal(routes["capacity"], [78, 39])  # 1.5*200*0.26
 
 
-def test_route_network_drops_a_route_rounding_to_no_seat_unless_rounding_up(capsys):
-    # District 0 takes 0.4 of a seat at school 1 and district 1 takes 1.2 at
-    # school 0, so rounding to the nearest seat leaves district 0 unrouted.
-    areas = make_areas([1, 1, 5])
+def test_route_network_rounds_a_schools_seats_to_the_nearest_unless_rounding_up(
+    capsys,
+):
+    # 20 of the 100 students are disadvantaged, so the one far school's 7
+    # places give its routes 1.4 seats: 1 to the nearest seat, which the tie
+    # hands to district 0, leaving district 1 unrouted, and 2 rounded up.
+    areas = make_areas([1, 1, 5], scores=[1.0, 1.0, 0.0])
     kwargs = {
-        "school_places": np.array([12, 4]),
+        "school_places": np.array([7]),
         "district_cohort": np.array([10, 10, 80]),
         "capacity_scale": 1.0,
     }
+    school = np.array([[100_000.0, 0.0]])
 
-    nearest = network(areas, **kwargs)
-    assert "No secondary school beyond 3218m holds a seat" in capsys.readouterr().out
-    np.testing.assert_array_equal(nearest["district_idx"], [1])
+    nearest = network(areas, school, SCHOOL_P8[:1], **kwargs)
+    out = capsys.readouterr().out
+    assert "1 of the 2 routes beyond 3218m would hold no seat" in out
+    assert "No secondary school beyond 3218m holds a seat" in out
+    np.testing.assert_array_equal(nearest["district_idx"], [0])
     np.testing.assert_array_equal(nearest["capacity"], [1])
 
-    up = network(areas, round_up=True, **kwargs)
+    up = network(areas, school, SCHOOL_P8[:1], round_up=True, **kwargs)
     np.testing.assert_array_equal(up["district_idx"], [0, 1])
-    np.testing.assert_array_equal(up["capacity"], [1, 2])
+    np.testing.assert_array_equal(up["capacity"], [1, 1])
 
 
 def test_route_network_rejects_a_route_set_holding_no_seat():
     with pytest.raises(br.EmptyRouteSet, match="so the route set is"):
-        network(make_areas([1, 1, 9]), district_cohort=np.array([1, 1, 1_000_000]))
+        network(
+            make_areas([1, 1, 9], scores=[1.0, 1.0, 0.0]),
+            district_cohort=np.array([1, 1, 1_000_000]),
+        )
 
 
 @pytest.mark.parametrize(
     ("progressivity", "seats"), [(0.0, [10, 10]), (1.0, [15, 5]), (2.0, [18, 2])]
 )
 def test_route_network_leans_seats_towards_the_deprived_districts(progressivity, seats):
-    # Districts at deciles 1 and 3 of threshold 3, 10 students each out of 100,
-    # routed to one far school admitting 100. At p = 1 the raw weights are 1
-    # and 1/3, rescaled to 1.5 and 0.5; at p = 2 they are 1 and 1/9, rescaled
-    # to 1.8 and 0.2. The 20 seats the two share never change.
+    # Districts at deciles 1 and 3 of threshold 3 hold the region's 20
+    # disadvantaged students out of 100, 10 each, routed to one far school
+    # admitting 100, so its routes hold 20 seats at every p. At p = 1 the
+    # weights are 1 and 1/3, splitting them 15 and 5; at p = 2 they are 1 and
+    # 1/9, splitting them 18 and 2.
     routes = network(
-        make_areas([1, 3, 5]),
+        make_areas([1, 3, 5], scores=[1.0, 1.0, 0.0]),
         np.array([[100_000.0, 0.0]]),
         SCHOOL_P8[:1],
         school_places=np.array([100]),
@@ -350,12 +421,13 @@ def test_route_network_leans_seats_towards_the_deprived_districts(progressivity,
 
 @pytest.mark.parametrize(("linear", "seats"), [(False, [13, 7]), (True, [12, 8])])
 def test_route_network_weights_the_middle_deciles_by_the_profile_chosen(linear, seats):
-    # Districts at deciles 1 and 2 of threshold 3, 10 students each out of 100,
-    # routed to one far school admitting 100, fully progressive. By 1 / D the
-    # raw weights are 1 and 1/2, rescaled to 4/3 and 2/3; by the linear profile
-    # they are 1 and 2/3, rescaled to 1.2 and 0.8.
+    # Districts at deciles 1 and 2 of threshold 3 hold the region's 20
+    # disadvantaged students out of 100, 10 each, routed to one far school
+    # admitting 100, fully progressive, so its routes hold 20 seats. By 1 / D
+    # the weights are 1 and 1/2, splitting them 13.3 and 6.7; by the linear
+    # profile they are 1 and 2/3, splitting them 12 and 8.
     routes = network(
-        make_areas([1, 2, 5]),
+        make_areas([1, 2, 5], scores=[1.0, 1.0, 0.0]),
         np.array([[100_000.0, 0.0]]),
         SCHOOL_P8[:1],
         school_places=np.array([100]),
@@ -377,13 +449,14 @@ def test_route_network_rejects_a_negative_progressivity():
 
 @pytest.mark.parametrize(
     ("disadvantage", "seats"),
-    [("score", [3, 12]), ("score-open", [10, 20]), ("decile", [10, 20])],
+    [("score", [10, 40]), ("score-open", [10, 40]), ("decile", [10, 20])],
 )
-def test_route_network_seats_the_students_who_may_ride(disadvantage, seats):
+def test_route_network_seats_the_disadvantaged_students(disadvantage, seats):
     # Two districts of 10 and 20 students out of 100, scoring 0.3 and 0.6, are
-    # routed to one far school admitting 100, the weights flat. Under "score"
-    # only the 3 and 12 disadvantaged ride, so a route holds 100 * n_d / 100
-    # seats for them; otherwise every student of the district rides.
+    # routed to one far school admitting 100, the weights flat; a third of 70
+    # scoring 0.5 sits above the decile. Drawn from the scores, 3, 12 and 35
+    # are disadvantaged, so the school's routes hold 50 seats split 3 to 12,
+    # whoever rides. Under "decile" the 30 students of the first two are.
     routes = network(
         make_areas([1, 1, 5], scores=[0.3, 0.6, 0.5]),
         np.array([[100_000.0, 0.0]]),
@@ -400,13 +473,13 @@ def test_route_network_seats_the_students_who_may_ride(disadvantage, seats):
 
 
 def test_route_network_rejects_route_eligible_districts_holding_no_students():
-    with pytest.raises(br.EmptyRouteSet, match="hold no student who may ride"):
+    with pytest.raises(br.EmptyRouteSet, match="hold no disadvantaged student"):
         network(make_areas([1, 1, 9]), district_cohort=np.array([0, 0, 100]))
 
 
-def test_route_network_rejects_route_eligible_districts_holding_no_rider():
+def test_route_network_rejects_route_eligible_districts_holding_no_disadvantaged():
     # Every student is there, but none of them is disadvantaged.
-    with pytest.raises(br.EmptyRouteSet, match="hold no student who may ride"):
+    with pytest.raises(br.EmptyRouteSet, match="hold no disadvantaged student"):
         network(make_areas([1, 1, 9], scores=[0.0, 0.0, 1.0]))
 
 
@@ -426,25 +499,25 @@ def test_route_network_does_not_name_a_district_excluded_on_performance_as_unrou
     assert "2 districts at IDACI decile 3 or below, 1 of them" in out
 
 
-def test_route_network_keeps_each_schools_shortest_route_on_its_usual_seats(capsys):
+def test_route_network_keeps_each_schools_shortest_route_on_all_its_seats(capsys):
     # School 0 is nearest district 1 and school 1 ties districts 0 and 2,
     # keeping the first. District 2 is nearest no school, which is not the
     # distance condition leaving it unrouted, so it is not named as such. Each
-    # route holds 5 * 100 * 10 / 30 = 166.7 seats, as in the whole network.
+    # route holds all 5 * 100 * 30 / 30 seats of its school, the seats the
+    # school's two routes share in the whole network.
     areas = make_areas([1, 1, 1])
 
     routes = network(areas, shortest_only=True)
 
     np.testing.assert_array_equal(routes["district_idx"], [0, 1])
     np.testing.assert_array_equal(routes["school_idx"], [1, 0])
-    np.testing.assert_array_equal(routes["capacity"], [167, 167])
+    np.testing.assert_array_equal(routes["capacity"], [500, 500])
     out = capsys.readouterr().out
     assert "No secondary school beyond" not in out
     assert "each school keeping only its route to the nearest district" in out
-    whole = network(areas)
-    columns = ["district_idx", "school_idx", "capacity"]
-    assert set(routes[columns].itertuples(index=False)) <= set(
-        whole[columns].itertuples(index=False)
+    pd.testing.assert_series_equal(
+        routes.groupby("school_idx")["capacity"].sum(),
+        network(areas).groupby("school_idx")["capacity"].sum(),
     )
 
 
@@ -456,7 +529,7 @@ def test_route_network_keeps_each_schools_shortest_route_on_its_usual_seats(caps
 def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path):
     out_dir = tmp_path / "out"
     routes = br.build_routes(
-        make_areas([1, 1]), SCHOOL_XY, br.MIN_ROUTE_DISTANCE, SEATS
+        make_areas([1, 1]), SCHOOL_XY, br.MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
     )
 
     br.save_routes(routes, out_dir)
