@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 from scipy.spatial import distance as spdist
 
@@ -6,7 +7,8 @@ from geo_model import build_prefs as bp
 from geo_model import build_routes as br
 from geo_model import load_data as ld
 from geo_model import scenario_1 as s1
-from geo_model.dissimilarity import settings_routes
+from geo_model.dissimilarity import settings_routes, student_samples
+from geo_model.utils import disadvantaged_group, district_groups
 
 DATA = ld.POPULATION_XLSX.parent.parent
 
@@ -33,3 +35,26 @@ def test_every_school_keeps_one_route_from_its_nearest_district_holding_a_rider(
     np.testing.assert_array_equal(routes["school_idx"], np.arange(len(schools)))
     np.testing.assert_array_equal(routes["district_idx"], nearest)
     assert (routes["capacity"] >= 1).all()
+
+
+@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+def test_every_seed_draws_each_districts_groups_alike():
+    areas = ld.load_areas()
+    sizes = bp.cohort_sizes(areas, "secondary")
+
+    seeds = [
+        district_groups(
+            areas,
+            student_lsoa,
+            disadvantaged_group(
+                student_lsoa, drawn, areas, s1.SCENARIO.decile, br.DISADVANTAGE
+            ),
+        )
+        for _, student_lsoa, drawn in student_samples(areas, sizes, 2)
+    ]
+
+    pd.testing.assert_frame_equal(seeds[0], seeds[1])
+    np.testing.assert_array_equal(seeds[0]["cohort"], sizes)
+    np.testing.assert_array_equal(
+        seeds[0]["disadvantaged"], br.disadvantaged_cohort(areas, sizes)
+    )

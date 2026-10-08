@@ -27,6 +27,8 @@ from geo_model.utils import (
     CIRCUITY,
     MODES,
     add_region_arguments,
+    disadvantaged_group,
+    district_groups,
     mode_change,
     region_dir,
     regions,
@@ -39,6 +41,7 @@ RESULTS_CSV = "results.csv"
 SCHOOLS_CSV = "schools.csv"
 MODES_CSV = "modes.csv"
 ROUTE_UTILISATION_CSV = "route_utilisation.csv"
+DISTRICTS_CSV = "districts.csv"
 
 N_SEEDS = 100
 
@@ -143,11 +146,22 @@ def main() -> None:
             disadvantage=args.disadvantage,
             measure=args.intake,
         )
+        # Every seed draws each district's cohort and its disadvantaged
+        # students in the same numbers, so the first sample stands for all.
+        _, student_lsoa, drawn = samples[0]
+        districts = district_groups(
+            areas,
+            student_lsoa,
+            disadvantaged_group(
+                student_lsoa, drawn, areas, settings.decile, args.disadvantage
+            ),
+        )
         for frame, name in (
             (results, RESULTS_CSV),
             (schools, SCHOOLS_CSV),
             (modes, MODES_CSV),
             (routes, ROUTE_UTILISATION_CSV),
+            (districts, DISTRICTS_CSV),
         ):
             frame.to_csv(out_dir / name, index=False)
 
@@ -179,7 +193,7 @@ def main() -> None:
         print(utilisation_summary(routes))
         print(
             f"Wrote the routes, {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, "
-            f"{ROUTE_UTILISATION_CSV} and the plots in {out_dir}."
+            f"{ROUTE_UTILISATION_CSV}, {DISTRICTS_CSV} and the plots in {out_dir}."
         )
 
 

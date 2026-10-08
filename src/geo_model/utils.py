@@ -615,6 +615,54 @@ def dissimilarity_terms(group_a: ArrayLike, group_b: ArrayLike) -> np.ndarray:
     return group_a / group_a.sum() - group_b / group_b.sum()
 
 
+def district_groups(
+    areas: pd.DataFrame, student_lsoa: np.ndarray, disadvantaged: np.ndarray
+) -> pd.DataFrame:
+    """Each district's disadvantaged and advantaged students, and how the two
+    groups compare there and against the region.
+
+    Args:
+        areas (pd.DataFrame): Districts carrying "LSOA21CD", "LA (name)",
+        "IDACI Decile" and "IDACI Score", in the order students were sampled
+        from.
+
+        student_lsoa (np.ndarray): Positional index into `areas` of the
+        district each student was sampled in.
+
+        disadvantaged (np.ndarray): Whether each student is disadvantaged, as
+        `disadvantaged_group` gives it.
+
+    Returns:
+        pd.DataFrame: One row per district, in the order of `areas`, with its
+        "LSOA21CD", "LA (name)", "IDACI Decile" and "IDACI Score", its
+        "cohort" of students, its "disadvantaged" and "advantaged" students,
+        the "disadvantaged_share" of its cohort, its "share_of_disadvantaged"
+        and "share_of_advantaged" of the region's, and the "difference" of
+        those two, the district's term of the dissimilarity index as
+        `dissimilarity_terms` gives it. A district with no student has no
+        disadvantaged share, so it is named and left NaN.
+    """
+    # Students are counted by district as a school's intake is by school.
+    group_a, group_b = school_intake(student_lsoa, disadvantaged, len(areas))
+    cohort = group_a + group_b
+    if (cohort == 0).any():
+        print(
+            "No student sampled, so no disadvantaged share: "
+            + ", ".join(areas["LSOA21CD"].to_numpy()[cohort == 0])
+        )
+    return areas[["LSOA21CD", "LA (name)", "IDACI Decile", "IDACI Score"]].assign(
+        cohort=cohort,
+        disadvantaged=group_a,
+        advantaged=group_b,
+        disadvantaged_share=np.divide(
+            group_a, cohort, out=np.full(len(cohort), np.nan), where=cohort > 0
+        ),
+        share_of_disadvantaged=group_a / group_a.sum(),
+        share_of_advantaged=group_b / group_b.sum(),
+        difference=dissimilarity_terms(group_a, group_b),
+    )
+
+
 def dissimilarity_index(
     matched_school: ArrayLike,
     disadvantaged: ArrayLike,
