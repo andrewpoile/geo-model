@@ -47,7 +47,6 @@ N_SEEDS = 100
 # holds all of the school's route seats, so progressivity is inert too.
 SCENARIO = replace(
     DEFAULTS,
-    min_distance=0.0,
     progressivity=0.0,
     max_local_p8=np.inf,
     shortest_only=True,

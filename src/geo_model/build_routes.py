@@ -36,7 +36,7 @@ MIN_ROUTE_DISTANCE = 3218
 # every intake matched the region's mix. The seats are split between the
 # school's routes in proportion to the disadvantaged students of each route's
 # district. Route capacities are exogenous to the SCT instance.
-ROUTE_CAPACITY_SCALE = 5.0
+ROUTE_CAPACITY_SCALE = 1.0
 
 # How far a school's route seats lean towards the more deprived districts,
 # p >= 0. A district at IDACI decile D at or below the threshold T is weighted
