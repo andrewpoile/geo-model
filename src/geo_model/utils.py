@@ -152,7 +152,7 @@ def rank_bundles(
     performance_weight: ArrayLike = 0.0,
     route_discount: ArrayLike = 0.0,
     route_eligible: ArrayLike = True,
-    noise_scale: float = 0.0,
+    noise_scale: float = 0.5,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Rank (school, route) bundles for students and (student, route) bundles for schools.
@@ -234,7 +234,7 @@ def rank_bundles(
         rather than in metres. Useful to break ties or add mild randomness
         without destroying the underlying signal. Set to 0 for a deterministic
         ordering. School priorities are always ranked on the unperturbed
-        distances. Defaults to 0.0.
+        distances. Defaults to 0.5.
 
         rng (np.random.Generator | None, optional): Source of randomness, used
         only when `noise_scale` > 0. Defaults to None.
