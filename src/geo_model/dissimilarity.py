@@ -20,6 +20,7 @@ from geo_model.build_prefs import (
     secondary_instance,
 )
 from geo_model.build_routes import (
+    BOTTLENECK_ROUTES,
     DISADVANTAGE,
     DISADVANTAGED_DECILE,
     LINEAR_PROGRESSIVITY,
@@ -75,6 +76,7 @@ class Settings:
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT
     shortest_only: bool = SHORTEST_ROUTE_ONLY
+    bottleneck: bool = BOTTLENECK_ROUTES
 
 
 DEFAULTS = Settings()
@@ -396,6 +398,7 @@ def settings_routes(
         linear=linear,
         disadvantage=disadvantage,
         shortest_only=settings.shortest_only,
+        bottleneck=settings.bottleneck,
     )
 
 

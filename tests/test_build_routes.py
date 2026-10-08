@@ -21,16 +21,19 @@ WEIGHT = np.ones(2)
 SCHOOL_SEATS = np.full(2, 30)
 
 
-def make_areas(deciles, spacing=10_000.0, index=None, scores=None):
+def make_areas(deciles, spacing=10_000.0, index=None, scores=None, ranks=None):
     """Districts on a line, one every `spacing` metres, in the given deciles.
 
     Every district scores 1 on IDACI unless a test passes its own scores, so
     under every choice of disadvantage every student of a district may ride.
+    The districts are ranked on IDACI in order unless a test passes its own
+    ranks.
     """
     n = len(deciles)
     frame = gpd.GeoDataFrame(
         {
             "LSOA21CD": [f"E{i:08d}" for i in range(n)],
+            "IDACI": np.arange(1, n + 1) if ranks is None else ranks,
             "IDACI Decile": deciles,
             "IDACI Score": np.ones(n) if scores is None else scores,
         },
@@ -91,6 +94,40 @@ def test_apportion_hands_the_seats_left_over_to_the_largest_remainders():
     seats = br.apportion(quotas, np.array([10, 10]))
 
     np.testing.assert_array_equal(seats, [[2, 4], [3, 3], [5, 3]])
+
+
+# --------------------------------------------------------------------------
+# bottleneck_pairs
+# --------------------------------------------------------------------------
+
+
+def test_bottleneck_pairs_makes_the_longest_pair_as_short_as_it_can_be():
+    # The diagonal is the shorter in total, 11 against 12, but its longest
+    # pair is 10 against the other pairing's 6.
+    pairs = br.bottleneck_pairs(np.array([[1.0, 6.0], [6.0, 10.0]]))
+
+    np.testing.assert_array_equal(pairs, [[False, True], [True, False]])
+
+
+def test_bottleneck_pairs_takes_the_least_total_of_the_pairings_within_the_longest():
+    # School 0 is allowed district 0 alone, 10 away, so every pairing's
+    # longest pair is 10. Within it, districts 1 and 2 cross over to schools
+    # 2 and 1 for 4 in total rather than 6 straight.
+    inf = np.inf
+    pairs = br.bottleneck_pairs(
+        np.array([[10.0, inf, inf], [inf, 1.0, 2.0], [inf, 2.0, 5.0]])
+    )
+
+    np.testing.assert_array_equal(
+        pairs, [[True, False, False], [False, False, True], [False, True, False]]
+    )
+
+
+def test_bottleneck_pairs_rejects_schools_that_cannot_each_have_a_district():
+    # Both schools are allowed district 0 alone.
+    inf = np.inf
+    with pytest.raises(ValueError, match="No pairing gives each of the 2 schools"):
+        br.bottleneck_pairs(np.array([[1.0, 2.0], [inf, inf]]))
 
 
 # --------------------------------------------------------------------------
@@ -519,6 +556,33 @@ def test_route_network_keeps_each_schools_shortest_route_on_all_its_seats(capsys
         routes.groupby("school_idx")["capacity"].sum(),
         network(areas).groupby("school_idx")["capacity"].sum(),
     )
+
+
+def test_route_network_pairs_each_school_with_one_of_the_lowest_ranked_districts(
+    capsys,
+):
+    # Districts at 0, 10, 20 and 30km, schools at 0 and 5km. The two of lowest
+    # rank, districts 1 and 3, are routed though they sit above the decile.
+    # Both schools are nearest district 1, but each takes a district of its
+    # own: school 0 district 1 and school 1 district 3, the longest route
+    # 25km, rather than the other way round, the longest 30km. Each route
+    # holds all 1 * 100 * 40 / 40 seats of its school.
+    areas = make_areas([1, 5, 1, 5], ranks=[4, 1, 3, 2])
+
+    routes = network(areas, np.array([[0.0, 0.0], [5_000.0, 0.0]]), bottleneck=True)
+
+    np.testing.assert_array_equal(routes["district_idx"], [1, 3])
+    np.testing.assert_array_equal(routes["school_idx"], [0, 1])
+    np.testing.assert_array_equal(routes["capacity"], [100, 100])
+    out = capsys.readouterr().out
+    assert "2 districts of lowest IDACI rank" in out
+    assert "each school paired with a district of its own" in out
+    assert "the longest route 25000m" in out
+
+
+def test_route_network_rejects_shortest_only_and_bottleneck_together():
+    with pytest.raises(ValueError, match="only one may be set"):
+        network(make_areas([1, 1]), shortest_only=True, bottleneck=True)
 
 
 # --------------------------------------------------------------------------

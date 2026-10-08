@@ -1,9 +1,13 @@
+import bisect
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import shapely
+from scipy.optimize import linear_sum_assignment
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import maximum_bipartite_matching
 from scipy.spatial import distance as spdist
 
 # Routes are built only from LSOAs at or below this IDACI decile, 1 being the
@@ -60,6 +64,12 @@ ROUND_UP_SEATS = False
 # True keeps, for each school, only its route to the nearest district holding
 # a seat on one, so every school offers a single route.
 SHORTEST_ROUTE_ONLY = False
+
+# True routes from only as many districts as there are schools, those of lowest
+# IDACI rank, the most deprived in England, whatever their decile, and pairs
+# each school with one of them so the longest route is as short as it can be,
+# ties going to the least total length. Every school offers a single route.
+BOTTLENECK_ROUTES = False
 
 # A route carries a student past their local schools, so a district already
 # within reach of a school performing above this needs none. P8MEA is centred
@@ -137,6 +147,49 @@ def apportion(quotas: np.ndarray, totals: np.ndarray) -> np.ndarray:
     return (seats + (rank < totals - seats.sum(axis=0))).astype(np.int32)
 
 
+def bottleneck_pairs(distances: np.ndarray) -> np.ndarray:
+    """Pair every school with a district of its own so the longest pair is as
+    short as it can be.
+
+    The longest pair is the least length L at which the pairs no longer than L
+    still give every school a district of its own. Of the pairings within L,
+    the one of least total length is taken, so the pairs short of the longest
+    are as short as they can be too.
+
+    Args:
+        distances (np.ndarray): Distance from every district to every school,
+        shape (n_districts, n_schools), np.inf where a pair is barred.
+
+    Returns:
+        np.ndarray: Whether each pair is chosen, shape (n_districts,
+        n_schools), one pair in every column and at most one in every row.
+
+    Raises:
+        ValueError: If no pairing gives every school a district of its own.
+    """
+
+    def complete(longest: float) -> bool:
+        within = csr_matrix(distances <= longest)
+        return bool((maximum_bipartite_matching(within, perm_type="row") >= 0).all())
+
+    lengths = np.unique(distances[np.isfinite(distances)])
+    # A pairing within a length is one within every greater length too, so
+    # `complete` is False below L and True from it on.
+    at = bisect.bisect_left(lengths, True, key=complete)
+    if at == len(lengths):
+        raise ValueError(
+            f"No pairing gives each of the {distances.shape[1]} schools a "
+            f"district of its own among the {distances.shape[0]} they may be "
+            "routed to."
+        )
+    districts, schools = linear_sum_assignment(
+        np.where(distances <= lengths[at], distances, np.inf)
+    )
+    pairs = np.zeros(distances.shape, dtype=bool)
+    pairs[districts, schools] = True
+    return pairs
+
+
 def build_routes(
     districts: gpd.GeoDataFrame,
     school_xy: np.ndarray,
@@ -144,6 +197,7 @@ def build_routes(
     weight: np.ndarray,
     school_seats: np.ndarray,
     shortest_only: bool = False,
+    bottleneck: bool = False,
 ) -> pd.DataFrame:
     """Build the routes connecting route-eligible districts to schools.
 
@@ -152,7 +206,9 @@ def build_routes(
     carrying some weight, and holding at least one seat. Distance is measured
     from the population centroid of the district, the point its students are
     sampled around, to the school. With `shortest_only` each school keeps only
-    the shortest of its routes, the first district winning a tie. A school's
+    the shortest of its routes, the first district winning a tie. With
+    `bottleneck` each school keeps only its route to a district of its own, as
+    `bottleneck_pairs` pairs them. A school's
     seats are split between its routes in proportion to their districts'
     weight, by `apportion`, so they sum to its seats exactly; a route
     apportioned none is not built.
@@ -179,6 +235,9 @@ def build_routes(
         shortest_only (bool, optional): Keep only each school's shortest
         route. Defaults to False.
 
+        bottleneck (bool, optional): Keep only each school's route to the
+        district `bottleneck_pairs` pairs it with. Defaults to False.
+
     Returns:
         pd.DataFrame: One row per route, with columns "route_id" (contiguous
         from 0, the route axis `fast_DAT` indexes), "district_idx", "LSOA21CD",
@@ -190,6 +249,8 @@ def build_routes(
         # A school with no route has every distance masked, and stays unrouted.
         nearest = np.where(routed, distances, np.inf).argmin(axis=0)
         routed &= np.arange(len(districts))[:, None] == nearest
+    elif bottleneck:
+        routed &= bottleneck_pairs(np.where(routed, distances, np.inf))
 
     # A school no district is routed to has no route to hold its seats.
     share = np.where(routed, np.asarray(weight, dtype=float)[:, None], 0.0)
@@ -234,6 +295,7 @@ def route_network(
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
     shortest_only: bool = SHORTEST_ROUTE_ONLY,
+    bottleneck: bool = BOTTLENECK_ROUTES,
 ) -> pd.DataFrame:
     """Select the route-eligible districts of `areas` and route them to schools.
 
@@ -241,7 +303,9 @@ def route_network(
     and no school scoring above `max_local_p8` lies within `local_radius` of it,
     since a district a high-performing school already serves needs no transport
     past it. The local schools are read from the same population centroid the
-    distance condition measures from.
+    distance condition measures from. Under `bottleneck` the districts of
+    lowest IDACI rank, as many as there are schools, take the place of those
+    at or below `decile`.
 
     The disadvantaged group is untouched by the performance condition, so the
     dissimilarity index measures the same students whether their district is
@@ -263,8 +327,9 @@ def route_network(
 
     Args:
         areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IDACI
-        Decile", "IDACI Score" and "Centroids" columns, positionally indexed
-        in the order students were sampled from.
+        Decile", "IDACI Score" and "Centroids" columns, and "IDACI" (the rank)
+        under `bottleneck`, positionally indexed in the order students were
+        sampled from.
 
         school_xy (np.ndarray): School coordinates, shape (n_schools, 2), in the
         same CRS as the centroids.
@@ -320,9 +385,20 @@ def route_network(
         then holds all of the school's route seats. Defaults to
         SHORTEST_ROUTE_ONLY.
 
+        bottleneck (bool, optional): Route only the districts of lowest IDACI
+        rank, as many as there are schools, whatever their decile, and pair
+        each school with one of them by `bottleneck_pairs`, the route then
+        holding all of the school's route seats. Defaults to
+        BOTTLENECK_ROUTES.
+
     Returns:
         pd.DataFrame: The route set, as returned by `build_routes`.
     """
+    if shortest_only and bottleneck:
+        raise ValueError(
+            "shortest_only and bottleneck each keep one route per school by a "
+            "rule of their own, so only one may be set."
+        )
     if not 1 <= decile <= 10:
         raise ValueError(f"decile must be an IDACI decile in [1, 10], got {decile}.")
     if disadvantage not in DISADVANTAGE_CHOICES:
@@ -360,12 +436,17 @@ def route_network(
     if progressivity < 0:
         raise ValueError(f"progressivity must be non-negative, got {progressivity}.")
 
-    deprived = areas[areas["IDACI Decile"] <= decile]
-    if deprived.empty:
-        raise ValueError(
-            f"No LSOA sits at or below IDACI decile {decile}, so there are no "
-            "districts to build routes from."
-        )
+    if bottleneck:
+        deprived = areas.nsmallest(len(school_xy), "IDACI")
+        selected = f"{len(deprived)} districts of lowest IDACI rank"
+    else:
+        deprived = areas[areas["IDACI Decile"] <= decile]
+        if deprived.empty:
+            raise ValueError(
+                f"No LSOA sits at or below IDACI decile {decile}, so there are "
+                "no districts to build routes from."
+            )
+        selected = f"{len(deprived)} districts at IDACI decile {decile} or below"
 
     # A school above the threshold inside the radius serves the district
     # already, so no route is built from it. Carried on the district index, so
@@ -377,8 +458,7 @@ def route_network(
     eligible = deprived[~served]
     if eligible.empty:
         raise EmptyRouteSet(
-            f"Every one of the {len(deprived)} districts at or below IDACI "
-            f"decile {decile} has a school scoring above Progress 8 "
+            f"Every one of the {selected} has a school scoring above Progress 8 "
             f"{max_local_p8} within {local_radius}m, so no district is "
             "route-eligible."
         )
@@ -410,6 +490,7 @@ def route_network(
         eligible_disadvantaged * rank**progressivity,
         (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int64),
         shortest_only,
+        bottleneck,
     )
     if routes.empty:
         raise EmptyRouteSet(
@@ -424,25 +505,35 @@ def route_network(
     # an error, but it is silent, so it is named here. Districts the
     # performance condition excludes are counted in the summary instead, since
     # it excludes them by the dozen. Under `shortest_only` most districts are
-    # nearest no school, which leaves them unrouted for that reason instead.
+    # nearest no school, which leaves them unrouted for that reason instead,
+    # and under `bottleneck` every district is paired unless its route holds
+    # no seat, which `build_routes` names.
     unrouted = eligible.loc[~eligible.index.isin(routes["district_idx"]), "LSOA21CD"]
-    if len(unrouted) and not shortest_only:
+    if len(unrouted) and not (shortest_only or bottleneck):
         print(
             f"No secondary school beyond {min_distance}m holds a seat on a "
             "route, so no routes: " + ", ".join(unrouted)
         )
 
+    if shortest_only:
+        rule = ", each school keeping only its route to the nearest district."
+    elif bottleneck:
+        longest = np.linalg.norm(
+            centroid_xy(areas.iloc[routes["district_idx"]])
+            - school_xy[routes["school_idx"]],
+            axis=1,
+        ).max()
+        rule = (
+            ", each school paired with a district of its own, the longest "
+            f"route {longest:.0f}m."
+        )
+    else:
+        rule = "."
     print(
-        f"{len(deprived)} districts at IDACI decile {decile} or "
-        f"below, {len(eligible)} of them with no school above Progress 8 "
+        f"{selected}, {len(eligible)} of them with no school above Progress 8 "
         f"{max_local_p8} within {local_radius}m, {len(routes)} routes to "
         f"{len(school_xy)} secondary schools, "
-        f"{len(routes) / len(eligible):.1f} per district"
-        + (
-            ", each school keeping only its route to the nearest district."
-            if shortest_only
-            else "."
-        )
+        f"{len(routes) / len(eligible):.1f} per district" + rule
     )
     return routes
 

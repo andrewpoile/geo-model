@@ -18,6 +18,7 @@ from geo_model.build_routes import DISADVANTAGE, DISADVANTAGE_CHOICES, save_rout
 from geo_model.dissimilarity import (
     DEFAULTS,
     Sample,
+    Settings,
     settings_routes,
     student_samples,
     t_test_label,
@@ -96,16 +97,24 @@ def district_rows(
     ).pipe(lambda rows: rows[["seed", *rows.columns.drop("seed")]])
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Match fresh samples with and without scenario 1's routes, "
-        "each school's shortest, and plot and map the two against each other."
-    )
+def run(settings: Settings, scenario_dir: Path, description: str) -> None:
+    """Match fresh samples with and without the routes of a scenario, as the
+    command line sets out, and write and report the two against each other.
+
+    Args:
+        settings (Settings): The scenario, its capacity scale the command
+        line's default.
+
+        scenario_dir (Path): The scenario's folder within each region's.
+
+        description (str): The command line's description.
+    """
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--seeds", type=int, default=N_SEEDS)
     parser.add_argument(
         "--capacity-scale",
         type=float,
-        default=SCENARIO.capacity_scale,
+        default=settings.capacity_scale,
         help="seats on a school's route as a multiple of the disadvantaged "
         "students' fair share of the places it offers",
     )
@@ -149,11 +158,11 @@ def main() -> None:
     add_region_arguments(parser)
     args = parser.parse_args()
 
-    settings = replace(SCENARIO, capacity_scale=args.capacity_scale)
+    settings = replace(settings, capacity_scale=args.capacity_scale)
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")
-        out_dir = region_dir(las) / OUT_DIR
+        out_dir = region_dir(las) / scenario_dir
         _, secondary_schools = load_schools(las)
         samples = list(student_samples(areas, args.seeds))
 
@@ -219,6 +228,15 @@ def main() -> None:
             f"Wrote the routes, {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, "
             f"{ROUTE_UTILISATION_CSV}, {DISTRICTS_CSV} and the plots in {out_dir}."
         )
+
+
+def main() -> None:
+    run(
+        SCENARIO,
+        OUT_DIR,
+        "Match fresh samples with and without scenario 1's routes, each "
+        "school's shortest, and plot and map the two against each other.",
+    )
 
 
 if __name__ == "__main__":
