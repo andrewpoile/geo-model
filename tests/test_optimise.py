@@ -13,9 +13,13 @@ from geo_model import build_prefs as bp
 from geo_model import load_data as ld
 from geo_model import optimise as op
 from geo_model.__main__ import COLOURS, GROUP_COLOURS, INTAKE_MEASURES
+from geo_model.build_routes import DISADVANTAGE_CHOICES
 from geo_model.dissimilarity import DEFAULTS, Settings, score_settings, student_samples
 
 DATA = ld.POPULATION_XLSX.parent.parent
+
+# A sample of no students, for the checks made before anything is scored.
+NO_STUDENTS = [(np.empty((0, 2)), np.empty(0, dtype=np.int64), np.empty(0, dtype=bool))]
 
 
 def scored_rows(dissimilarity: float, car: tuple[float, float]):
@@ -29,7 +33,7 @@ def scored_rows(dissimilarity: float, car: tuple[float, float]):
         {"seed": 0, "scenario": scenario, "mode": "car", "students": students}
         for scenario, students in zip(("without routes", "with routes"), car)
     ]
-    return results, [], modes
+    return results, [], modes, []
 
 
 # --------------------------------------------------------------------------
@@ -72,7 +76,6 @@ def test_car_displacement_is_the_mean_car_students_the_routes_remove():
 
 
 def test_bounds_hold_the_default_of_every_optimisable_parameter():
-    assert "decile" not in op.OPTIMISABLE
     assert set(op.LEVERS) <= set(op.OPTIMISABLE)
     for parameter in op.OPTIMISABLE:
         low, high = op.bounds(parameter)
@@ -80,9 +83,48 @@ def test_bounds_hold_the_default_of_every_optimisable_parameter():
         assert low <= asdict(DEFAULTS)[parameter] <= high
 
 
-def test_bounds_rejects_the_decile():
-    with pytest.raises(ValueError, match="decile is not optimisable"):
-        op.bounds("decile")
+def test_bounds_search_the_decile_over_the_deciles_swept():
+    assert op.bounds("decile") == (1.0, 9.0)
+
+
+def test_bounds_rejects_a_parameter_that_is_not_swept():
+    with pytest.raises(ValueError, match="circuity is not optimisable"):
+        op.bounds("circuity")
+
+
+# --------------------------------------------------------------------------
+# searchable
+# --------------------------------------------------------------------------
+
+
+def test_searchable_leaves_the_decile_out_only_where_it_sets_the_group():
+    assert "decile" in op.searchable("score")
+    assert "decile" in op.searchable("score-open")
+    assert "decile" not in op.searchable("decile")
+
+
+def test_searchable_leaves_the_other_students_route_discount_out_unless_they_ride():
+    assert "route_discount" in op.searchable("score-open")
+    assert "route_discount" not in op.searchable("score")
+    assert "route_discount" not in op.searchable("decile")
+
+
+@pytest.mark.parametrize("disadvantage", DISADVANTAGE_CHOICES)
+def test_every_lever_is_searchable_under_every_choice(disadvantage):
+    assert set(op.LEVERS) <= set(op.searchable(disadvantage))
+
+
+# --------------------------------------------------------------------------
+# cast
+# --------------------------------------------------------------------------
+
+
+def test_cast_rounds_the_decile_and_makes_every_other_value_a_float():
+    cast = op.cast({"decile": np.float64(2.6), "min_distance": np.float64(1609.4)})
+
+    assert cast == {"decile": 3, "min_distance": 1609.4}
+    assert type(cast["decile"]) is int
+    assert type(cast["min_distance"]) is float
 
 
 # --------------------------------------------------------------------------
@@ -120,31 +162,68 @@ def test_pipeline_negates_maximised_objectives_and_marks_infeasible_settings():
     assert np.isnan(infeasible["car_displacement"])
 
 
+def test_pipeline_scores_and_records_a_searched_decile_rounded():
+    scored_deciles = []
+
+    def score(settings: Settings):
+        scored_deciles.append(settings.decile)
+        return scored_rows(0.1, (100.0, 90.0))
+
+    problem = op.Pipeline(["decile"], op.DEFAULT_OBJECTIVES, score, map)
+    problem.evaluate(np.array([[2.4], [2.6]]))
+
+    assert scored_deciles == [2, 3]
+    assert [row["decile"] for row in problem.evaluations] == [2, 3]
+
+
 # --------------------------------------------------------------------------
 # optimise
 # --------------------------------------------------------------------------
 
 
-def test_optimise_rejects_a_parameter_named_twice():
+def test_optimise_rejects_a_parameter_named_twice(tmp_path):
     with pytest.raises(ValueError, match="named once"):
         op.optimise(
-            [(np.empty((0, 2)), np.empty(0))],
+            NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             pd.DataFrame(),
+            tmp_path,
             parameters=["min_distance", "min_distance"],
         )
 
 
-def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(monkeypatch):
+@pytest.mark.parametrize(
+    ("parameter", "disadvantage"),
+    [("decile", "decile"), ("route_discount", "score"), ("route_discount", "decile")],
+)
+def test_optimise_rejects_a_parameter_the_choice_of_disadvantage_bars(
+    parameter, disadvantage, tmp_path
+):
+    with pytest.raises(ValueError, match=rf"\['{parameter}'\] cannot be searched"):
+        op.optimise(
+            NO_STUDENTS,
+            gpd.GeoDataFrame(),
+            gpd.GeoDataFrame(),
+            pd.DataFrame(),
+            tmp_path,
+            parameters=[parameter],
+            disadvantage=disadvantage,
+        )
+
+
+def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(op, "score_feasible", lambda settings, **kwargs: None)
 
     with pytest.raises(ValueError, match="None of the 8 settings scored"):
         op.optimise(
-            [(np.empty((0, 2)), np.empty(0))],
+            NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             pd.DataFrame(),
+            tmp_path,
             pop_size=4,
             generations=2,
         )
@@ -167,7 +246,7 @@ def secondary():
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_score_feasible_names_a_setting_that_leaves_no_route(secondary, capsys):
     samples, areas, schools, shares = secondary
-    # Every district lies within 9.9km of every school.
+    # Every Southampton district lies within 9.9km of every school.
     settings = replace(DEFAULTS, min_distance=20_000)
 
     scored = op.score_feasible(
@@ -185,12 +264,7 @@ def test_score_feasible_names_a_setting_that_leaves_no_route(secondary, capsys):
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_optimise_finds_the_front_of_every_setting_scored(
-    secondary, tmp_path, monkeypatch
-):
-    monkeypatch.setattr(op, "OUT_DIR", tmp_path)
-    monkeypatch.setattr(op, "EVALUATIONS_CSV", tmp_path / "evaluations.csv")
-    monkeypatch.setattr(op, "FRONT_CSV", tmp_path / "front.csv")
+def test_optimise_finds_the_front_of_every_setting_scored(secondary, tmp_path):
     samples, areas, schools, shares = secondary
     parameters = ["capacity_scale", "progressivity"]
 
@@ -199,6 +273,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         areas,
         schools,
         shares,
+        tmp_path,
         parameters,
         pop_size=4,
         generations=2,
@@ -209,8 +284,10 @@ def test_optimise_finds_the_front_of_every_setting_scored(
     for parameter in parameters:
         low, high = op.bounds(parameter)
         assert evaluations[parameter].between(low, high).all()
-    pd.testing.assert_frame_equal(pd.read_csv(op.EVALUATIONS_CSV), evaluations)
-    pd.testing.assert_frame_equal(pd.read_csv(op.FRONT_CSV), front)
+    pd.testing.assert_frame_equal(
+        pd.read_csv(tmp_path / op.EVALUATIONS_CSV), evaluations
+    )
+    pd.testing.assert_frame_equal(pd.read_csv(tmp_path / op.FRONT_CSV), front)
 
     # No feasible setting beats a front setting on one objective without
     # losing on the other, and every feasible setting off the front is beaten.
@@ -247,6 +324,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         areas,
         schools,
         shares,
+        tmp_path / "pooled",
         parameters,
         pop_size=4,
         generations=2,
@@ -410,46 +488,120 @@ def test_draw_school_intake_centres_the_terms_on_the_largest_drawn():
 
 
 # --------------------------------------------------------------------------
+# route_utilisation, utilisation_summary and draw_route_utilisation
+# --------------------------------------------------------------------------
+
+
+def route_rows(n_routes: int = 2) -> pd.DataFrame:
+    """Route rows over two seeds: route r holds 4 + r seats, and in seed s
+    carries r + s disadvantaged riders and 1 other."""
+    return pd.DataFrame(
+        [
+            {
+                "seed": seed,
+                "route": route,
+                "LSOA21CD": f"E{route:08d}",
+                "school": f"School {route}",
+                "capacity": 4 + route,
+                "disadvantaged": route + seed,
+                "other": 1,
+            }
+            for seed in (0, 1)
+            for route in range(n_routes)
+        ]
+    )
+
+
+def test_route_utilisation_averages_each_routes_riders_over_seeds():
+    per_route = op.route_utilisation(route_rows())
+
+    # Route 1 holds more seats, so it comes first.
+    np.testing.assert_array_equal(per_route["route"], [1, 0])
+    np.testing.assert_array_equal(per_route["capacity"], [5, 4])
+    np.testing.assert_array_equal(per_route["disadvantaged"], [1.5, 0.5])
+    np.testing.assert_array_equal(per_route["other"], [1.0, 1.0])
+    np.testing.assert_array_equal(per_route["used"], [2.5, 1.5])
+    np.testing.assert_array_equal(per_route["unused"], [2.5, 2.5])
+    np.testing.assert_array_equal(per_route["utilisation"], [0.5, 0.375])
+
+
+def test_utilisation_summary_totals_the_seats_and_those_used():
+    assert op.utilisation_summary(route_rows()) == (
+        "2 routes provide 9 seats, 4.0 of them used, the mean over seeds (44.4%)."
+    )
+
+
+@pytest.mark.parametrize(
+    ("n_routes", "labelled"), [(2, True), (op.MAX_LABELLED_ROUTES + 1, False)]
+)
+def test_draw_route_utilisation_stacks_the_riders_below_the_unused_seats(
+    n_routes, labelled
+):
+    fig = Figure()
+    op.draw_route_utilisation(fig, route_rows(n_routes))
+    ax = fig.axes[0]
+
+    per_route = op.route_utilisation(route_rows(n_routes))
+    bars = ax.containers[:3]
+    heights = np.array([[bar.get_height() for bar in stack] for stack in bars])
+    # Disadvantaged riders, then the others, then the unused seats, so every
+    # bar stands at its route's seats.
+    np.testing.assert_allclose(heights[0], per_route["disadvantaged"])
+    np.testing.assert_allclose(heights[1], per_route["other"])
+    np.testing.assert_allclose(heights.sum(axis=0), per_route["capacity"])
+    labels = [tick.get_text() for tick in ax.get_xticklabels()]
+    if labelled:
+        assert labels == ["E00000001 → School 1", "E00000000 → School 0"]
+    else:
+        assert labels == []
+        assert ax.get_xlabel() == "Routes, by seats provided"
+
+
+# --------------------------------------------------------------------------
 # compare: against the real data folder
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_compare_scores_and_plots_the_setting_against_no_routes(
-    secondary, tmp_path, monkeypatch
-):
-    pngs = {
-        name: tmp_path / f"{name.lower()}.png"
-        for name in (
-            "DISSIMILARITY_PNG",
-            "UNASSIGNED_PNG",
-            "INTAKE_PNG",
-            "MODES_PNG",
-            "LORENZ_PNG",
-            "MAP_PNG",
-        )
-    }
-    for name, png in pngs.items():
-        monkeypatch.setattr(op, name, png)
+def test_compare_scores_and_plots_the_setting_against_no_routes(secondary, tmp_path):
     samples, areas, schools, shares = secondary
     settings = replace(DEFAULTS, capacity_scale=2.0, progressivity=0.5)
 
-    results, intake, modes = op.compare(settings, samples, areas, schools, shares)
+    results, intake, modes, routes = op.compare(
+        settings, samples, areas, schools, shares, tmp_path
+    )
 
-    rows, school_rows, mode_rows = score_settings(
-        settings, samples, areas, schools, shares
+    rows, school_rows, mode_rows, route_rows = score_settings(
+        settings, samples, areas, schools, shares, utilisation=True
     )
     pd.testing.assert_frame_equal(results, pd.DataFrame(rows))
     pd.testing.assert_frame_equal(intake, pd.DataFrame(school_rows))
     pd.testing.assert_frame_equal(modes, pd.DataFrame(mode_rows))
+    pd.testing.assert_frame_equal(routes, pd.DataFrame(route_rows))
+    assert len(routes) == results["n_routes"].iloc[0] * len(samples)
     assert list(results["scenario"]) == ["with routes", "without routes"]
-    for png in pngs.values():
-        assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", png
+    for name in (
+        op.DISSIMILARITY_PNG,
+        op.UNASSIGNED_PNG,
+        op.INTAKE_PNG,
+        op.MODES_PNG,
+        op.LORENZ_PNG,
+        op.MAP_PNG,
+        op.ROUTES_PNG,
+    ):
+        assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
-def test_compare_rejects_no_samples():
+def test_compare_rejects_no_samples(tmp_path):
     with pytest.raises(ValueError, match="No student sample"):
-        op.compare(DEFAULTS, [], gpd.GeoDataFrame(), gpd.GeoDataFrame(), pd.DataFrame())
+        op.compare(
+            DEFAULTS,
+            [],
+            gpd.GeoDataFrame(),
+            gpd.GeoDataFrame(),
+            pd.DataFrame(),
+            tmp_path,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -457,8 +609,8 @@ def test_compare_rejects_no_samples():
 # --------------------------------------------------------------------------
 
 
-def test_plot_front_writes_a_png_of_the_front(tmp_path, monkeypatch):
-    monkeypatch.setattr(op, "FRONT_PNG", tmp_path / "out" / "front.png")
+def test_plot_front_writes_a_png_of_the_front(tmp_path):
+    png = tmp_path / "out" / op.FRONT_PNG
     evaluations = pd.DataFrame(
         {
             "generation": [1, 1, 1, 2],
@@ -476,13 +628,19 @@ def test_plot_front_writes_a_png_of_the_front(tmp_path, monkeypatch):
         front.iloc[1],
         {"dissimilarity": 0.33, "car_displacement": 9.0},
         op.DEFAULT_OBJECTIVES,
+        png,
     )
 
-    assert op.FRONT_PNG.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-def test_plot_front_rejects_anything_but_two_objectives():
+def test_plot_front_rejects_anything_but_two_objectives(tmp_path):
     with pytest.raises(ValueError, match="plotted in two objectives"):
         op.plot_front(
-            pd.DataFrame(), pd.DataFrame(), pd.Series(), {}, ["dissimilarity"]
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.Series(),
+            {},
+            ["dissimilarity"],
+            tmp_path / op.FRONT_PNG,
         )

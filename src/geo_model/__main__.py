@@ -17,60 +17,72 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
 from geo_model.build_prefs import cohort_sizes
-from geo_model.build_routes import LINEAR_PROGRESSIVITY, ROUND_UP_SEATS
+from geo_model.build_routes import (
+    DISADVANTAGE,
+    DISADVANTAGE_CHOICES,
+    LINEAR_PROGRESSIVITY,
+    ROUND_UP_SEATS,
+)
 from geo_model.dissimilarity import (
     DEFAULTS,
     N_SEEDS,
+    Sample,
     Settings,
     match_sample,
     score_settings,
     settings_routes,
     student_samples,
 )
-from geo_model.load_data import (
-    NTS_YEARS,
-    load_areas,
-    load_nts_mode_shares,
-    load_schools,
-)
+from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
 from geo_model.utils import (
     CIRCUITY,
     MILE,
     MODES,
-    disadvantaged_students,
+    add_region_arguments,
+    disadvantaged_group,
     dissimilarity_terms,
     gini,
+    holm,
     lorenz_curve,
     mode_change,
+    region_dir,
+    regions,
+    routes_t_test,
 )
 
-SWEEP_DIR = Path("temp/sweep")
-RESULTS_CSV = SWEEP_DIR / "sweep.csv"
-SCHOOLS_CSV = SWEEP_DIR / "schools.csv"
-MODES_CSV = SWEEP_DIR / "modes.csv"
-PLOT_PNG = SWEEP_DIR / "sweep.png"
-MAP_PNG = SWEEP_DIR / "map.png"
-LORENZ_PNG = SWEEP_DIR / "lorenz.png"
+# The sweep's folder within each region's, and the files written to it.
+SWEEP_DIR = Path("sweep")
+RESULTS_CSV = "sweep.csv"
+SCHOOLS_CSV = "schools.csv"
+MODES_CSV = "modes.csv"
+TESTS_CSV = "t_tests.csv"
+PLOT_PNG = "sweep.png"
+MAP_PNG = "map.png"
+LORENZ_PNG = "lorenz.png"
 
 # One-at-a-time grids: a parameter runs over its values while the others hold
-# DEFAULTS, so every grid carries its own default.
+# DEFAULTS, so every grid carries its own default. The spans were chosen on
+# Southampton, whose figures the comments give; in another region a cell can
+# leave no route, which stops the sweep with EmptyRouteSet.
 GRID = {
-    # Decile 10 would make every student disadvantaged and the index undefined.
-    # The one grid that is not ceteris paribus: the decile sets the districts
-    # routes are built from as well as the group the index and the unassigned
-    # panel measure, so a step along it moves the treatment and the measurement
-    # together. That is what makes decile 2 the only setting where routes leave
-    # more disadvantaged students unassigned, taken apart in
-    # agent_docs/decile_anomaly.md.
+    # The decile sets the districts routes are built from and T of the
+    # progressive weight. Under DISADVANTAGE "decile" it also sets the group the
+    # index and the unassigned panel measure, so there a step along it moves
+    # the treatment and the measurement together, which is what makes decile 2
+    # the only setting where routes leave more disadvantaged students
+    # unassigned, taken apart in agent_docs/decile_anomaly.md. There decile 10
+    # would make every student disadvantaged and the index undefined, so the
+    # grid stops at 9 under every choice, and every choice sweeps one grid.
     "decile": [replace(DEFAULTS, decile=d) for d in range(1, 10)],
-    # Whole miles in metres. Every district lies within 9.9km of every school,
-    # so the route set stays non-empty throughout.
+    # Whole miles in metres. In Southampton every district lies within 9.9km
+    # of every school, so the route set stays non-empty throughout.
     "min_distance": [
         replace(DEFAULTS, min_distance=m) for m in (0, 1609, 3218, 4828, 6437, 8047)
     ],
-    # 1 is the fair share of the PAN. The smallest PAN is 120 and the city's
-    # cohort 2918, so from 2918 / 120 = 24.3 every route holds its district's
-    # whole cohort and no route capacity binds.
+    # 1 is the fair share of the places a school offers. In Southampton the
+    # fewest places offered is 126 and the cohort 2918, so from 2918 / 126 =
+    # 23.2 every route holds its district's whole cohort and no route capacity
+    # binds.
     "capacity_scale": [
         replace(DEFAULTS, capacity_scale=k)
         for k in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 10.0, 15.0, 20.0, 25.0)
@@ -79,13 +91,14 @@ GRID = {
     # times the threshold decile T, the total seats held fixed throughout.
     "progressivity": [replace(DEFAULTS, progressivity=p / 4) for p in range(13)],
     # Quarter steps over the spread of P8MEA, which runs from -0.99 to 0.82 over
-    # the 12 secondary schools: above 0.82 no school is above the threshold, so
-    # the condition is inert and the route set is whole. At LOCAL_RADIUS no
+    # Southampton's 12 secondary schools: above 0.82 no school is above the
+    # threshold, so the condition is inert and the route set is whole. At LOCAL_RADIUS no
     # value empties it, since a district with no school inside the radius at all
     # keeps its routes however low the threshold.
     "max_local_p8": [replace(DEFAULTS, max_local_p8=p / 4) for p in range(-2, 5)],
-    # Half miles in metres. Every disadvantaged district has a school above
-    # MAX_LOCAL_P8 within 5.6km, so the route set empties from there.
+    # Half miles in metres. Every Southampton district at or below the default
+    # decile has a school above MAX_LOCAL_P8 within 5.6km, so there the route
+    # set empties from that radius.
     "local_radius": [
         replace(DEFAULTS, local_radius=r)
         for r in (0, 805, 1609, 2414, 3218, 4023, 4828)
@@ -96,23 +109,24 @@ GRID = {
     "disadvantaged_performance_weight": [
         replace(DEFAULTS, disadvantaged_performance_weight=w / 10) for w in range(11)
     ],
-    # Routes leave only the districts at or below the decile that makes a student
-    # disadvantaged, so no other student is offered one and their route discount
-    # is inert. Only the disadvantaged students' discount is swept.
+    # Inert unless a student who is not disadvantaged rides, so swept only
+    # where one does: see `swept`.
+    "route_discount": [replace(DEFAULTS, route_discount=d / 10) for d in range(11)],
     "disadvantaged_route_discount": [
         replace(DEFAULTS, disadvantaged_route_discount=d / 10) for d in range(11)
     ],
 }
 
 AXIS_LABELS = {
-    "decile": "Disadvantaged at or below IDACI decile",
+    "decile": "Routes from LSOAs at or below IDACI decile",
     "min_distance": "Minimum route distance (m)",
-    "capacity_scale": "Route capacity scale (× fair share of PAN)",
+    "capacity_scale": "Route capacity scale (× fair share of places offered)",
     "progressivity": "Route seat progressivity (weight f(D)^p)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
     "local_radius": "Local performance radius (m)",
     "performance_weight": "Performance weight, other students",
     "disadvantaged_performance_weight": "Performance weight, disadvantaged students",
+    "route_discount": "Route discount, other students",
     "disadvantaged_route_discount": "Route discount, disadvantaged students",
 }
 
@@ -136,8 +150,16 @@ GROUP_COLOURS = {
     "other, without routes": "#a5a49f",
 }
 DEFAULT_LINE = {"color": "#898781", "linestyle": "--", "linewidth": 1}
+# The stars each value of the index panels takes, by the level its
+# Holm-corrected p-value falls below, and the key the figure gives them.
+SIGNIFICANCE = [(0.001, "***"), (0.01, "**"), (0.05, "*")]
+SIGNIFICANCE_KEY = (
+    "Above the index: paired t-test, with routes against without, "
+    "Holm-corrected over every cell\n"
+    "*** p < 0.001   ** p < 0.01   * p < 0.05   ns p ≥ 0.05   – undefined"
+)
 # What the intake panels and the FSM strip show of each school: its term of the
-# dissimilarity index, diverging either side of the city-wide mix, or the
+# dissimilarity index, diverging either side of the region-wide mix, or the
 # disadvantaged share of its intake, in one hue from light to dark.
 INTAKE_MEASURES = {
     "dissimilarity": {
@@ -161,30 +183,50 @@ INK = "#1f2933"
 # the purple fill so the plain trips stand out against it.
 LINK_COLOURS = {"without a route": "#029e73", "on a route": "#de8f05"}
 # The map's scale bar, kilometres ticked above the line and miles below: the
-# metres in each unit and the units the bar reaches, near a third of the
-# city's 10.9km width either way.
+# metres in each unit and the units the bar reaches, near a third of
+# Southampton's 10.9km width either way.
 SCALE_BAR = {"km": (1000.0, 3), "miles": (MILE, 2)}
 
 
+def swept(disadvantage: str) -> list[str]:
+    """The parameters of GRID the sweep runs under `disadvantage`.
+
+    Only under "score-open" does a student who is not disadvantaged ride a
+    route: under "score" the disadvantaged alone ride, and under "decile"
+    every student of a route's district is disadvantaged. Elsewhere the other
+    students' route discount is inert, so it is swept under "score-open" alone.
+
+    Args:
+        disadvantage (str): One of DISADVANTAGE_CHOICES.
+
+    Returns:
+        list[str]: Keys of GRID, in its order.
+    """
+    return [p for p in GRID if p != "route_discount" or disadvantage == "score-open"]
+
+
 def sweep(
-    samples: list[tuple[np.ndarray, np.ndarray]],
+    samples: list[Sample],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     shares: pd.DataFrame,
+    out_dir: Path,
     circuity: float = CIRCUITY,
     workers: int = 1,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
+    disadvantage: str = DISADVANTAGE,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Score every cell of GRID on the same samples.
+    """Score every cell of the parameters `swept` names on the same samples.
 
     Every cell matches the same student samples, so the scores of two cells
     differ by their parameter values alone, and the default cell of every
-    parameter reproduces `dissimilarity.run` and `car_displacement.run`.
+    parameter reproduces `dissimilarity.run` and `car_displacement.run` at the
+    same `disadvantage`.
 
     Args:
-        samples (list[tuple[np.ndarray, np.ndarray]]): Student samples, as
-        yielded by `student_samples`, in seed order.
+        samples (list[Sample]): Student samples, as yielded by
+        `student_samples`, in seed order.
 
         areas (gpd.GeoDataFrame): Districts, as `route_network` takes them.
 
@@ -193,15 +235,20 @@ def sweep(
 
         shares (pd.DataFrame): Passed to `score_settings`.
 
+        out_dir (Path): Folder the rows are written to.
+
         circuity (float, optional): Passed to `score_settings`. Defaults to
         CIRCUITY.
 
         workers (int, optional): Processes to score the cells in, one cell
-        per task. A routed instance carries a priority array of up to
-        150MB, so memory rather than cores bounds the gain: on a 24-core,
-        32GB machine 4 workers ran the sweep 2.2x faster than one, 8 ran it
-        3x faster, and 16 ran out of memory. Threads were slower than one
-        process. Defaults to 1, which scores in this process.
+        per task. A routed instance's preferences and their ranks take under
+        1MB in Southampton and 37MB for Southampton and Hampshire merged.
+        The speed-ups last measured, on a 24-core, 32GB machine, predate
+        them: 4 workers ran the sweep 2.2x faster than one and 8 ran it 3x
+        faster, while 16 ran out of memory holding priority arrays over
+        every school, route and student, of up to 150MB each. Threads were
+        slower than one process. Defaults to 1, which scores in this
+        process.
 
         round_up (bool, optional): Passed to `score_settings`. Defaults to
         ROUND_UP_SEATS.
@@ -209,15 +256,18 @@ def sweep(
         linear (bool, optional): Passed to `score_settings`. Defaults to
         LINEAR_PROGRESSIVITY.
 
+        disadvantage (str, optional): Passed to `swept` and `score_settings`.
+        Defaults to DISADVANTAGE.
+
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: The scenario rows,
         one per (parameter, value, seed, scenario), the school rows, one per
         (parameter, value, seed, scenario, school), and the mode rows, one
         per (parameter, value, seed, scenario, mode), each with "parameter"
         and "value" ahead of the columns `score_settings` returns. Also
-        written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV.
+        written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV in `out_dir`.
     """
-    cells = [(parameter, s) for parameter, group in GRID.items() for s in group]
+    cells = [(p, settings) for p in swept(disadvantage) for settings in GRID[p]]
     score = functools.partial(
         score_settings,
         samples=samples,
@@ -227,6 +277,7 @@ def sweep(
         circuity=circuity,
         round_up=round_up,
         linear=linear,
+        disadvantage=disadvantage,
     )
     if workers == 1:
         scored = [score(settings) for _, settings in cells]
@@ -235,9 +286,13 @@ def sweep(
             scored = list(pool.map(score, [settings for _, settings in cells]))
 
     rows, school_rows, mode_rows = [], [], []
-    for (parameter, settings), cell_rows in zip(cells, scored):
+    # The route rows are left empty, since `score_settings` keeps them only
+    # when asked.
+    for (parameter, settings), (*cell_rows, _) in zip(cells, scored):
         cell = {"parameter": parameter, "value": getattr(settings, parameter)}
-        for tagged, untagged in zip((rows, school_rows, mode_rows), cell_rows):
+        for tagged, untagged in zip(
+            (rows, school_rows, mode_rows), cell_rows, strict=True
+        ):
             tagged += [{**cell, **r} for r in untagged]
 
     results, schools, modes = (
@@ -245,10 +300,10 @@ def sweep(
         pd.DataFrame(school_rows),
         pd.DataFrame(mode_rows),
     )
-    SWEEP_DIR.mkdir(parents=True, exist_ok=True)
-    results.to_csv(RESULTS_CSV, index=False)
-    schools.to_csv(SCHOOLS_CSV, index=False)
-    modes.to_csv(MODES_CSV, index=False)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results.to_csv(out_dir / RESULTS_CSV, index=False)
+    schools.to_csv(out_dir / SCHOOLS_CSV, index=False)
+    modes.to_csv(out_dir / MODES_CSV, index=False)
     return results, schools, modes
 
 
@@ -328,13 +383,67 @@ def plot_parameter(
     sns.despine(ax=ax)
 
 
+def sweep_tests(results: pd.DataFrame) -> pd.DataFrame:
+    """The paired t-test of the index with routes against without in every
+    cell, its p-value Holm-corrected over every cell `results` holds.
+
+    The family is the whole frame rather than the parameters drawn, so every
+    figure drawn from the same frame marks a cell alike. Every parameter's
+    default cell scores the same matchings yet counts as a test of its own,
+    which only makes the correction more conservative.
+
+    Args:
+        results (pd.DataFrame): The scenario rows `sweep` returns.
+
+    Returns:
+        pd.DataFrame: One row per (parameter, value), so indexed, with the
+        columns `routes_t_test` returns and "p_holm", the corrected p.
+    """
+    tests = results.groupby(["parameter", "value"]).apply(routes_t_test)
+    return tests.assign(p_holm=holm(tests["p"]))
+
+
+def stars(p: float) -> str:
+    """The stars of SIGNIFICANCE `p` reaches, "ns" short of every level, and
+    "–" where the test is undefined."""
+    if np.isnan(p):
+        return "–"
+    return next((mark for level, mark in SIGNIFICANCE if p < level), "ns")
+
+
+def plot_significance(ax: Axes, tests: pd.DataFrame, parameter: str) -> None:
+    """Mark every value of one parameter's index panel, above the panel,
+    with the stars of its Holm-corrected p-value.
+
+    Args:
+        ax (Axes): The parameter's index panel.
+
+        tests (pd.DataFrame): As returned by `sweep_tests`.
+
+        parameter (str): A key of GRID.
+    """
+    corrected = tests["p_holm"].xs(parameter)
+    for x, p in zip(positions(parameter)[corrected.index], corrected):
+        ax.text(
+            x,
+            1,
+            stars(p),
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="bottom",
+            fontsize="small",
+        )
+
+
 def fsm_share(secondary_schools: pd.DataFrame) -> pd.Series:
     """The share of each school's pupils eligible for free school meals.
 
     The register's own measure of a school's disadvantage, so the point of
     comparison for the share the model seats. The two are not the same
-    measure: the model counts students by the deprivation decile of their
-    district, the register counts pupils by their own eligibility.
+    measure: the model draws students disadvantaged in proportion to their
+    district's IDACI score, or under DISADVANTAGE "decile" counts them by
+    their district's decile, while the register counts pupils by their own
+    eligibility.
 
     Args:
         secondary_schools (pd.DataFrame): Schools carrying
@@ -358,9 +467,11 @@ def fsm_term(secondary_schools: pd.DataFrame) -> pd.Series:
     school meals against the rest, as the register counts them.
 
     The register's own measure of how a school's intake departs from the
-    city's, on the scale of the terms the model seats, though not the same
-    measure: the model counts students by the deprivation decile of their
-    district, the register counts pupils by their own eligibility. The
+    region's, on the scale of the terms the model seats, though not the same
+    measure: the model draws students disadvantaged in proportion to their
+    district's IDACI score, or under DISADVANTAGE "decile" counts them by
+    their district's decile, while the register counts pupils by their own
+    eligibility. The
     register takes "PercentageFSM" over fewer pupils than "NumberOfPupils"
     at schools with a sixth form, so the pupils it was taken over are
     recovered as FSM * 100 / PercentageFSM, to within the percentage's
@@ -558,10 +669,11 @@ def draw_columns(
     parameters: list[str],
     measure: str = "dissimilarity",
 ) -> None:
-    """Fill `fig` with a column per parameter: the index on top, then who the
-    matching leaves unplaced, then each school's intake with routes and
-    without, the FSM strip closing both intake rows, and the change in travel
-    mode the routes induce at the foot.
+    """Fill `fig` with a column per parameter: the index on top, every value
+    starred by its test from `sweep_tests`, then who the matching leaves
+    unplaced, then each school's intake with routes and without, the FSM
+    strip closing both intake rows, and the change in travel mode the routes
+    induce at the foot.
 
     Every panel of a column shares one x-axis, drawn once at the foot, so the
     column reads top to bottom at a value. Every line row shares one y-axis
@@ -615,6 +727,7 @@ def draw_columns(
         limits = (-bound, bound)
     change = mode_change(modes)
     unassigned = unassigned_rows(results)
+    tests = sweep_tests(results)
 
     # The FSM strip takes a narrow last column of its own, so the intake
     # panels stay in the columns of the line panels above them.
@@ -636,6 +749,7 @@ def draw_columns(
         plot_parameter(
             column[0], results, parameter, "dissimilarity", "scenario", COLOURS
         )
+        plot_significance(column[0], tests, parameter)
         plot_stack(column[1], unassigned, parameter)
         for ax, scenario in zip(column[2:4], COLOURS):
             plot_intake(ax, schools, parameter, scenario, order.index, measure, limits)
@@ -669,13 +783,15 @@ def draw_columns(
 
     # The lines of the scenario panels and the patches the stacks are built
     # from share the top band: the stacks take their hue from the scenario
-    # and their tone from the group.
+    # and their tone from the group. The stars' key heads it.
     fig.legend(
         handles=legend_handles(COLOURS)
         + [Patch(color=colour, label=label) for label, colour in GROUP_COLOURS.items()],
         loc="outside upper center",
         ncol=4,
         frameon=False,
+        title=SIGNIFICANCE_KEY,
+        title_fontsize="small",
     )
     fig.legend(
         handles=legend_handles(MODE_COLOURS),
@@ -697,12 +813,14 @@ def plot(
     schools: pd.DataFrame,
     modes: pd.DataFrame,
     fsm: pd.Series,
+    parameters: list[str],
+    out_dir: Path,
     measure: str = "dissimilarity",
 ) -> None:
     """Plot every parameter on its own and all of them side by side.
 
-    Each parameter is written to SWEEP_DIR as its own PNG, and the matrix of
-    every column to PLOT_PNG.
+    Each parameter is written to `out_dir` as its own PNG, and the matrix of
+    every column to PLOT_PNG there.
 
     Args:
         results (pd.DataFrame): The scenario rows `sweep` returns.
@@ -714,28 +832,34 @@ def plot(
         fsm (pd.Series): As returned by `fsm_term` or `fsm_share`, whichever
         `measure` is.
 
+        parameters (list[str]): Keys of GRID the frames sweep, as `swept`
+        names them.
+
+        out_dir (Path): Folder the PNGs are written to.
+
         measure (str, optional): Passed to `draw_columns`. Defaults to
         "dissimilarity".
     """
-    SWEEP_DIR.mkdir(parents=True, exist_ok=True)
-    for parameter in GRID:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for parameter in parameters:
         # A bare Figure draws without a display backend, which pyplot would need.
         fig = Figure(figsize=(9, 19), layout="constrained")
         draw_columns(fig, results, schools, modes, fsm, [parameter], measure)
-        fig.savefig(SWEEP_DIR / f"{parameter}.png", dpi=200)
+        fig.savefig(out_dir / f"{parameter}.png", dpi=200)
 
-    fig = Figure(figsize=(4.5 * len(GRID), 20), layout="constrained")
-    draw_columns(fig, results, schools, modes, fsm, list(GRID), measure)
-    fig.savefig(PLOT_PNG, dpi=200)
+    fig = Figure(figsize=(4.5 * len(parameters), 20), layout="constrained")
+    draw_columns(fig, results, schools, modes, fsm, parameters, measure)
+    fig.savefig(out_dir / PLOT_PNG, dpi=200)
 
 
 def settings_matchings(
     settings: Settings,
-    sample: tuple[np.ndarray, np.ndarray],
+    sample: Sample,
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
+    disadvantage: str = DISADVANTAGE,
 ) -> dict[str, np.ndarray]:
     """Match one student sample at `settings`, with routes and without.
 
@@ -746,8 +870,8 @@ def settings_matchings(
         settings (Settings): The parameter values to build routes and rank
         preferences with.
 
-        sample (tuple[np.ndarray, np.ndarray]): Coordinates and positional
-        district index of each student, as yielded by `student_samples`.
+        sample (Sample): One student sample, as yielded by
+        `student_samples`.
 
         areas (gpd.GeoDataFrame): Districts, as `score_settings` takes them.
 
@@ -760,23 +884,31 @@ def settings_matchings(
         linear (bool, optional): Passed to `settings_routes`. Defaults to
         LINEAR_PROGRESSIVITY.
 
+        disadvantage (str, optional): As `score_settings` takes it. Defaults
+        to DISADVANTAGE.
+
     Returns:
         dict[str, np.ndarray]: The matching of each scenario, "with routes"
         then "without routes", as returned by `fast_DAT`.
     """
-    student_xy, student_lsoa = sample
+    student_xy, student_lsoa, drawn = sample
     return dict(
         match_sample(
             student_xy,
             student_lsoa,
             areas,
             secondary_schools,
-            settings_routes(settings, areas, secondary_schools, round_up, linear),
-            disadvantaged_students(student_lsoa, areas, settings.decile),
+            settings_routes(
+                settings, areas, secondary_schools, round_up, linear, disadvantage
+            ),
+            disadvantaged_group(
+                student_lsoa, drawn, areas, settings.decile, disadvantage
+            ),
             settings.performance_weight,
             settings.route_discount,
             settings.disadvantaged_performance_weight,
             settings.disadvantaged_route_discount,
+            disadvantage,
         )
     )
 
@@ -899,8 +1031,8 @@ def draw_scale(ax: Axes) -> None:
     above the line and its second below, both from the same origin.
 
     Lengths are British National Grid metres, the metres every distance in the
-    model is measured in; over the city a grid metre is 0.9996 of a metre on
-    the ground. The bar is placed by the panel's limits and leaves them as
+    model is measured in; over Southampton a grid metre is 0.9996 of a metre
+    on the ground. The bar is placed by the panel's limits and leaves them as
     they are, so it is drawn last.
 
     Args:
@@ -984,7 +1116,9 @@ def default_cell(rows: pd.DataFrame) -> pd.DataFrame:
     return default
 
 
-def draw_lorenz(fig: Figure, schools: pd.DataFrame) -> None:
+def draw_lorenz(
+    fig: Figure, schools: pd.DataFrame, disadvantage: str = DISADVANTAGE
+) -> None:
     """Fill `fig` with a panel per scenario: the Lorenz curve of disadvantaged
     against seated students over schools at one setting, a line per seed, and
     its Gini coefficient over the seeds.
@@ -998,7 +1132,12 @@ def draw_lorenz(fig: Figure, schools: pd.DataFrame) -> None:
 
         schools (pd.DataFrame): The school rows of one setting, as
         `score_settings` returns them or `default_cell` picks them from
-        `sweep`'s, the disadvantaged group taken at DEFAULTS.decile.
+        `sweep`'s.
+
+        disadvantage (str, optional): The choice of DISADVANTAGE_CHOICES the
+        rows were scored under, which the axis label names. Under "decile"
+        the setting's decile is taken to be DEFAULTS.decile. Defaults to
+        DISADVANTAGE.
     """
     axes = fig.subplots(1, len(COLOURS), sharex=True, sharey=True)
     for ax, (scenario, colour) in zip(axes, COLOURS.items()):
@@ -1027,22 +1166,30 @@ def draw_lorenz(fig: Figure, schools: pd.DataFrame) -> None:
         ax.grid(True, color="#e1e0d9")
         ax.set_axisbelow(True)
         sns.despine(ax=ax)
-    axes[0].set_ylabel(
-        f"Cumulative share of disadvantaged students (IDACI decile ≤ {DEFAULTS.decile})"
+    group = (
+        f"IDACI decile ≤ {DEFAULTS.decile}"
+        if disadvantage == "decile"
+        else "drawn from LSOA IDACI scores"
     )
+    axes[0].set_ylabel(f"Cumulative share of disadvantaged students ({group})")
 
 
-def plot_lorenz(schools: pd.DataFrame, path: Path) -> None:
+def plot_lorenz(
+    schools: pd.DataFrame, path: Path, disadvantage: str = DISADVANTAGE
+) -> None:
     """Plot the Lorenz curves with `draw_lorenz`, to `path`.
 
     Args:
         schools (pd.DataFrame): Passed to `draw_lorenz`.
 
         path (Path): PNG to write.
+
+        disadvantage (str, optional): Passed to `draw_lorenz`. Defaults to
+        DISADVANTAGE.
     """
     # A bare Figure draws without a display backend, which pyplot would need.
     fig = Figure(figsize=(12, 6.5), layout="constrained")
-    draw_lorenz(fig, schools)
+    draw_lorenz(fig, schools, disadvantage)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=200)
 
@@ -1057,7 +1204,7 @@ def main() -> None:
         "--workers",
         type=int,
         default=1,
-        help="processes to score cells in; bounded by memory, see `sweep`",
+        help="processes to score cells in, see `sweep`",
     )
     parser.add_argument(
         "--years",
@@ -1087,6 +1234,16 @@ def main() -> None:
         "each district's IDACI decile D rather than by 1 / D",
     )
     parser.add_argument(
+        "--disadvantage",
+        choices=DISADVANTAGE_CHOICES,
+        default=DISADVANTAGE,
+        help="score: each LSOA's students are drawn disadvantaged in proportion "
+        "to its IDACI score, and routes carry only them; score-open: drawn the "
+        "same way, but routes carry every student of their district; decile: "
+        "every student of an LSOA at or below the decile is disadvantaged and "
+        "rides, the model as it was before",
+    )
+    parser.add_argument(
         "--intake",
         choices=list(INTAKE_MEASURES),
         default="dissimilarity",
@@ -1106,67 +1263,100 @@ def main() -> None:
         "students over schools at the default settings, with routes and "
         "without, and its Gini coefficient",
     )
+    add_region_arguments(parser)
     args = parser.parse_args()
 
-    areas = load_areas()
-    _, secondary_schools = load_schools()
-    samples = list(student_samples(areas, cohort_sizes(areas, "secondary"), args.seeds))
     shares = load_nts_mode_shares(args.years)
-
-    results, schools, modes = sweep(
-        samples,
-        areas,
-        secondary_schools,
-        shares,
-        args.circuity,
-        args.workers,
-        args.round_up_seats,
-        args.linear_progressivity,
-    )
-    summary = results.pivot_table(
-        index=["parameter", "value"],
-        columns="scenario",
-        values="dissimilarity",
-        aggfunc="mean",
-    )
-    print(summary.loc[list(GRID)].round(3))
-    change = mode_change(modes).pivot_table(
-        index=["parameter", "value"], columns="mode", values="change", aggfunc="mean"
-    )
-    print("Change in students per mode with routes:")
-    print(change.loc[list(GRID), MODES].round(1))
-    unassigned = unassigned_rows(results).pivot_table(
-        index=["parameter", "value"],
-        columns=["group", "scenario"],
-        values="unassigned",
-        aggfunc="mean",
-    )
-    print("Students of each group left unassigned:")
-    # Four columns under a two-level header fold at the default width.
-    with pd.option_context("display.width", 100):
-        print(unassigned.loc[list(GRID)].round(1))
+    parameters = swept(args.disadvantage)
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
-    plot(results, schools, modes, fsm(secondary_schools), args.intake)
-    if args.map:
-        plot_map(
+    for las, areas in regions(args.la, args.merge):
+        out_dir = region_dir(las) / SWEEP_DIR
+        _, secondary_schools = load_schools(las)
+        samples = list(
+            student_samples(areas, cohort_sizes(areas, "secondary"), args.seeds)
+        )
+
+        results, schools, modes = sweep(
+            samples,
             areas,
             secondary_schools,
-            samples[0][0],
-            settings_matchings(
-                DEFAULTS,
-                samples[0],
+            shares,
+            out_dir,
+            args.circuity,
+            args.workers,
+            args.round_up_seats,
+            args.linear_progressivity,
+            args.disadvantage,
+        )
+        print(" + ".join(las) + ":")
+        tests = sweep_tests(results)
+        tests.to_csv(out_dir / TESTS_CSV)
+        summary = results.pivot_table(
+            index=["parameter", "value"],
+            columns="scenario",
+            values="dissimilarity",
+            aggfunc="mean",
+        ).join(tests[["t", "p", "p_holm"]])
+        print(
+            "Mean index over seeds and its paired t-test, with routes against "
+            "without, p Holm-corrected over every cell as p_holm:"
+        )
+        # Whole, so no test is folded away, and the p-values left unrounded,
+        # so a small one does not print as 0.
+        print(
+            summary.loc[parameters]
+            .round({"with routes": 3, "without routes": 3, "t": 2})
+            .to_string()
+        )
+        change = mode_change(modes).pivot_table(
+            index=["parameter", "value"],
+            columns="mode",
+            values="change",
+            aggfunc="mean",
+        )
+        print("Change in students per mode with routes:")
+        print(change.loc[parameters, MODES].round(1))
+        unassigned = unassigned_rows(results).pivot_table(
+            index=["parameter", "value"],
+            columns=["group", "scenario"],
+            values="unassigned",
+            aggfunc="mean",
+        )
+        print("Students of each group left unassigned:")
+        # Four columns under a two-level header fold at the default width.
+        with pd.option_context("display.width", 100):
+            print(unassigned.loc[parameters].round(1))
+        plot(
+            results,
+            schools,
+            modes,
+            fsm(secondary_schools),
+            parameters,
+            out_dir,
+            args.intake,
+        )
+        if args.map:
+            plot_map(
                 areas,
                 secondary_schools,
-                args.round_up_seats,
-                args.linear_progressivity,
-            ),
-            MAP_PNG,
+                samples[0][0],
+                settings_matchings(
+                    DEFAULTS,
+                    samples[0],
+                    areas,
+                    secondary_schools,
+                    args.round_up_seats,
+                    args.linear_progressivity,
+                    args.disadvantage,
+                ),
+                out_dir / MAP_PNG,
+            )
+        if args.lorenz:
+            plot_lorenz(default_cell(schools), out_dir / LORENZ_PNG, args.disadvantage)
+        print(
+            f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, {TESTS_CSV} and "
+            f"the plots in {out_dir}."
         )
-    if args.lorenz:
-        plot_lorenz(default_cell(schools), LORENZ_PNG)
-    print(
-        f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV} and the plots in {SWEEP_DIR}."
-    )
 
 
 if __name__ == "__main__":

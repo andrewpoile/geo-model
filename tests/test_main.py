@@ -14,10 +14,12 @@ from geo_model import load_data as ld
 from geo_model.dissimilarity import score_settings
 from geo_model.utils import (
     MODES,
-    disadvantaged_students,
+    disadvantaged_group,
     dissimilarity_index,
     gini,
+    holm,
     lorenz_curve,
+    routes_t_test,
 )
 
 DATA = ld.POPULATION_XLSX.parent.parent
@@ -39,6 +41,19 @@ def test_every_grid_varies_its_own_parameter_alone_and_holds_the_default():
             assert others == defaults
 
 
+@pytest.mark.parametrize("disadvantage", ["score", "decile"])
+def test_swept_leaves_the_other_students_route_discount_out_unless_they_ride(
+    disadvantage,
+):
+    assert sweep_main.swept(disadvantage) == [
+        parameter for parameter in sweep_main.GRID if parameter != "route_discount"
+    ]
+
+
+def test_swept_runs_every_grid_when_routes_are_open_to_every_student():
+    assert sweep_main.swept("score-open") == list(sweep_main.GRID)
+
+
 # --------------------------------------------------------------------------
 # sweep: against the real data folder
 # --------------------------------------------------------------------------
@@ -46,10 +61,6 @@ def test_every_grid_varies_its_own_parameter_alone_and_holds_the_default():
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
-    monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path)
-    monkeypatch.setattr(sweep_main, "RESULTS_CSV", tmp_path / "sweep.csv")
-    monkeypatch.setattr(sweep_main, "SCHOOLS_CSV", tmp_path / "schools.csv")
-    monkeypatch.setattr(sweep_main, "MODES_CSV", tmp_path / "modes.csv")
     monkeypatch.setattr(
         sweep_main,
         "GRID",
@@ -69,7 +80,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
 
     shares = ld.load_nts_mode_shares()
 
-    results, intake, modes = sweep_main.sweep(samples, areas, schools, shares)
+    results, intake, modes = sweep_main.sweep(samples, areas, schools, shares, tmp_path)
 
     assert len(results) == 3 * 1 * 2
     assert len(intake) == 3 * 1 * 2 * len(schools)
@@ -77,9 +88,12 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     for frame in (results, intake, modes):
         assert list(frame.columns[:2]) == ["parameter", "value"]
     assert results["dissimilarity"].between(0, 1).all()
-    pd.testing.assert_frame_equal(pd.read_csv(sweep_main.RESULTS_CSV), results)
-    pd.testing.assert_frame_equal(pd.read_csv(sweep_main.SCHOOLS_CSV), intake)
-    pd.testing.assert_frame_equal(pd.read_csv(sweep_main.MODES_CSV), modes)
+    for name, frame in (
+        (sweep_main.RESULTS_CSV, results),
+        (sweep_main.SCHOOLS_CSV, intake),
+        (sweep_main.MODES_CSV, modes),
+    ):
+        pd.testing.assert_frame_equal(pd.read_csv(tmp_path / name), frame)
 
     # Every seated student sits in exactly one school's intake.
     keys = ["parameter", "value", "seed", "scenario"]
@@ -97,7 +111,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     )
 
     # Scoring the cells in worker processes changes nothing but the wall time.
-    pooled = sweep_main.sweep(samples, areas, schools, shares, workers=2)
+    pooled = sweep_main.sweep(samples, areas, schools, shares, tmp_path, workers=2)
     for pooled_frame, frame in zip(pooled, (results, intake, modes)):
         pd.testing.assert_frame_equal(pooled_frame, frame)
 
@@ -190,14 +204,13 @@ def draw(parameters: list[str]) -> np.ndarray:
 
 
 @pytest.mark.parametrize("measure", list(sweep_main.INTAKE_MEASURES))
-def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, monkeypatch, measure):
-    monkeypatch.setattr(sweep_main, "SWEEP_DIR", tmp_path / "out")
-    monkeypatch.setattr(sweep_main, "PLOT_PNG", tmp_path / "out" / "sweep.png")
+def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, measure):
+    out_dir = tmp_path / "out"
 
-    sweep_main.plot(*synthetic_frames(), measure)
+    sweep_main.plot(*synthetic_frames(), list(sweep_main.GRID), out_dir, measure)
 
-    for name in [*sweep_main.GRID, "sweep"]:
-        png = sweep_main.SWEEP_DIR / f"{name}.png"
+    for name in [*(f"{p}.png" for p in sweep_main.GRID), sweep_main.PLOT_PNG]:
+        png = out_dir / name
         assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
@@ -256,12 +269,82 @@ def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
 
 
 # --------------------------------------------------------------------------
+# sweep_tests, stars and the index panels' stars
+# --------------------------------------------------------------------------
+
+
+def test_sweep_tests_tests_every_cell_and_corrects_over_them_all():
+    results, *_ = synthetic_frames()
+
+    tests = sweep_main.sweep_tests(results)
+
+    cells = results[["parameter", "value"]].drop_duplicates()
+    expected = pd.DataFrame(
+        [
+            routes_t_test(
+                results[
+                    (results["parameter"] == parameter) & (results["value"] == value)
+                ]
+            )
+            for parameter, value in zip(cells["parameter"], cells["value"])
+        ],
+        index=pd.MultiIndex.from_frame(cells),
+    ).sort_index()
+    pd.testing.assert_frame_equal(tests.drop(columns="p_holm"), expected)
+    pd.testing.assert_series_equal(tests["p_holm"], holm(tests["p"]), check_names=False)
+
+
+@pytest.mark.parametrize(
+    ("p", "mark"),
+    [
+        (0.0005, "***"),
+        (0.001, "**"),
+        (0.005, "**"),
+        (0.01, "*"),
+        (0.049, "*"),
+        (0.05, "ns"),
+        (0.9, "ns"),
+        (np.nan, "–"),
+    ],
+)
+def test_stars_mark_the_level_a_p_value_falls_below(p, mark):
+    assert sweep_main.stars(p) == mark
+
+
+def test_draw_columns_stars_every_value_by_its_test_over_the_whole_frame():
+    results, intake, modes, fsm = synthetic_frames()
+    # Routes lower every decile cell's index by 0.1 in seed 0 and 0.1001 in
+    # seed 1, so t = -2001 over 1 degree of freedom and p = 3.2e-4: "***"
+    # alone, "**" corrected over the decile's 9 cells and "*" over every
+    # cell of GRID.
+    decile = results["parameter"] == "decile"
+    unrouted = results[decile & (results["scenario"] == "without routes")]
+    routed = decile & (results["scenario"] == "with routes")
+    results.loc[routed, "dissimilarity"] = (
+        unrouted["dissimilarity"].to_numpy() - 0.1 - 1e-4 * unrouted["seed"].to_numpy()
+    )
+    fig = Figure(figsize=(9, 20), layout="constrained")
+
+    sweep_main.draw_columns(fig, results, intake, modes, fsm, ["decile"])
+
+    marks = fig.axes[0].texts
+    assert [mark.get_text() for mark in marks] == ["*"] * 9
+    corrected = sweep_main.sweep_tests(results)["p_holm"].xs("decile")
+    at = sweep_main.positions("decile")
+    assert [mark.get_position()[0] for mark in marks] == list(at[corrected.index])
+    assert fig.legends[0].get_title().get_text() == sweep_main.SIGNIFICANCE_KEY
+
+
+# --------------------------------------------------------------------------
 # settings_matchings: against the real data folder
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults():
+@pytest.mark.parametrize("disadvantage", sweep_main.DISADVANTAGE_CHOICES)
+def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
+    disadvantage,
+):
     areas = ld.load_areas()
     _, schools = ld.load_schools()
     samples = list(
@@ -270,12 +353,22 @@ def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults():
     shares = ld.load_nts_mode_shares()
 
     matchings = sweep_main.settings_matchings(
-        sweep_main.DEFAULTS, samples[0], areas, schools
+        sweep_main.DEFAULTS, samples[0], areas, schools, disadvantage=disadvantage
     )
-    rows, _, _ = score_settings(sweep_main.DEFAULTS, samples, areas, schools, shares)
+    rows, _, _, route_rows = score_settings(
+        sweep_main.DEFAULTS,
+        samples,
+        areas,
+        schools,
+        shares,
+        disadvantage=disadvantage,
+    )
+    # The route rows are kept only when asked for.
+    assert route_rows == []
 
-    disadvantaged = disadvantaged_students(
-        samples[0][1], areas, sweep_main.DEFAULTS.decile
+    _, student_lsoa, drawn = samples[0]
+    disadvantaged = disadvantaged_group(
+        student_lsoa, drawn, areas, sweep_main.DEFAULTS.decile, disadvantage
     )
     assert [row["scenario"] for row in rows] == list(matchings)
     for row in rows:
@@ -438,6 +531,24 @@ def test_default_cell_rejects_rows_without_it():
 
     with pytest.raises(ValueError, match="no default cell of"):
         sweep_main.default_cell(intake.drop(default_intake(intake).index))
+
+
+@pytest.mark.parametrize(
+    ("disadvantage", "group"),
+    [
+        ("score", "drawn from LSOA IDACI scores"),
+        ("score-open", "drawn from LSOA IDACI scores"),
+        ("decile", f"IDACI decile ≤ {sweep_main.DEFAULTS.decile}"),
+    ],
+)
+def test_draw_lorenz_names_the_group_the_rows_were_scored_on(disadvantage, group):
+    fig = Figure()
+
+    sweep_main.draw_lorenz(fig, default_intake(synthetic_frames()[1]), disadvantage)
+
+    assert fig.axes[0].get_ylabel() == (
+        f"Cumulative share of disadvantaged students ({group})"
+    )
 
 
 def test_plot_lorenz_writes_a_png(tmp_path):

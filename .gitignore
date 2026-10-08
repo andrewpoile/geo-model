@@ -36,7 +36,7 @@ data/
 # Temporary files
 temp/
 
-# Outputs
+# Simulation outputs, one folder per region
 output/
 
 # Loose testing

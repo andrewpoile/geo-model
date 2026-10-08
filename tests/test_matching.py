@@ -7,14 +7,25 @@ from geo_model.utils import rank_bundles
 NO_ROUTES = np.empty(0, dtype=np.int32)
 
 
-def run(preferences, priorities, school_capacities, route_capacities=NO_ROUTES):
+def run(preferences, ranks, school_capacities, route_capacities=NO_ROUTES):
     """Call fast_DAT with the dtypes the compiled kernel is written against."""
     return fast_DAT(
         np.asarray(preferences, dtype=np.int32),
-        np.asarray(priorities, dtype=np.int32),
+        np.asarray(ranks, dtype=np.int32),
         np.asarray(school_capacities, dtype=np.int32),
         np.asarray(route_capacities, dtype=np.int32),
     )
+
+
+def run_dense(preferences, priorities, school_capacities, route_capacities=NO_ROUTES):
+    """`run` on priorities written out per (school, route, student), the
+    routeless bundle last on the route axis, as the instances below read
+    most plainly. Each bundle on a list takes its school's rank of it."""
+    preferences = np.asarray(preferences, dtype=np.int32)
+    school, route = preferences[..., 0], preferences[..., 1]
+    student = np.arange(len(preferences))[:, None]
+    ranks = np.where(school >= 0, np.asarray(priorities)[school, route, student], -1)
+    return run(preferences, ranks, school_capacities, route_capacities)
 
 
 # --------------------------------------------------------------------------
@@ -25,7 +36,7 @@ def run(preferences, priorities, school_capacities, route_capacities=NO_ROUTES):
 def test_a_routeless_instance_reduces_to_deferred_acceptance():
     # Both students want the first school, which holds one seat and prefers
     # the first student, so the second is deferred onto its second choice.
-    matching = run(
+    matching = run_dense(
         preferences=[[[0, -1], [1, -1]], [[0, -1], [1, -1]]],
         priorities=[[[0, 1]], [[0, 1]]],  # (school, routeless, student)
         school_capacities=[1, 1],
@@ -34,7 +45,7 @@ def test_a_routeless_instance_reduces_to_deferred_acceptance():
 
 
 def test_a_school_never_admits_beyond_its_capacity():
-    matching = run(
+    matching = run_dense(
         preferences=[[[0, -1]], [[0, -1]], [[0, -1]]],
         priorities=[[[0, 1, 2]]],
         school_capacities=[2],
@@ -44,7 +55,7 @@ def test_a_school_never_admits_beyond_its_capacity():
 
 
 def test_a_student_rejected_everywhere_is_left_unmatched():
-    matching = run(
+    matching = run_dense(
         preferences=[[[0, -1], [-1, -1]], [[0, -1], [-1, -1]]],
         priorities=[[[0, 1]]],
         school_capacities=[1],
@@ -58,7 +69,7 @@ def test_a_route_never_carries_beyond_its_capacity():
     # Both students want the seat on the one route to a school with room for
     # both. The school prefers the first student's routed bundle, so the
     # second falls back to the same school on foot.
-    matching = run(
+    matching = run_dense(
         preferences=[[[0, 0], [0, -1]], [[0, 0], [0, -1]]],
         priorities=[[[0, 1], [2, 3]]],  # (school, route 0 then routeless, student)
         school_capacities=[2],
@@ -68,7 +79,7 @@ def test_a_route_never_carries_beyond_its_capacity():
 
 
 def test_a_full_route_holds_when_the_applicant_ranks_below_its_riders():
-    matching = run(
+    matching = run_dense(
         preferences=[[[0, 0], [0, -1]], [[0, 0], [0, -1]]],
         priorities=[[[1, 0], [2, 3]]],  # the route prefers the second student
         school_capacities=[2],
@@ -81,7 +92,7 @@ def test_a_full_school_evicts_its_worst_bundle_across_the_whole_route_axis():
     # The school holds one seat, taken on a route. The applicant walks in
     # without a route but outranks the rider, so it takes the seat and the
     # rider's route seat is given up with it.
-    matching = run(
+    matching = run_dense(
         preferences=[[[0, -1], [-1, -1]], [[0, 0], [1, -1]]],
         priorities=[[[3, 1], [0, 2]], [[2, 2], [1, 0]]],
         school_capacities=[1, 1],
@@ -91,7 +102,7 @@ def test_a_full_school_evicts_its_worst_bundle_across_the_whole_route_axis():
 
 
 def test_a_full_school_holds_when_the_applicant_ranks_below_every_bundle():
-    matching = run(
+    matching = run_dense(
         preferences=[[[0, -1], [1, -1]], [[0, 0], [-1, -1]]],
         priorities=[[[0, 1], [2, 3]], [[2, 2], [0, 1]]],
         school_capacities=[1, 1],
@@ -102,7 +113,7 @@ def test_a_full_school_holds_when_the_applicant_ranks_below_every_bundle():
 
 
 def test_an_instance_with_no_students_returns_an_empty_matching():
-    matching = run(
+    matching = run_dense(
         preferences=np.empty((0, 1, 2)),
         priorities=np.empty((1, 1, 0)),
         school_capacities=[5],
@@ -125,7 +136,7 @@ def instance(seed, n_students=60, n_schools=5, n_districts=4, **kwargs):
     route_district = np.repeat([0, 1], 2)
     route_school = np.tile([0, n_schools - 1], 2)
 
-    preferences, priorities = rank_bundles(
+    preferences, ranks = rank_bundles(
         rng.normal(size=(n_students, 2)) * 5000,
         student_district,
         rng.normal(size=(n_schools, 2)) * 5000,
@@ -139,12 +150,10 @@ def instance(seed, n_students=60, n_schools=5, n_districts=4, **kwargs):
     # large tail of students on padding.
     school_capacities = np.full(n_schools, n_students // n_schools + 2, dtype=np.int32)
     route_capacities = np.full(len(route_district), 5, dtype=np.int32)
-    return preferences, priorities, school_capacities, route_capacities
+    return preferences, ranks, school_capacities, route_capacities
 
 
-def blocking_pairs(
-    preferences, priorities, school_capacities, route_capacities, matching
-):
+def blocking_pairs(preferences, ranks, school_capacities, route_capacities, matching):
     """Every bundle a student both prefers to its match and has a claim on.
 
     A bundle (c, r) blocks when the student prefers it to what it holds and
@@ -153,7 +162,11 @@ def blocking_pairs(
     riders, since the student cannot board without displacing one of them.
     """
     n_routes = len(route_capacities)
-    rank_of = lambda c, r, s: priorities[c, r if r >= 0 else n_routes, s]
+
+    def rank_of(school, route, student):
+        """The school's rank of a bundle, read beside it on the student's list."""
+        on_list = (preferences[student] == (school, route)).all(axis=1)
+        return ranks[student, np.flatnonzero(on_list)[0]]
 
     seats_taken = np.bincount(
         matching[matching[:, 0] >= 0, 0], minlength=len(school_capacities)
@@ -188,11 +201,11 @@ def blocking_pairs(
 def test_the_stability_check_catches_a_wasted_seat():
     # Nobody is seated, so every school every student ranked has room going
     # spare and no student should escape the check.
-    preferences, priorities, school_capacities, route_capacities = instance(0)
+    preferences, ranks, school_capacities, route_capacities = instance(0)
     unmatched = np.full((len(preferences), 2), -1, dtype=np.int32)
 
     blocking = blocking_pairs(
-        preferences, priorities, school_capacities, route_capacities, unmatched
+        preferences, ranks, school_capacities, route_capacities, unmatched
     )
     assert {student for student, _, _ in blocking} == set(range(len(preferences)))
 
@@ -200,24 +213,24 @@ def test_the_stability_check_catches_a_wasted_seat():
 def test_the_stability_check_catches_justified_envy():
     # Two students swap places, so the one the school ranks higher now holds
     # the bundle it likes less and envies the other with cause.
-    preferences, priorities, school_capacities, route_capacities = instance(0)
-    matching = run(preferences, priorities, school_capacities, route_capacities)
+    preferences, ranks, school_capacities, route_capacities = instance(0)
+    matching = run(preferences, ranks, school_capacities, route_capacities)
     swapped = matching.copy()
     swapped[[0, 1]] = swapped[[1, 0]]
 
     assert blocking_pairs(
-        preferences, priorities, school_capacities, route_capacities, swapped
+        preferences, ranks, school_capacities, route_capacities, swapped
     )
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
 def test_the_matching_is_stable(seed):
-    preferences, priorities, school_capacities, route_capacities = instance(seed)
-    matching = run(preferences, priorities, school_capacities, route_capacities)
+    preferences, ranks, school_capacities, route_capacities = instance(seed)
+    matching = run(preferences, ranks, school_capacities, route_capacities)
 
     assert (
         blocking_pairs(
-            preferences, priorities, school_capacities, route_capacities, matching
+            preferences, ranks, school_capacities, route_capacities, matching
         )
         == []
     )
@@ -225,8 +238,8 @@ def test_the_matching_is_stable(seed):
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
 def test_the_matching_respects_every_capacity(seed):
-    preferences, priorities, school_capacities, route_capacities = instance(seed)
-    matching = run(preferences, priorities, school_capacities, route_capacities)
+    preferences, ranks, school_capacities, route_capacities = instance(seed)
+    matching = run(preferences, ranks, school_capacities, route_capacities)
 
     seats_taken = np.bincount(
         matching[matching[:, 0] >= 0, 0], minlength=len(school_capacities)
@@ -240,8 +253,8 @@ def test_the_matching_respects_every_capacity(seed):
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
 def test_every_student_is_matched_to_a_bundle_it_ranked(seed):
-    preferences, priorities, school_capacities, route_capacities = instance(seed)
-    matching = run(preferences, priorities, school_capacities, route_capacities)
+    preferences, ranks, school_capacities, route_capacities = instance(seed)
+    matching = run(preferences, ranks, school_capacities, route_capacities)
 
     for student, bundle in enumerate(matching):
         if bundle[0] < 0:
@@ -253,28 +266,28 @@ def test_every_student_is_matched_to_a_bundle_it_ranked(seed):
 def test_a_tighter_instance_is_still_stable():
     # Half the students cannot be seated, so schools ration hard and the
     # eviction paths are walked far more often.
-    preferences, priorities, school_capacities, route_capacities = instance(9)
+    preferences, ranks, school_capacities, route_capacities = instance(9)
     school_capacities = np.full_like(school_capacities, 6)
-    matching = run(preferences, priorities, school_capacities, route_capacities)
+    matching = run(preferences, ranks, school_capacities, route_capacities)
 
     assert (matching[:, 0] < 0).any()
     assert (
         blocking_pairs(
-            preferences, priorities, school_capacities, route_capacities, matching
+            preferences, ranks, school_capacities, route_capacities, matching
         )
         == []
     )
 
 
 def test_a_performance_weighted_instance_is_still_stable():
-    preferences, priorities, school_capacities, route_capacities = instance(
+    preferences, ranks, school_capacities, route_capacities = instance(
         5, school_scores=np.array([-0.7, 0.1, 0.0, 0.5, 1.2]), performance_weight=0.3
     )
-    matching = run(preferences, priorities, school_capacities, route_capacities)
+    matching = run(preferences, ranks, school_capacities, route_capacities)
 
     assert (
         blocking_pairs(
-            preferences, priorities, school_capacities, route_capacities, matching
+            preferences, ranks, school_capacities, route_capacities, matching
         )
         == []
     )
