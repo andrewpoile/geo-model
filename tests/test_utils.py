@@ -613,6 +613,42 @@ def test_dissimilarity_terms_reject_misaligned_inputs():
 
 
 # --------------------------------------------------------------------------
+# district_groups
+# --------------------------------------------------------------------------
+
+
+def test_district_groups_compares_each_districts_groups_with_the_regions(capsys):
+    # District 0 holds 3 disadvantaged students and 1 advantaged, district 1
+    # the reverse, of 4 each in all, and district 2 nobody.
+    areas = pd.DataFrame(
+        {
+            "LSOA21CD": ["E0", "E1", "E2"],
+            "LA (name)": ["Southampton"] * 3,
+            "IDACI Decile": [1, 5, 9],
+            "IDACI Score": [0.6, 0.2, 0.05],
+        }
+    )
+    student_lsoa = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+    disadvantaged = np.array([True, True, True, False, True, False, False, False])
+
+    districts = utils.district_groups(areas, student_lsoa, disadvantaged)
+
+    pd.testing.assert_frame_equal(districts.iloc[:, :4], areas)
+    np.testing.assert_array_equal(districts["cohort"], [4, 4, 0])
+    np.testing.assert_array_equal(districts["disadvantaged"], [3, 1, 0])
+    np.testing.assert_array_equal(districts["advantaged"], [1, 3, 0])
+    np.testing.assert_array_equal(
+        districts["disadvantaged_share"], [0.75, 0.25, np.nan]
+    )
+    np.testing.assert_array_equal(districts["share_of_disadvantaged"], [0.75, 0.25, 0])
+    np.testing.assert_array_equal(districts["share_of_advantaged"], [0.25, 0.75, 0])
+    np.testing.assert_array_equal(districts["difference"], [0.5, -0.5, 0])
+    assert (
+        "No student sampled, so no disadvantaged share: E2" in capsys.readouterr().out
+    )
+
+
+# --------------------------------------------------------------------------
 # dissimilarity_index
 # --------------------------------------------------------------------------
 
