@@ -1,6 +1,6 @@
 """Scenario 1: every school offers a single route, its shortest, to the
-route-eligible districts, with no condition on distance or on nearby schools
-and seats on each district's fair share alone.
+route-eligible districts beyond the default minimum distance, with no
+condition on nearby schools and seats on each district's fair share alone.
 
 The scenario's students are matched with and without routes over fresh
 samples, and every plot `optimise` draws of a setting is drawn of it.
@@ -42,13 +42,13 @@ ROUTE_UTILISATION_CSV = "route_utilisation.csv"
 
 N_SEEDS = 100
 
-# A route to any school however near, seats on every district's fair share
-# alone, and no school scoring above Progress 8 infinity, so no district is
-# served by its local schools and the local radius is inert. Each school keeps
-# only its route to the nearest district.
+# A route only to a school beyond the default minimum distance, two miles,
+# seats on every district's fair share alone, and no school scoring above
+# Progress 8 infinity, so no district is served by its local schools and the
+# local radius is inert. Each school keeps only its route to the nearest
+# district beyond the minimum distance.
 SCENARIO = replace(
     DEFAULTS,
-    min_distance=0.0,
     progressivity=0.0,
     max_local_p8=np.inf,
     shortest_only=True,

@@ -23,11 +23,13 @@ def test_every_school_keeps_one_route_from_its_nearest_district_holding_a_rider(
 
     # No condition on nearby schools, so every district at or below the decile
     # is eligible, and under "score" one holding a disadvantaged student rides.
+    # A school's route leaves the nearest of them beyond the minimum distance.
+    assert s1.SCENARIO.min_distance == br.MIN_ROUTE_DISTANCE
     riders = br.disadvantaged_cohort(areas, bp.cohort_sizes(areas, "secondary"))
     eligible = areas[(areas["IDACI Decile"] <= s1.SCENARIO.decile) & (riders > 0)]
-    nearest = eligible.index[
-        spdist.cdist(br.centroid_xy(eligible), school_xy).argmin(axis=0)
-    ]
+    distances = spdist.cdist(br.centroid_xy(eligible), school_xy)
+    distances[distances <= s1.SCENARIO.min_distance] = np.inf
+    nearest = eligible.index[distances.argmin(axis=0)]
     np.testing.assert_array_equal(routes["school_idx"], np.arange(len(schools)))
     np.testing.assert_array_equal(routes["district_idx"], nearest)
     assert (routes["capacity"] >= 1).all()
