@@ -1,6 +1,6 @@
 """Scenario 1: every school offers a single route, its shortest, to the
 route-eligible districts beyond the default minimum distance, with no
-condition on nearby schools and seats on each district's fair share alone.
+condition on nearby schools, holding all of the school's route seats.
 
 The scenario's students are matched with and without routes over fresh
 samples, and every plot `optimise` draws of a setting is drawn of it.
@@ -11,11 +11,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from geo_model.__main__ import INTAKE_MEASURES
 from geo_model.build_routes import DISADVANTAGE, DISADVANTAGE_CHOICES, save_routes
 from geo_model.dissimilarity import (
     DEFAULTS,
+    Sample,
     settings_routes,
     student_samples,
     t_test_label,
@@ -44,11 +46,11 @@ DISTRICTS_CSV = "districts.csv"
 
 N_SEEDS = 100
 
-# A route only to a school beyond the default minimum distance, two miles,
-# seats on every district's fair share alone, and no school scoring above
-# Progress 8 infinity, so no district is served by its local schools and the
-# local radius is inert. Each school keeps only its route to the nearest
-# district beyond the minimum distance.
+# A route only to a school beyond the default minimum distance, two miles, and
+# no school scoring above Progress 8 infinity, so no district is served by its
+# local schools and the local radius is inert. Each school keeps only its route
+# to the nearest district beyond the minimum distance, which holds all of the
+# school's route seats, so progressivity is inert too.
 SCENARIO = replace(
     DEFAULTS,
     progressivity=0.0,
@@ -58,6 +60,40 @@ SCENARIO = replace(
 # Seats are rounded up, so a school's shortest route keeps a seat where the
 # school's route seats fall below half of one.
 ROUND_UP = True
+
+
+def district_rows(
+    samples: list[Sample], areas: pd.DataFrame, decile: int, disadvantage: str
+) -> pd.DataFrame:
+    """Each district's disadvantaged and advantaged students in every
+    sample, as `district_groups` gives them, a seed's cohorts being drawn
+    afresh.
+
+    Args:
+        samples (list[Sample]): Student samples, as yielded by
+        `student_samples`, in seed order.
+
+        areas (pd.DataFrame): Districts, as `district_groups` takes them.
+
+        decile (int): Passed to `disadvantaged_group`.
+
+        disadvantage (str): Passed to `disadvantaged_group`.
+
+    Returns:
+        pd.DataFrame: One row per (seed, district), "seed" ahead of the
+        columns `district_groups` returns.
+    """
+    return pd.concat(
+        [
+            district_groups(
+                areas,
+                student_lsoa,
+                disadvantaged_group(student_lsoa, drawn, areas, decile, disadvantage),
+            ).assign(seed=seed)
+            for seed, (_, student_lsoa, drawn, _) in enumerate(samples)
+        ],
+        ignore_index=True,
+    ).pipe(lambda rows: rows[["seed", *rows.columns.drop("seed")]])
 
 
 def main() -> None:
@@ -143,16 +179,7 @@ def main() -> None:
             disadvantage=args.disadvantage,
             measure=args.intake,
         )
-        # Every seed draws each district's cohort and its disadvantaged
-        # students in the same numbers, so the first sample stands for all.
-        _, student_lsoa, drawn = samples[0]
-        districts = district_groups(
-            areas,
-            student_lsoa,
-            disadvantaged_group(
-                student_lsoa, drawn, areas, settings.decile, args.disadvantage
-            ),
-        )
+        districts = district_rows(samples, areas, settings.decile, args.disadvantage)
         for frame, name in (
             (results, RESULTS_CSV),
             (schools, SCHOOLS_CSV),

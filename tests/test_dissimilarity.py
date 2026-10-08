@@ -37,16 +37,22 @@ def test_student_samples_draws_one_reproducible_sample_per_seed(secondary):
         bp.draw_cohort_sizes(areas, "secondary", np.random.default_rng(stream))
         for stream in streams
     ]
-    for (_, student_lsoa, _), cohort in zip(first, cohorts):
+    for (_, student_lsoa, _, _), cohort in zip(first, cohorts):
         np.testing.assert_array_equal(
             np.bincount(student_lsoa, minlength=len(areas)), cohort
         )
     assert not np.array_equal(cohorts[0], cohorts[1])
-    # Different seeds draw different students, the same seed the same ones.
+    # Different seeds draw different students and tastes, the same seed the
+    # same ones.
     assert not np.array_equal(first[0][0][:100], first[1][0][:100])
-    for sample_a, sample_b in zip(first, second):
-        for a, b in zip(sample_a, sample_b):
+    tastes = [
+        [sample[3].generate_state(4) for sample in run] for run in (first, second)
+    ]
+    assert not np.array_equal(tastes[0][0], tastes[0][1])
+    for sample_a, sample_b, taste_a, taste_b in zip(first, second, *tastes):
+        for a, b in zip(sample_a[:3], sample_b[:3]):
             np.testing.assert_array_equal(a, b)
+        np.testing.assert_array_equal(taste_a, taste_b)
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
@@ -55,7 +61,7 @@ def test_student_samples_draw_each_district_its_idaci_share_after_the_locations(
 ):
     areas, _ = secondary
 
-    student_xy, student_lsoa, drawn = next(ds.student_samples(areas, 1))
+    student_xy, student_lsoa, drawn, _ = next(ds.student_samples(areas, 1))
 
     np.testing.assert_array_equal(
         np.bincount(student_lsoa[drawn], minlength=len(areas)),
@@ -84,7 +90,9 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
         schools["PlacesOffered"].to_numpy(),
         bp.cohort_sizes(areas, "secondary"),
     )
-    student_xy, student_lsoa, disadvantaged = next(ds.student_samples(areas, 1))
+    student_xy, student_lsoa, disadvantaged, noise_seed = next(
+        ds.student_samples(areas, 1)
+    )
 
     rows, school_rows, mode_rows, route_rows = ds.score_sample(
         student_xy,
@@ -94,6 +102,7 @@ def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
         routes,
         disadvantaged,
         ld.load_nts_mode_shares(),
+        noise_seed,
     )
     rows, intake, modes, riders = map(
         pd.DataFrame, (rows, school_rows, mode_rows, route_rows)

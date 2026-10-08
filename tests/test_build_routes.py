@@ -247,8 +247,8 @@ def test_route_network_uses_the_module_defaults():
     routes = network(areas)
 
     # Every student is disadvantaged, so at the default scale each school's
-    # two routes share 5 * 100 * 30 / 30 seats.
-    assert (routes["capacity"] == 250).all()
+    # two routes share 1 * 100 * 30 / 30 seats.
+    assert (routes["capacity"] == 50).all()
     # 3218m is the threshold, so the school a district sits on is never routed.
     assert not ((routes["district_idx"] == 1) & (routes["school_idx"] == 1)).any()
     # Neither school scores above the default P8, so every district is eligible.
@@ -503,7 +503,7 @@ def test_route_network_keeps_each_schools_shortest_route_on_all_its_seats(capsys
     # School 0 is nearest district 1 and school 1 ties districts 0 and 2,
     # keeping the first. District 2 is nearest no school, which is not the
     # distance condition leaving it unrouted, so it is not named as such. Each
-    # route holds all 5 * 100 * 30 / 30 seats of its school, the seats the
+    # route holds all 1 * 100 * 30 / 30 seats of its school, the seats the
     # school's two routes share in the whole network.
     areas = make_areas([1, 1, 1])
 
@@ -511,7 +511,7 @@ def test_route_network_keeps_each_schools_shortest_route_on_all_its_seats(capsys
 
     np.testing.assert_array_equal(routes["district_idx"], [0, 1])
     np.testing.assert_array_equal(routes["school_idx"], [1, 0])
-    np.testing.assert_array_equal(routes["capacity"], [500, 500])
+    np.testing.assert_array_equal(routes["capacity"], [100, 100])
     out = capsys.readouterr().out
     assert "No secondary school beyond" not in out
     assert "each school keeping only its route to the nearest district" in out

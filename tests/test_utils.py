@@ -322,6 +322,51 @@ def test_rank_bundles_noise_perturbs_preferences_but_not_priorities():
     np.testing.assert_array_equal(by_bundle(*quiet), by_bundle(*noisy))
 
 
+def test_rank_bundles_noise_gives_the_same_tastes_with_routes_and_without():
+    rng = np.random.default_rng(3)
+    student_xy = rng.normal(size=(40, 2)) * 1000
+    district = rng.integers(0, 3, size=40)
+    school_xy = rng.normal(size=(6, 2)) * 1000
+    school_district = np.arange(6) % 3
+
+    def preferences(route_district, route_school):
+        return rank_bundles(
+            student_xy,
+            district,
+            school_xy,
+            school_district,
+            route_district,
+            route_school,
+            route_discount=0.5,
+            noise_scale=0.5,
+            rng=np.random.default_rng(11),
+        )[0]
+
+    routed = preferences(np.array([0, 1]), np.array([2, 4]))
+    plain = preferences(np.array([], dtype=int), np.array([], dtype=int))
+
+    # Routes only add bundles, so the schools a student ranks without a route
+    # keep the order they take with no routes at all.
+    assert (routed[..., 1] >= 0).any()
+    for student in range(len(student_xy)):
+        bundles = routed[student]
+        schools = bundles[(bundles[:, 0] >= 0) & (bundles[:, 1] < 0), 0]
+        np.testing.assert_array_equal(schools, plain[student, :, 0])
+
+
+def test_rank_bundles_rejects_noise_without_an_rng():
+    with pytest.raises(ValueError, match="noise_scale > 0 needs an rng"):
+        rank_bundles(
+            np.array([[0.0, 0.0], [5.0, 5.0]]),
+            np.array([0, 1]),
+            np.array([[0.0, 1.0], [1.0, 0.0]]),
+            np.array([0, 1]),
+            np.empty(0, dtype=int),
+            np.empty(0, dtype=int),
+            noise_scale=0.5,
+        )
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [

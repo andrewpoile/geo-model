@@ -356,7 +356,7 @@ def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
     # The route rows are kept only when asked for.
     assert route_rows == []
 
-    _, student_lsoa, drawn = samples[0]
+    _, student_lsoa, drawn, _ = samples[0]
     disadvantaged = disadvantaged_group(
         student_lsoa, drawn, areas, sweep_main.DEFAULTS.decile, disadvantage
     )

@@ -89,7 +89,7 @@ def run(
     shares = load_nts_mode_shares(years)
 
     rows = []
-    for seed, (student_xy, student_lsoa, drawn) in enumerate(
+    for seed, (student_xy, student_lsoa, drawn, noise_seed) in enumerate(
         student_samples(areas, n_seeds)
     ):
         _, _, mode_rows, _ = score_sample(
@@ -102,6 +102,7 @@ def run(
                 student_lsoa, drawn, areas, DEFAULTS.decile, DISADVANTAGE
             ),
             shares,
+            noise_seed,
             circuity=circuity,
         )
         rows += [{"seed": seed, **r} for r in mode_rows]

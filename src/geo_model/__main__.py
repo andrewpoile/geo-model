@@ -862,8 +862,9 @@ def settings_matchings(
 ) -> dict[str, np.ndarray]:
     """Match one student sample at `settings`, with routes and without.
 
-    The ranking carries no noise and the mechanism is deterministic, so these
-    are the matchings `score_settings` scores for the sample at `settings`.
+    The tastes are drawn from the sample's own seed and the mechanism is
+    deterministic, so these are the matchings `score_settings` scores for the
+    sample at `settings`.
 
     Args:
         settings (Settings): The parameter values to build routes and rank
@@ -890,7 +891,7 @@ def settings_matchings(
         dict[str, np.ndarray]: The matching of each scenario, "with routes"
         then "without routes", as returned by `fast_DAT`.
     """
-    student_xy, student_lsoa, drawn = sample
+    student_xy, student_lsoa, drawn, noise_seed = sample
     return dict(
         match_sample(
             student_xy,
@@ -903,6 +904,7 @@ def settings_matchings(
             disadvantaged_group(
                 student_lsoa, drawn, areas, settings.decile, disadvantage
             ),
+            noise_seed,
             settings.performance_weight,
             settings.route_discount,
             settings.disadvantaged_performance_weight,

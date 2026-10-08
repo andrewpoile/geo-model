@@ -18,7 +18,14 @@ from geo_model.dissimilarity import DEFAULTS, Settings, score_settings, student_
 DATA = ld.POPULATION_DIR.parent.parent
 
 # A sample of no students, for the checks made before anything is scored.
-NO_STUDENTS = [(np.empty((0, 2)), np.empty(0, dtype=np.int64), np.empty(0, dtype=bool))]
+NO_STUDENTS = [
+    (
+        np.empty((0, 2)),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=bool),
+        np.random.SeedSequence(0),
+    )
+]
 
 
 def scored_rows(dissimilarity: float, car: tuple[float, float]):

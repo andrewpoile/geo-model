@@ -164,6 +164,7 @@ def test_secondary_instance_ranks_nearest_first_without_performance_weight():
         bp.disadvantaged_students(student_lsoa, areas, np.random.default_rng(1)),
         performance_weight=0.0,
         disadvantaged_performance_weight=0.0,
+        noise_scale=0.0,
     )
 
     school_xy = schools[["Easting", "Northing"]].to_numpy()
@@ -206,6 +207,7 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights():
             disadvantaged,
             *other,
             *own,
+            noise_seed=0,
         )
 
     mixed = instance((0.1, 0.2), (0.7, 0.9))
@@ -251,6 +253,7 @@ def test_secondary_instance_offers_other_students_routes_only_when_open():
             routes,
             disadvantaged,
             disadvantage=disadvantage,
+            noise_seed=0,
         )
         offered[disadvantage] = np.any(preferences[..., 1] >= 0, axis=1)
 

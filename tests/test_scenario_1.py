@@ -1,71 +1,35 @@
 import numpy as np
-import pandas as pd
 import pytest
-from scipy.spatial import distance as spdist
 
-from geo_model import build_prefs as bp
 from geo_model import build_routes as br
 from geo_model import load_data as ld
 from geo_model import scenario_1 as s1
-from geo_model.dissimilarity import settings_routes, student_samples
-from geo_model.utils import disadvantaged_group, district_groups
+from geo_model.dissimilarity import student_samples
 
 DATA = ld.POPULATION_DIR.parent.parent
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_every_school_keeps_one_route_from_its_nearest_district_holding_a_rider():
+def test_district_rows_count_every_seeds_own_students_by_district():
     areas = ld.load_areas()
-    _, schools = ld.load_schools()
-    school_xy = schools[["Easting", "Northing"]].to_numpy()
+    samples = list(student_samples(areas, 2))
 
-    routes = settings_routes(s1.SCENARIO, areas, schools, s1.ROUND_UP).sort_values(
-        "school_idx"
-    )
+    rows = s1.district_rows(samples, areas, s1.SCENARIO.decile, br.DISADVANTAGE)
 
-    # No condition on nearby schools, so every district at or below the decile
-    # is eligible, and one holding a disadvantaged student is routed.
-    cohort = bp.cohort_sizes(areas, "secondary")
-    disadvantaged = br.disadvantaged_cohort(areas, cohort)
-    eligible = areas[
-        (areas["IDACI Decile"] <= s1.SCENARIO.decile) & (disadvantaged > 0)
-    ]
-    nearest = eligible.index[
-        spdist.cdist(br.centroid_xy(eligible), school_xy).argmin(axis=0)
-    ]
-    np.testing.assert_array_equal(routes["school_idx"], np.arange(len(schools)))
-    np.testing.assert_array_equal(routes["district_idx"], nearest)
-    # The one route holds all of its school's seats, rounded up.
-    np.testing.assert_array_equal(
-        routes["capacity"],
-        np.ceil(
-            s1.SCENARIO.capacity_scale
-            * schools["PlacesOffered"].to_numpy()
-            * disadvantaged.sum()
-            / cohort.sum()
-        ),
-    )
-    assert (routes["capacity"] >= 1).all()
-
-
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_every_seed_draws_each_districts_groups_alike():
-    areas = ld.load_areas()
-    sizes = bp.cohort_sizes(areas, "secondary")
-
-    seeds = [
-        district_groups(
-            areas,
-            student_lsoa,
-            disadvantaged_group(
-                student_lsoa, drawn, areas, s1.SCENARIO.decile, br.DISADVANTAGE
-            ),
+    assert list(rows.columns[:2]) == ["seed", "LSOA21CD"]
+    for seed, (_, student_lsoa, drawn, _) in enumerate(samples):
+        seed_rows = rows[rows["seed"] == seed]
+        np.testing.assert_array_equal(seed_rows["LSOA21CD"], areas["LSOA21CD"])
+        np.testing.assert_array_equal(
+            seed_rows["cohort"], np.bincount(student_lsoa, minlength=len(areas))
         )
-        for _, student_lsoa, drawn in student_samples(areas, sizes, 2)
-    ]
-
-    pd.testing.assert_frame_equal(seeds[0], seeds[1])
-    np.testing.assert_array_equal(seeds[0]["cohort"], sizes)
-    np.testing.assert_array_equal(
-        seeds[0]["disadvantaged"], br.disadvantaged_cohort(areas, sizes)
+        np.testing.assert_array_equal(
+            seed_rows["disadvantaged"],
+            np.bincount(student_lsoa[drawn], minlength=len(areas)),
+        )
+        assert seed_rows["share_of_disadvantaged"].sum() == pytest.approx(1)
+        assert seed_rows["share_of_advantaged"].sum() == pytest.approx(1)
+    # Each seed draws its cohorts afresh, so the seeds' rows differ.
+    assert not np.array_equal(
+        rows.loc[rows["seed"] == 0, "cohort"], rows.loc[rows["seed"] == 1, "cohort"]
     )

@@ -47,6 +47,12 @@ ROUTE_DISCOUNT = 0.5
 DISADVANTAGED_PERFORMANCE_WEIGHT = PERFORMANCE_WEIGHT
 DISADVANTAGED_ROUTE_DISCOUNT = ROUTE_DISCOUNT
 
+# Standard deviation of every student's taste for each school, added to its
+# preference cost, in the cost's units: those of a standard deviation of
+# distance. Drawn from a seed of the sample's own, so a sample ranks with the
+# same tastes with routes and without, and at every setting.
+PREFERENCE_NOISE = 0.5
+
 
 # The age of each phase's cohort: the four-year-olds start primary school, the
 # eleven-year-olds secondary.
@@ -110,6 +116,8 @@ def secondary_instance(
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
     disadvantage: str = DISADVANTAGE,
+    noise_scale: float = PREFERENCE_NOISE,
+    noise_seed: int | np.random.SeedSequence | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Rank one secondary student sample into an SCT instance.
 
@@ -159,6 +167,14 @@ def secondary_instance(
         "score" only disadvantaged students may take a route, otherwise every
         student of its district may. Defaults to DISADVANTAGE.
 
+        noise_scale (float, optional): Passed to `rank_bundles`. Defaults to
+        PREFERENCE_NOISE.
+
+        noise_seed (int | np.random.SeedSequence | None, optional): Seed the
+        tastes are drawn from, afresh on every call, so two instances of a
+        sample given the same seed rank with the same tastes. Required when
+        `noise_scale` > 0. Defaults to None.
+
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: Student
         preferences, the school's rank of every bundle on them, school
@@ -187,6 +203,8 @@ def secondary_instance(
             disadvantaged, disadvantaged_route_discount, route_discount
         ),
         route_eligible=disadvantaged if disadvantage == "score" else True,
+        noise_scale=noise_scale,
+        rng=None if noise_seed is None else np.random.default_rng(noise_seed),
     )
     return preferences, ranks, cohort_capacity(secondary_schools), route_capacities
 
@@ -263,6 +281,8 @@ def build(
         district_index(primary_schools, areas),
         np.empty(0, dtype=np.int32),
         np.empty(0, dtype=np.int32),
+        noise_scale=PREFERENCE_NOISE,
+        rng=rng,
     )
     (
         secondary_student_preferences,
@@ -276,6 +296,7 @@ def build(
         secondary_schools,
         secondary_routes,
         secondary_student_disadvantaged,
+        noise_seed=int(rng.integers(2**63)),
     )
 
     # The register publishes capacity across every year group a school teaches,

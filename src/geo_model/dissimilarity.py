@@ -55,8 +55,9 @@ RESULTS_CSV = "dissimilarity.csv"
 PLOT_PNG = "dissimilarity.png"
 
 # A student sample: the coordinates of every student, the positional index of
-# the district each was drawn in, and whether each was drawn disadvantaged.
-Sample = tuple[np.ndarray, np.ndarray, np.ndarray]
+# the district each was drawn in, whether each was drawn disadvantaged, and the
+# seed their tastes for the schools are drawn from.
+Sample = tuple[np.ndarray, np.ndarray, np.ndarray, np.random.SeedSequence]
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,8 @@ def student_samples(areas: pd.DataFrame, n_seeds: int) -> Iterator[Sample]:
     Each seed draws every area's cohort, as `draw_cohort_sizes` does, then
     where its students live, then which of them are disadvantaged, all from
     the same stream, so the locations of a seed do not depend on the group.
+    The students' tastes are drawn from a seed spawned off the stream, so the
+    draws above are those of a stream without one.
 
     Args:
         areas (pd.DataFrame): Districts carrying "Borders", "Centroids",
@@ -94,8 +97,8 @@ def student_samples(areas: pd.DataFrame, n_seeds: int) -> Iterator[Sample]:
 
     Yields:
         Sample: Coordinates and positional district index of each student, as
-        returned by `sample_students`, and whether each is disadvantaged, as
-        drawn by `disadvantaged_students`.
+        returned by `sample_students`, whether each is disadvantaged, as
+        drawn by `disadvantaged_students`, and the seed of their tastes.
     """
     for stream in np.random.SeedSequence(SEED).spawn(n_seeds):
         rng = np.random.default_rng(stream)
@@ -105,7 +108,8 @@ def student_samples(areas: pd.DataFrame, n_seeds: int) -> Iterator[Sample]:
             draw_cohort_sizes(areas, "secondary", rng),
             rng,
         )
-        yield student_xy, student_lsoa, disadvantaged_students(student_lsoa, areas, rng)
+        drawn = disadvantaged_students(student_lsoa, areas, rng)
+        yield student_xy, student_lsoa, drawn, stream.spawn(1)[0]
 
 
 def match_sample(
@@ -115,6 +119,7 @@ def match_sample(
     secondary_schools: gpd.GeoDataFrame,
     routes: pd.DataFrame,
     disadvantaged: np.ndarray,
+    noise_seed: np.random.SeedSequence,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
@@ -124,8 +129,8 @@ def match_sample(
     """Match one student sample with and without routes.
 
     The sample is matched twice: as the transport instance with its routes,
-    and as the same students with no routes at all, so whatever is measured
-    on the two matchings differs by the routes alone.
+    and as the same students, with the same tastes, with no routes at all, so
+    whatever is measured on the two matchings differs by the routes alone.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -141,6 +146,9 @@ def match_sample(
         routes (pd.DataFrame): The route set, as returned by `route_network`.
 
         disadvantaged (np.ndarray): Passed to `secondary_instance`.
+
+        noise_seed (np.random.SeedSequence): Passed to `secondary_instance`
+        for both scenarios, so both rank with the same tastes.
 
         performance_weight (float, optional): Passed to `secondary_instance`.
         Defaults to PERFORMANCE_WEIGHT.
@@ -174,6 +182,7 @@ def match_sample(
             disadvantaged_performance_weight,
             disadvantaged_route_discount,
             disadvantage,
+            noise_seed=noise_seed,
         )
         yield scenario, fast_DAT(*instance)
 
@@ -186,6 +195,7 @@ def score_sample(
     routes: pd.DataFrame,
     disadvantaged: np.ndarray,
     shares: pd.DataFrame,
+    noise_seed: np.random.SeedSequence,
     *,
     performance_weight: float = PERFORMANCE_WEIGHT,
     route_discount: float = ROUTE_DISCOUNT,
@@ -223,6 +233,8 @@ def score_sample(
 
         shares (pd.DataFrame): NTS mode share within each trip-length band,
         as returned by `load_nts_mode_shares`.
+
+        noise_seed (np.random.SeedSequence): Passed to `match_sample`.
 
         performance_weight (float, optional): Passed to `secondary_instance`.
         Defaults to PERFORMANCE_WEIGHT.
@@ -266,6 +278,7 @@ def score_sample(
         secondary_schools,
         routes,
         disadvantaged,
+        noise_seed,
         performance_weight,
         route_discount,
         disadvantaged_performance_weight,
@@ -446,7 +459,7 @@ def score_settings(
         settings, areas, secondary_schools, round_up, linear, disadvantage
     )
     rows, school_rows, mode_rows, route_rows = [], [], [], []
-    for seed, (student_xy, student_lsoa, drawn) in enumerate(samples):
+    for seed, (student_xy, student_lsoa, drawn, noise_seed) in enumerate(samples):
         scenario_rows, intake_rows, travel_rows, rider_rows = score_sample(
             student_xy,
             student_lsoa,
@@ -457,6 +470,7 @@ def score_settings(
                 student_lsoa, drawn, areas, settings.decile, disadvantage
             ),
             shares,
+            noise_seed,
             performance_weight=settings.performance_weight,
             route_discount=settings.route_discount,
             disadvantaged_performance_weight=settings.disadvantaged_performance_weight,
@@ -508,7 +522,7 @@ def run(
     shares = load_nts_mode_shares()
 
     rows = []
-    for seed, (student_xy, student_lsoa, drawn) in enumerate(
+    for seed, (student_xy, student_lsoa, drawn, noise_seed) in enumerate(
         student_samples(areas, n_seeds)
     ):
         scenario_rows, _, _, _ = score_sample(
@@ -521,6 +535,7 @@ def run(
                 student_lsoa, drawn, areas, DEFAULTS.decile, DISADVANTAGE
             ),
             shares,
+            noise_seed,
         )
         rows += [{"seed": seed, **r} for r in scenario_rows]
         print(f"Seed {seed + 1} of {n_seeds}: {len(student_xy)} students.")

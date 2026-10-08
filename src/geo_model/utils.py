@@ -152,7 +152,7 @@ def rank_bundles(
     performance_weight: ArrayLike = 0.0,
     route_discount: ArrayLike = 0.0,
     route_eligible: ArrayLike = True,
-    noise_scale: float = 0.5,
+    noise_scale: float = 0.0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Rank (school, route) bundles for students and (student, route) bundles for schools.
@@ -231,13 +231,17 @@ def rank_bundles(
 
         noise_scale (float, optional): Standard deviation of Gaussian noise
         added to the combined preference cost, measured in units of that cost
-        rather than in metres. Useful to break ties or add mild randomness
-        without destroying the underlying signal. Set to 0 for a deterministic
-        ordering. School priorities are always ranked on the unperturbed
-        distances. Defaults to 0.5.
+        rather than in metres. One draw is taken per student and school, a
+        taste the student has for the school, and added to every bundle of
+        that school, so a route still differs from its school's routeless
+        bundle by travel alone. The draw does not depend on the routes, so
+        the same `rng` state gives the same tastes with routes and without.
+        Set to 0 for a deterministic ordering. School priorities are always
+        ranked on the unperturbed distances. Defaults to 0.0.
 
-        rng (np.random.Generator | None, optional): Source of randomness, used
-        only when `noise_scale` > 0. Defaults to None.
+        rng (np.random.Generator | None, optional): Source of randomness,
+        required when `noise_scale` > 0, so the noise is reproducible.
+        Defaults to None.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: Student preferences of shape
@@ -315,7 +319,12 @@ def rank_bundles(
             raise ValueError("school_scores holds non-finite values.")
         merit = -performance_weight[:, None] * scores / _spread(scores, "School scores")
 
-    noise_rng = (rng or np.random.default_rng()) if noise_scale > 0 else None
+    if noise_scale > 0:
+        if rng is None:
+            raise ValueError(
+                "noise_scale > 0 needs an rng, so the noise can be reproduced."
+            )
+        merit = merit + rng.normal(0, noise_scale, size=(n_students, n_schools))
 
     # Every school ranks its own bundles, the routeless one of every student
     # and then those of each route arriving at it, so the routeless ranks are
@@ -370,8 +379,6 @@ def rank_bundles(
                 + merit[np.ix_(students, schools)],
             )
         )
-        if noise_rng is not None:
-            cost = cost + noise_rng.normal(0, noise_scale, size=cost.shape)
 
         # Stable, so a bundle left tied with its own school by a zero discount
         # ranks below it and a seat is only taken when the route earns it.
