@@ -36,5 +36,8 @@ data/
 # Temporary files
 temp/
 
+# Outputs
+output/
+
 # Loose testing
 experiments.ipynb
