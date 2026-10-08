@@ -8,7 +8,7 @@ from geo_model import load_data as ld
 from geo_model import scenario_1 as s1
 from geo_model.dissimilarity import settings_routes
 
-DATA = ld.POPULATION_XLSX.parent.parent
+DATA = ld.POPULATION_DIR.parent.parent
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")

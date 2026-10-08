@@ -79,19 +79,18 @@ def run(
         "scenario", "mode" and "students" (expected). Also written to
         RESULTS_CSV in `out_dir`.
     """
-    sizes = cohort_sizes(areas, "secondary")
     routes = route_network(
         areas,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
         secondary_schools["P8MEA"].to_numpy(),
         secondary_schools["PlacesOffered"].to_numpy(),
-        sizes,
+        cohort_sizes(areas, "secondary"),
     )
     shares = load_nts_mode_shares(years)
 
     rows = []
     for seed, (student_xy, student_lsoa, drawn) in enumerate(
-        student_samples(areas, sizes, n_seeds)
+        student_samples(areas, n_seeds)
     ):
         _, _, mode_rows, _ = score_sample(
             student_xy,

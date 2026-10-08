@@ -48,21 +48,54 @@ DISADVANTAGED_PERFORMANCE_WEIGHT = PERFORMANCE_WEIGHT
 DISADVANTAGED_ROUTE_DISCOUNT = ROUTE_DISCOUNT
 
 
+# The age of each phase's cohort: the four-year-olds start primary school, the
+# eleven-year-olds secondary.
+PHASE_AGE = {"primary": 4, "secondary": 11}
+
+
 def cohort_sizes(areas: pd.DataFrame, phase: str) -> np.ndarray:
-    """Students to sample in each area for a phase.
+    """Expected students in each area's cohort for a phase, the mean over the
+    years. Route seats are sized on it, so one route set serves every sample.
 
     Args:
-        areas (pd.DataFrame): Districts carrying the "F4", "M4", "F11" and
-        "M11" single-year-of-age counts.
+        areas (pd.DataFrame): Districts carrying the "Age 4 Mean" and "Age 11
+        Mean" columns `load_areas` gives them.
 
         phase (str): "primary" takes the four-year-olds, "secondary" the
         eleven-year-olds.
 
     Returns:
+        np.ndarray: One mean cohort per area, aligned with `areas`.
+    """
+    return areas[f"Age {PHASE_AGE[phase]} Mean"].to_numpy(dtype=float)
+
+
+def draw_cohort_sizes(
+    areas: pd.DataFrame, phase: str, rng: np.random.Generator
+) -> np.ndarray:
+    """Students to sample in each area for a phase, drawn from a normal of
+    its cohort's mean and standard deviation over the years.
+
+    Each draw is rounded to the nearest student, and a negative draw places
+    none.
+
+    Args:
+        areas (pd.DataFrame): Districts carrying the "Age 4 Mean", "Age 4 SD",
+        "Age 11 Mean" and "Age 11 SD" columns `load_areas` gives them.
+
+        phase (str): "primary" takes the four-year-olds, "secondary" the
+        eleven-year-olds.
+
+        rng (np.random.Generator): Source of randomness.
+
+    Returns:
         np.ndarray: One count per area, aligned with `areas`.
     """
-    age = {"primary": "4", "secondary": "11"}[phase]
-    return (areas[f"F{age}"].astype(int) + areas[f"M{age}"].astype(int)).to_numpy()
+    age = PHASE_AGE[phase]
+    draw = rng.normal(
+        areas[f"Age {age} Mean"].to_numpy(), areas[f"Age {age} SD"].to_numpy()
+    )
+    return np.maximum(np.rint(draw), 0).astype(np.int64)
 
 
 def secondary_instance(
@@ -181,17 +214,18 @@ def build(
     """
     rng = np.random.default_rng(SEED)
 
-    # Simulate student locations within each LSOA, clustered on its population centroid.
+    # Draw each LSOA's cohort, then simulate its students' locations, clustered
+    # on its population centroid.
     primary_student_xy, primary_student_lsoa = sample_students(
         areas["Borders"],
         areas["Centroids"],
-        cohort_sizes(areas, "primary"),
+        draw_cohort_sizes(areas, "primary", rng),
         rng,
     )
     secondary_student_xy, secondary_student_lsoa = sample_students(
         areas["Borders"],
         areas["Centroids"],
-        cohort_sizes(areas, "secondary"),
+        draw_cohort_sizes(areas, "secondary", rng),
         rng,
     )
     # Who is disadvantaged is drawn after both phases' locations, so the

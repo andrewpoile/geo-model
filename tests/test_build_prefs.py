@@ -1,11 +1,12 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from geo_model import build_prefs as bp
 from geo_model import build_routes as br
 from geo_model import load_data as ld
 
-DATA = ld.POPULATION_XLSX.parent.parent
+DATA = ld.POPULATION_DIR.parent.parent
 
 
 # --------------------------------------------------------------------------
@@ -86,6 +87,52 @@ def test_build_only_routes_the_secondary_phase(build):
 
 
 # --------------------------------------------------------------------------
+# cohort_sizes and draw_cohort_sizes
+# --------------------------------------------------------------------------
+
+
+def cohorts(mean, sd):
+    """Areas carrying the eleven-year-olds' mean and SD alone."""
+    return pd.DataFrame({"Age 11 Mean": mean, "Age 11 SD": sd})
+
+
+def test_cohort_sizes_is_the_mean_cohort():
+    np.testing.assert_array_equal(
+        bp.cohort_sizes(cohorts([12.5, 3.25], [2.0, 1.0]), "secondary"), [12.5, 3.25]
+    )
+
+
+def test_draw_cohort_sizes_rounds_a_cohort_that_never_varies_to_its_mean():
+    drawn = bp.draw_cohort_sizes(
+        cohorts([12.4, 3.6], [0.0, 0.0]), "secondary", np.random.default_rng(0)
+    )
+
+    np.testing.assert_array_equal(drawn, [12, 4])
+
+
+def test_draw_cohort_sizes_places_no_students_for_a_negative_draw():
+    drawn = bp.draw_cohort_sizes(
+        cohorts([-50.0] * 100, [1.0] * 100), "secondary", np.random.default_rng(0)
+    )
+
+    np.testing.assert_array_equal(drawn, 0)
+
+
+def test_draw_cohort_sizes_draws_around_the_mean_reproducibly():
+    areas = cohorts([20.0] * 10000, [4.0] * 10000)
+
+    drawn = bp.draw_cohort_sizes(areas, "secondary", np.random.default_rng(0))
+
+    np.testing.assert_array_equal(
+        drawn, bp.draw_cohort_sizes(areas, "secondary", np.random.default_rng(0))
+    )
+    assert drawn.dtype == np.int64
+    # Rounding adds a variance of 1/12 to the normal's.
+    assert drawn.mean() == pytest.approx(20, abs=0.2)
+    assert drawn.std() == pytest.approx(np.sqrt(16 + 1 / 12), abs=0.2)
+
+
+# --------------------------------------------------------------------------
 # secondary_instance
 # --------------------------------------------------------------------------
 
@@ -100,11 +147,12 @@ def by_bundle(preferences, ranks):
 def test_secondary_instance_ranks_nearest_first_without_performance_weight():
     areas = ld.load_areas()
     _, schools = ld.load_schools()
+    rng = np.random.default_rng(0)
     student_xy, student_lsoa = bp.sample_students(
         areas["Borders"],
         areas["Centroids"],
-        bp.cohort_sizes(areas, "secondary"),
-        np.random.default_rng(0),
+        bp.draw_cohort_sizes(areas, "secondary", rng),
+        rng,
     )
 
     preferences, _, _, _ = bp.secondary_instance(
@@ -129,11 +177,12 @@ def test_secondary_instance_ranks_nearest_first_without_performance_weight():
 def test_secondary_instance_ranks_each_group_on_its_own_weights():
     areas = ld.load_areas()
     _, schools = ld.load_schools()
+    rng = np.random.default_rng(0)
     student_xy, student_lsoa = bp.sample_students(
         areas["Borders"],
         areas["Centroids"],
-        bp.cohort_sizes(areas, "secondary"),
-        np.random.default_rng(0),
+        bp.draw_cohort_sizes(areas, "secondary", rng),
+        rng,
     )
     routes = br.route_network(
         areas,
@@ -181,7 +230,7 @@ def test_secondary_instance_offers_other_students_routes_only_when_open():
     student_xy, student_lsoa = bp.sample_students(
         areas["Borders"],
         areas["Centroids"],
-        bp.cohort_sizes(areas, "secondary"),
+        bp.draw_cohort_sizes(areas, "secondary", rng),
         rng,
     )
     disadvantaged = bp.disadvantaged_students(student_lsoa, areas, rng)

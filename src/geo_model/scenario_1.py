@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 
 from geo_model.__main__ import INTAKE_MEASURES
-from geo_model.build_prefs import cohort_sizes
 from geo_model.build_routes import DISADVANTAGE, DISADVANTAGE_CHOICES, save_routes
 from geo_model.dissimilarity import (
     DEFAULTS,
@@ -117,9 +116,7 @@ def main() -> None:
         print(" + ".join(las) + ":")
         out_dir = region_dir(las) / OUT_DIR
         _, secondary_schools = load_schools(las)
-        samples = list(
-            student_samples(areas, cohort_sizes(areas, "secondary"), args.seeds)
-        )
+        samples = list(student_samples(areas, args.seeds))
 
         save_routes(
             settings_routes(

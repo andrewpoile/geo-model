@@ -16,6 +16,7 @@ from geo_model.build_prefs import (
     ROUTE_DISCOUNT,
     SEED,
     cohort_sizes,
+    draw_cohort_sizes,
     secondary_instance,
 )
 from geo_model.build_routes import (
@@ -78,20 +79,16 @@ class Settings:
 DEFAULTS = Settings()
 
 
-def student_samples(
-    areas: pd.DataFrame, sizes: np.ndarray, n_seeds: int
-) -> Iterator[Sample]:
+def student_samples(areas: pd.DataFrame, n_seeds: int) -> Iterator[Sample]:
     """Draw one secondary student sample per seed, reproducibly from SEED.
 
-    Which students are disadvantaged is drawn after where they live, from the
-    same stream, so the locations of a seed do not depend on it.
+    Each seed draws every area's cohort, as `draw_cohort_sizes` does, then
+    where its students live, then which of them are disadvantaged, all from
+    the same stream, so the locations of a seed do not depend on the group.
 
     Args:
-        areas (pd.DataFrame): Districts carrying "Borders", "Centroids" and
-        "IDACI Score".
-
-        sizes (np.ndarray): Students to sample in each area, aligned with
-        `areas`.
+        areas (pd.DataFrame): Districts carrying "Borders", "Centroids",
+        "IDACI Score" and the columns `draw_cohort_sizes` reads.
 
         n_seeds (int): Number of samples to draw.
 
@@ -103,7 +100,10 @@ def student_samples(
     for stream in np.random.SeedSequence(SEED).spawn(n_seeds):
         rng = np.random.default_rng(stream)
         student_xy, student_lsoa = sample_students(
-            areas["Borders"], areas["Centroids"], sizes, rng
+            areas["Borders"],
+            areas["Centroids"],
+            draw_cohort_sizes(areas, "secondary", rng),
+            rng,
         )
         yield student_xy, student_lsoa, disadvantaged_students(student_lsoa, areas, rng)
 
@@ -498,19 +498,18 @@ def run(
         of the scenario-row keys `score_sample` returns. Also written to
         RESULTS_CSV in `out_dir`.
     """
-    sizes = cohort_sizes(areas, "secondary")
     routes = route_network(
         areas,
         secondary_schools[["Easting", "Northing"]].to_numpy(),
         secondary_schools["P8MEA"].to_numpy(),
         secondary_schools["PlacesOffered"].to_numpy(),
-        sizes,
+        cohort_sizes(areas, "secondary"),
     )
     shares = load_nts_mode_shares()
 
     rows = []
     for seed, (student_xy, student_lsoa, drawn) in enumerate(
-        student_samples(areas, sizes, n_seeds)
+        student_samples(areas, n_seeds)
     ):
         scenario_rows, _, _, _ = score_sample(
             student_xy,

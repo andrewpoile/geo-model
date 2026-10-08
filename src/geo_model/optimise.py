@@ -46,7 +46,7 @@ from geo_model.__main__ import (
     swept,
     unassigned_rows,
 )
-from geo_model.build_prefs import SEED, cohort_sizes
+from geo_model.build_prefs import SEED
 from geo_model.build_routes import (
     DISADVANTAGE,
     DISADVANTAGE_CHOICES,
@@ -937,11 +937,7 @@ def search(
     print(" + ".join(las) + ":")
     # A seed's sample depends on its place in the stream alone, so the first
     # samples are the ones a search of as many seeds alone would draw.
-    samples = list(
-        student_samples(
-            areas, cohort_sizes(areas, "secondary"), args.seeds + args.held_out_seeds
-        )
-    )
+    samples = list(student_samples(areas, args.seeds + args.held_out_seeds))
     searched, held_out = samples[: args.seeds], samples[args.seeds :]
 
     reference = objective_values(

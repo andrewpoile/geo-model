@@ -30,7 +30,8 @@ MIN_ROUTE_DISTANCE = 3218
 
 # Seats on the routes into a school, as a multiple of the disadvantaged
 # students' fair share of the Year 7 places it offers: k * places * D / N, with
-# D the region's disadvantaged students and N its Year 7 cohort. At 1 a
+# D the region's disadvantaged students and N its Year 7 cohort, both on the
+# mean cohort over the years, so they do not change with a sample. At 1 a
 # school's routes hold the seats its disadvantaged students would take if
 # every intake matched the region's mix. The seats are split between the
 # school's routes in proportion to the disadvantaged students of each route's
@@ -277,8 +278,9 @@ def route_network(
         `load_places_offered` reads them, shape (n_schools,), aligned with
         `school_xy`.
 
-        district_cohort (np.ndarray): Students in the cohort of every district,
-        positionally aligned with `areas`, as `cohort_sizes` gives it.
+        district_cohort (np.ndarray): Expected students in the cohort of every
+        district, positionally aligned with `areas`: the mean cohort
+        `cohort_sizes` gives, so the route set does not change with a sample.
 
         decile (int, optional): Routes are built only from districts at or
         below this IDACI decile. Defaults to DISADVANTAGED_DECILE.

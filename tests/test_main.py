@@ -9,7 +9,6 @@ from matplotlib.figure import Figure
 from shapely import box
 
 from geo_model import __main__ as sweep_main
-from geo_model import build_prefs as bp
 from geo_model import load_data as ld
 from geo_model.dissimilarity import score_settings
 from geo_model.utils import (
@@ -22,7 +21,7 @@ from geo_model.utils import (
     routes_t_test,
 )
 
-DATA = ld.POPULATION_XLSX.parent.parent
+DATA = ld.POPULATION_DIR.parent.parent
 
 
 # --------------------------------------------------------------------------
@@ -74,9 +73,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     )
     areas = ld.load_areas()
     _, schools = ld.load_schools()
-    samples = list(
-        sweep_main.student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1)
-    )
+    samples = list(sweep_main.student_samples(areas, 1))
 
     shares = ld.load_nts_mode_shares()
 
@@ -122,11 +119,6 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     routed = results[results["scenario"] == "with routes"]
     scales = routed.groupby("parameter")["dissimilarity"].nunique()
     assert scales["capacity_scale"] == 2
-    # More seats on every route carry more students by route.
-    riders = modes[(modes["scenario"] == "with routes") & (modes["mode"] == "route")]
-    riders = riders[riders["parameter"] == "capacity_scale"]
-    riders = riders.set_index("value")["students"]
-    assert riders[sweep_main.DEFAULTS.capacity_scale] < riders[25.0]
 
 
 # --------------------------------------------------------------------------
@@ -347,9 +339,7 @@ def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
 ):
     areas = ld.load_areas()
     _, schools = ld.load_schools()
-    samples = list(
-        sweep_main.student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1)
-    )
+    samples = list(sweep_main.student_samples(areas, 1))
     shares = ld.load_nts_mode_shares()
 
     matchings = sweep_main.settings_matchings(

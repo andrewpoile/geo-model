@@ -9,14 +9,13 @@ from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
-from geo_model import build_prefs as bp
 from geo_model import load_data as ld
 from geo_model import optimise as op
 from geo_model.__main__ import COLOURS, GROUP_COLOURS, INTAKE_MEASURES
 from geo_model.build_routes import DISADVANTAGE_CHOICES
 from geo_model.dissimilarity import DEFAULTS, Settings, score_settings, student_samples
 
-DATA = ld.POPULATION_XLSX.parent.parent
+DATA = ld.POPULATION_DIR.parent.parent
 
 # A sample of no students, for the checks made before anything is scored.
 NO_STUDENTS = [(np.empty((0, 2)), np.empty(0, dtype=np.int64), np.empty(0, dtype=bool))]
@@ -239,7 +238,7 @@ def secondary():
     """One sample and the frames it is scored with, loaded once for the module."""
     areas = ld.load_areas()
     _, schools = ld.load_schools()
-    samples = list(student_samples(areas, bp.cohort_sizes(areas, "secondary"), 1))
+    samples = list(student_samples(areas, 1))
     return samples, areas, schools, ld.load_nts_mode_shares()
 
 

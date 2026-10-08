@@ -4,39 +4,70 @@ import pytest
 
 from geo_model import load_data as ld
 
-POPULATION_COLUMNS = ["LSOA21CD", "Total", "F4", "F11", "M4", "M11"]
+POPULATION_COLUMNS = [
+    "LSOA21CD",
+    "Age 4 Mean",
+    "Age 4 SD",
+    "Age 11 Mean",
+    "Age 11 SD",
+]
+LSOAS = ["E01011949", "E01011950"]
 
 
-def write_population_workbook(path, rows, sheet="Mid-2024 LSOA 2021"):
-    """A stand-in for the ONS workbook: three banner rows, then the header.
+def estimates(f4, m4, f11, m11, lsoas=LSOAS):
+    """One year's sheet: the columns the model reads, plus two it must drop."""
+    return {
+        "LAD 2023 Code": ["E06000045"] * len(lsoas),
+        "LSOA 2021 Code": lsoas,
+        "Total": [1898] * len(lsoas),
+        "F4": f4,
+        "M4": m4,
+        "F11": f11,
+        "M11": m11,
+    }
 
-    The real release carries 187 single-year-of-age columns; only the six the
-    model uses are written here, plus one it must drop.
+
+def write_population_workbook(path, sheets):
+    """A stand-in for an ONS workbook: a cover sheet the loader must pass
+    over, then each year's sheet, three banner rows above its header.
+
+    The real release carries 187 single-year-of-age columns; only the five
+    the model uses are written here, plus two it must drop.
     """
-    frame = pd.DataFrame(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
-        # startrow=3 leaves the three banner rows read_excel is told to skip.
-        frame.to_excel(writer, sheet_name=sheet, startrow=3, index=False)
-    return frame
+        pd.DataFrame({"Cover": ["not a year"]}).to_excel(
+            writer, sheet_name="Cover sheet", index=False
+        )
+        for sheet, rows in sheets.items():
+            # startrow=3 leaves the three banner rows read_excel is told to skip.
+            pd.DataFrame(rows).to_excel(
+                writer, sheet_name=sheet, startrow=3, index=False
+            )
 
 
 @pytest.fixture
 def population_source(tmp_path, monkeypatch):
-    """Point the loader at a workbook and a cache of its own."""
-    source = tmp_path / "population.xlsx"
-    monkeypatch.setattr(ld, "POPULATION_XLSX", source)
+    """Point the loader at a folder of two workbooks and a cache of its own.
+
+    Both workbooks hold mid-2012, the later one revising it, as the ONS
+    releases revise mid-2022.
+    """
+    source = tmp_path / "estimates"
+    monkeypatch.setattr(ld, "POPULATION_DIR", source)
     monkeypatch.setattr(ld, "POPULATION_CACHE", tmp_path / "cache" / "population.pkl")
     write_population_workbook(
-        source,
+        source / "sapelsoasyoa20112012.xlsx",
         {
-            "LAD 2023 Code": ["E06000045", "E06000045"],
-            "LSOA 2021 Code": ["E01011949", "E01011950"],
-            "Total": [1898, 1247],
-            "F4": [11, 13],
-            "F11": [9, 7],
-            "M4": [4, 7],
-            "M11": [18, 10],
+            "Mid-2011 LSOA 2021": estimates([10, 3], [6, 1], [9, 7], [11, 5]),
+            "Mid-2012 LSOA 2021": estimates([100] * 2, [100] * 2, [100] * 2, [100] * 2),
+        },
+    )
+    write_population_workbook(
+        source / "sapelsoasyoa20122013.xlsx",
+        {
+            "Mid-2012 LSOA 2021": estimates([8, 2], [10, 4], [12, 6], [10, 8]),
+            "Mid-2013 LSOA 2021": estimates([9, 1], [11, 4], [10, 4], [14, 6]),
         },
     )
     return source
@@ -47,70 +78,93 @@ def population_source(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def test_load_population_keeps_only_the_columns_the_model_uses(population_source):
+def test_load_population_summarises_each_cohort_over_the_years(population_source):
     population = ld.load_population()
 
     assert list(population.columns) == POPULATION_COLUMNS
-    np.testing.assert_array_equal(population["LSOA21CD"], ["E01011949", "E01011950"])
-    np.testing.assert_array_equal(population["F11"], [9, 7])
+    assert population.attrs["years"] == [2011, 2012, 2013]
+    np.testing.assert_array_equal(population["LSOA21CD"], LSOAS)
+    # Girls and boys together, mid-2012 read from the later workbook alone:
+    # the four-year-olds are 16, 18, 20 and 4, 6, 5, the eleven-year-olds 20,
+    # 22, 24 and 12, 14, 10. The standard deviation is the sample one.
+    np.testing.assert_array_equal(population["Age 4 Mean"], [18, 5])
+    np.testing.assert_array_equal(population["Age 4 SD"], [2, 1])
+    np.testing.assert_array_equal(population["Age 11 Mean"], [22, 12])
+    np.testing.assert_array_equal(population["Age 11 SD"], [2, 2])
 
 
-def test_load_population_writes_a_cache_keyed_on_the_source_file(population_source):
+def test_load_population_writes_a_cache_keyed_on_every_workbook(population_source):
     population = ld.load_population()
 
     assert ld.POPULATION_CACHE.exists()
-    stat = population_source.stat()
-    assert population.attrs["source_key"] == (
-        population_source.name,
-        stat.st_mtime_ns,
-        stat.st_size,
+    assert population.attrs["source_key"] == tuple(
+        (path.name, path.stat().st_mtime_ns, path.stat().st_size)
+        for path in sorted(population_source.iterdir())
     )
 
 
-def test_load_population_reuses_the_cache_without_reading_the_workbook(
+def test_load_population_reuses_the_cache_without_reading_the_workbooks(
     population_source, monkeypatch
 ):
     first = ld.load_population()
 
-    # Any second read of the workbook would now fail, so a returned frame
+    # Any second read of a workbook would now fail, so a returned frame
     # proves the cache alone served it.
-    monkeypatch.setattr(
-        ld.pd, "read_excel", lambda *a, **k: pytest.fail("re-read a cached workbook")
-    )
+    def fail(*args, **kwargs):
+        pytest.fail("re-read a cached workbook")
+
+    monkeypatch.setattr(ld.pd, "read_excel", fail)
+    monkeypatch.setattr(ld.pd, "ExcelFile", fail)
     pd.testing.assert_frame_equal(ld.load_population(), first)
 
 
 def test_load_population_rebuilds_a_cache_left_behind_by_another_file(
-    population_source, tmp_path
+    population_source,
 ):
     ld.load_population()
 
-    # The cache now holds a key from a workbook that is no longer the source.
+    # The cache now holds a key from a workbook that has since changed.
     write_population_workbook(
-        population_source,
+        population_source / "sapelsoasyoa20122013.xlsx",
         {
-            "LAD 2023 Code": ["E06000045"],
-            "LSOA 2021 Code": ["E01099999"],
-            "Total": [1],
-            "F4": [2],
-            "F11": [3],
-            "M4": [4],
-            "M11": [5],
+            "Mid-2012 LSOA 2021": estimates([1], [1], [2], [2], ["E01099999"]),
+            "Mid-2013 LSOA 2021": estimates([1], [1], [3], [3], ["E01099999"]),
         },
     )
+    (population_source / "sapelsoasyoa20112012.xlsx").unlink()
 
     rebuilt = ld.load_population()
     np.testing.assert_array_equal(rebuilt["LSOA21CD"], ["E01099999"])
-    np.testing.assert_array_equal(rebuilt["M11"], [5])
+    np.testing.assert_array_equal(rebuilt["Age 11 Mean"], [5])
 
 
-def test_load_population_fails_loudly_when_the_workbook_is_missing(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(ld, "POPULATION_XLSX", tmp_path / "absent.xlsx")
+def test_load_population_fails_loudly_when_no_workbook_is_held(tmp_path, monkeypatch):
+    monkeypatch.setattr(ld, "POPULATION_DIR", tmp_path / "absent")
     monkeypatch.setattr(ld, "POPULATION_CACHE", tmp_path / "cache.pkl")
 
     with pytest.raises(FileNotFoundError):
+        ld.load_population()
+
+
+def test_load_population_rejects_a_single_year(population_source):
+    for path in population_source.iterdir():
+        path.unlink()
+    write_population_workbook(
+        population_source / "sapelsoasyoa2011.xlsx",
+        {"Mid-2011 LSOA 2021": estimates([10, 3], [6, 1], [9, 7], [11, 5])},
+    )
+
+    with pytest.raises(ValueError, match="fewer than two years"):
+        ld.load_population()
+
+
+def test_load_population_rejects_a_year_missing_an_lsoa(population_source):
+    write_population_workbook(
+        population_source / "sapelsoasyoa2014.xlsx",
+        {"Mid-2014 LSOA 2021": estimates([1], [1], [1], [1], LSOAS[:1])},
+    )
+
+    with pytest.raises(ValueError, match=LSOAS[1]):
         ld.load_population()
 
 
@@ -285,7 +339,7 @@ def test_load_places_offered_fails_loudly_when_the_file_is_missing(
 # load_areas: against the real data folder
 # --------------------------------------------------------------------------
 
-DATA = ld.POPULATION_XLSX.parent.parent
+DATA = ld.POPULATION_DIR.parent.parent
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")

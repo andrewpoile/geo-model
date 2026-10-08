@@ -16,7 +16,6 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
-from geo_model.build_prefs import cohort_sizes
 from geo_model.build_routes import (
     DISADVANTAGE,
     DISADVANTAGE_CHOICES,
@@ -1272,9 +1271,7 @@ def main() -> None:
     for las, areas in regions(args.la, args.merge):
         out_dir = region_dir(las) / SWEEP_DIR
         _, secondary_schools = load_schools(las)
-        samples = list(
-            student_samples(areas, cohort_sizes(areas, "secondary"), args.seeds)
-        )
+        samples = list(student_samples(areas, args.seeds))
 
         results, schools, modes = sweep(
             samples,

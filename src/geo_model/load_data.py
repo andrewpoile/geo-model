@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import geopandas as gpd
@@ -10,8 +11,17 @@ CRS = "EPSG:27700"  # British National Grid; eastings/northings in metres
 PRIMARY_PHASES = ["All-through", "Middle deemed primary", "Primary"]
 SECONDARY_PHASES = ["All-through", "Middle deemed secondary", "Secondary"]
 
-POPULATION_XLSX = Path("data/student_data/sapelsoasyoa20222024.xlsx")
+# ONS single-year-of-age estimates for 2021 LSOAs, one workbook per run of
+# years, mid-2011 to mid-2024, each year a sheet of its own. A workbook is named
+# for the years it spans, sapelsoasyoa20222024.xlsx for mid-2022 to mid-2024,
+# and matched on that name, so the lock file Excel writes beside a workbook it
+# has open is passed over.
+POPULATION_DIR = Path("data/student_data/LSOA_PopEstimates")
+POPULATION_WORKBOOKS = "sapelsoasyoa*.xlsx"
 POPULATION_CACHE = Path("temp/population_lsoa.pkl")
+# The ages whose cohorts are sampled: four-year-olds start primary school,
+# eleven-year-olds secondary.
+COHORT_AGES = [4, 11]
 IDACI_CSV = Path(
     "data/student_data/IoD2025/"
     "File_3_IoD2025 Supplementary Indices_IDACI and IDAOPI.csv"
@@ -77,28 +87,88 @@ NTS_YEARS = [2025]
 
 
 def load_population() -> pd.DataFrame:
-    """Import age-sliced population data, necessary for building primary and secondary age populations.
+    """Import the mean and standard deviation over the years of every LSOA's
+    cohort of each age in COHORT_AGES, the normal each seed draws its students
+    from.
 
-    Only six of the workbook's 187 columns are used, so the extract is cached
-    and reused until the source file changes.
+    A cohort is the girls and boys of its age, read from every year the
+    workbooks in POPULATION_DIR hold, each year weighted equally. A year two
+    workbooks hold is read from the later release, which revises it. The
+    standard deviation is the sample one over the years. Only five of each
+    sheet's 187 columns are used, so the summary is cached and reused until a
+    workbook changes.
+
+    Returns:
+        pd.DataFrame: One row per LSOA, carrying "LSOA21CD" and, for each age
+        a in COHORT_AGES, "Age a Mean" and "Age a SD", with the years read in
+        its attrs' "years".
+
+    Raises:
+        FileNotFoundError: If POPULATION_DIR holds no workbook named as
+        POPULATION_WORKBOOKS.
+
+        ValueError: If fewer than two years are held, so a cohort has no
+        spread over them, or a year holds no estimate for an LSOA another
+        year holds.
     """
-    stat = POPULATION_XLSX.stat()
-    source_key = (POPULATION_XLSX.name, stat.st_mtime_ns, stat.st_size)
+    workbooks = sorted(POPULATION_DIR.glob(POPULATION_WORKBOOKS))
+    if not workbooks:
+        raise FileNotFoundError(
+            f"{POPULATION_DIR} holds no population workbook {POPULATION_WORKBOOKS}."
+        )
+    source_key = tuple(
+        (path.name, path.stat().st_mtime_ns, path.stat().st_size) for path in workbooks
+    )
 
     if POPULATION_CACHE.exists():
         cached = pd.read_pickle(POPULATION_CACHE)
         if cached.attrs.get("source_key") == source_key:
             return cached
 
-    population = pd.read_excel(
-        POPULATION_XLSX,
-        "Mid-2024 LSOA 2021",
-        skiprows=3,
-        engine="calamine",
-    )
-    population = population.rename(columns={"LSOA 2021 Code": "LSOA21CD"})
-    population = population[["LSOA21CD", "Total", "F4", "F11", "M4", "M11"]]
+    # Workbooks are named for the years they span, so name order is release
+    # order, and a year a later workbook holds again is its revision.
+    sheets: dict[int, tuple[Path, str]] = {}
+    for path in workbooks:
+        with pd.ExcelFile(path, engine="calamine") as book:
+            for sheet in book.sheet_names:
+                year = re.fullmatch(r"Mid-(\d{4}) LSOA 2021", str(sheet))
+                if year:
+                    sheets[int(year[1])] = (path, str(sheet))
+    if len(sheets) < 2:
+        raise ValueError(
+            f"{POPULATION_DIR} holds estimates for fewer than two years, "
+            f"{sorted(sheets)}, so a cohort has no spread over the years."
+        )
+
+    cohorts: dict[int, dict[int, pd.Series]] = {age: {} for age in COHORT_AGES}
+    for year, (path, sheet) in sorted(sheets.items()):
+        estimates = pd.read_excel(
+            path,
+            sheet,
+            skiprows=3,
+            engine="calamine",
+            usecols=[
+                "LSOA 2021 Code",
+                *(f"{sex}{age}" for age in COHORT_AGES for sex in "FM"),
+            ],
+        ).set_index("LSOA 2021 Code")
+        for age in COHORT_AGES:
+            cohorts[age][year] = estimates[f"F{age}"] + estimates[f"M{age}"]
+
+    summary = {}
+    for age in COHORT_AGES:
+        by_year = pd.concat(cohorts[age], axis=1)
+        missing = by_year.isna().any(axis=1)
+        if missing.any():
+            raise ValueError(
+                f"Not every year holds an age {age} estimate for these LSOAs: "
+                + ", ".join(by_year.index[missing])
+            )
+        summary[f"Age {age} Mean"] = by_year.mean(axis=1)
+        summary[f"Age {age} SD"] = by_year.std(axis=1, ddof=1)
+    population = pd.DataFrame(summary).rename_axis("LSOA21CD").reset_index()
     population.attrs["source_key"] = source_key
+    population.attrs["years"] = sorted(sheets)
 
     POPULATION_CACHE.parent.mkdir(parents=True, exist_ok=True)
     # Written aside and moved into place whole, so a run started meanwhile
@@ -336,8 +406,10 @@ def load_areas(las: list[str] = LAS) -> gpd.GeoDataFrame:
         gpd.GeoDataFrame: One row per LSOA, positionally indexed, carrying
         "LSOA21CD", "LSOA21NM", "LA (name)", "IDACI" (the rank), "IDACI
         Decile", "IDACI Score" (the share of children living in
-        income-deprived families), "Total", "F4", "F11", "M4", "M11", a
-        "Centroids" point and a "Borders" polygon.
+        income-deprived families), "Age 4 Mean", "Age 4 SD", "Age 11 Mean"
+        and "Age 11 SD" (each cohort's mean and standard deviation over the
+        years, as `load_population` reads them), a "Centroids" point and a
+        "Borders" polygon.
 
     Raises:
         ValueError: If an authority holds no LSOA the IoD ranks, as a Welsh
@@ -436,11 +508,7 @@ def load_areas(las: list[str] = LAS) -> gpd.GeoDataFrame:
             "IDACI",
             "IDACI Decile",
             "IDACI Score",
-            "Total",
-            "F4",
-            "F11",
-            "M4",
-            "M11",
+            *(f"Age {age} {stat}" for age in COHORT_AGES for stat in ("Mean", "SD")),
             "Centroids",
             "Borders",
         ]

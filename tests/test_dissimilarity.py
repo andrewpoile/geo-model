@@ -9,7 +9,7 @@ from geo_model import dissimilarity as ds
 from geo_model import load_data as ld
 from geo_model.utils import MODES, sample_students
 
-DATA = ld.POPULATION_XLSX.parent.parent
+DATA = ld.POPULATION_DIR.parent.parent
 
 
 # --------------------------------------------------------------------------
@@ -26,15 +26,24 @@ def secondary():
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_student_samples_draws_one_reproducible_sample_per_seed(secondary):
     areas, _ = secondary
-    sizes = bp.cohort_sizes(areas, "secondary")
 
-    first = list(ds.student_samples(areas, sizes, 2))
-    second = list(ds.student_samples(areas, sizes, 2))
+    first = list(ds.student_samples(areas, 2))
+    second = list(ds.student_samples(areas, 2))
 
     assert len(first) == 2
-    assert all(len(xy) == sizes.sum() for xy, _, _ in first)
+    # Each seed draws its own cohort, from the head of its own stream.
+    streams = np.random.SeedSequence(ds.SEED).spawn(2)
+    cohorts = [
+        bp.draw_cohort_sizes(areas, "secondary", np.random.default_rng(stream))
+        for stream in streams
+    ]
+    for (_, student_lsoa, _), cohort in zip(first, cohorts):
+        np.testing.assert_array_equal(
+            np.bincount(student_lsoa, minlength=len(areas)), cohort
+        )
+    assert not np.array_equal(cohorts[0], cohorts[1])
     # Different seeds draw different students, the same seed the same ones.
-    assert not np.array_equal(first[0][0], first[1][0])
+    assert not np.array_equal(first[0][0][:100], first[1][0][:100])
     for sample_a, sample_b in zip(first, second):
         for a, b in zip(sample_a, sample_b):
             np.testing.assert_array_equal(a, b)
@@ -45,19 +54,22 @@ def test_student_samples_draw_each_district_its_idaci_share_after_the_locations(
     secondary,
 ):
     areas, _ = secondary
-    sizes = bp.cohort_sizes(areas, "secondary")
 
-    student_xy, student_lsoa, drawn = next(ds.student_samples(areas, sizes, 1))
+    student_xy, student_lsoa, drawn = next(ds.student_samples(areas, 1))
 
     np.testing.assert_array_equal(
         np.bincount(student_lsoa[drawn], minlength=len(areas)),
-        br.disadvantaged_cohort(areas, sizes),
+        br.disadvantaged_cohort(areas, np.bincount(student_lsoa, minlength=len(areas))),
     )
-    # The locations are the ones a draw of locations alone takes from the
-    # seed's stream, so drawing the group after them leaves them as they were.
-    stream = np.random.SeedSequence(ds.SEED).spawn(1)[0]
+    # The locations are the ones a draw of the cohort and locations alone
+    # takes from the seed's stream, so drawing the group after them leaves
+    # them as they were.
+    rng = np.random.default_rng(np.random.SeedSequence(ds.SEED).spawn(1)[0])
     alone, _ = sample_students(
-        areas["Borders"], areas["Centroids"], sizes, np.random.default_rng(stream)
+        areas["Borders"],
+        areas["Centroids"],
+        bp.draw_cohort_sizes(areas, "secondary", rng),
+        rng,
     )
     np.testing.assert_array_equal(student_xy, alone)
 
@@ -65,15 +77,14 @@ def test_student_samples_draw_each_district_its_idaci_share_after_the_locations(
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_score_sample_scores_both_scenarios_of_one_sample(secondary):
     areas, schools = secondary
-    sizes = bp.cohort_sizes(areas, "secondary")
     routes = br.route_network(
         areas,
         schools[["Easting", "Northing"]].to_numpy(),
         schools["P8MEA"].to_numpy(),
         schools["PlacesOffered"].to_numpy(),
-        sizes,
+        bp.cohort_sizes(areas, "secondary"),
     )
-    student_xy, student_lsoa, disadvantaged = next(ds.student_samples(areas, sizes, 1))
+    student_xy, student_lsoa, disadvantaged = next(ds.student_samples(areas, 1))
 
     rows, school_rows, mode_rows, route_rows = ds.score_sample(
         student_xy,
