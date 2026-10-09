@@ -23,6 +23,7 @@ from geo_model.build_routes import (
     BOTTLENECK_ROUTES,
     DISADVANTAGE,
     DISADVANTAGED_DECILE,
+    LARGEST_FIRST_ROUTES,
     LINEAR_PROGRESSIVITY,
     LOCAL_RADIUS,
     MAX_LOCAL_P8,
@@ -77,6 +78,7 @@ class Settings:
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT
     shortest_only: bool = SHORTEST_ROUTE_ONLY
     bottleneck: bool = BOTTLENECK_ROUTES
+    largest_first: bool = LARGEST_FIRST_ROUTES
 
 
 DEFAULTS = Settings()
@@ -399,6 +401,7 @@ def settings_routes(
         disadvantage=disadvantage,
         shortest_only=settings.shortest_only,
         bottleneck=settings.bottleneck,
+        largest_first=settings.largest_first,
     )
 
 
