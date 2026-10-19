@@ -10,8 +10,8 @@ shows where routed students are drawn from. Trip length is the straight-line
 distance to the seated school, scaled by a circuity factor for the road
 distance the survey records, and an unseated student makes no trip. The
 counting itself is `utils.expected_modes`, which `dissimilarity.score_sample`
-applies to every matching it scores, so the parameter sweep in `__main__`
-carries the same estimate.
+applies to every matching it scores, so the parameter sweep in
+`sweep.sweep` carries the same estimate.
 """
 
 import argparse
@@ -22,7 +22,6 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
 
-from geo_model.__main__ import COLOURS
 from geo_model.build_prefs import cohort_sizes
 from geo_model.build_routes import DISADVANTAGE, route_network
 from geo_model.dissimilarity import (
@@ -32,6 +31,7 @@ from geo_model.dissimilarity import (
     student_samples,
 )
 from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
+from geo_model.sweep import COLOURS
 from geo_model.utils import (
     CIRCUITY,
     MODES,

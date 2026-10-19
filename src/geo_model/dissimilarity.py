@@ -419,9 +419,6 @@ def score_settings(
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Score every sample at one setting of the parameters.
 
-    Lives here rather than in `__main__` so worker processes can import it:
-    multiprocessing never re-imports a `__main__` module into its workers.
-
     Args:
         settings (Settings): The parameter values to build routes and rank
         preferences with.
