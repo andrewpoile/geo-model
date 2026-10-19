@@ -1,24 +1,17 @@
 import pandas as pd
-import pytest
 
 from geo_model import car_displacement as cd
-from geo_model import load_data as ld
 from geo_model.utils import MODES
-
-DATA = ld.NTS_MODE_BY_LENGTH_ODS.parent.parent.parent
-
 
 # --------------------------------------------------------------------------
 # run: against the real data folder
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_run_counts_every_mode_of_both_scenarios_of_every_seed(tmp_path, monkeypatch):
-    monkeypatch.setattr(ld, "POPULATION_CACHE", tmp_path / "population_lsoa.pkl")
-    _, schools = ld.load_schools()
-
-    results = cd.run(1, ld.load_areas(), schools, tmp_path)
+def test_run_counts_every_mode_of_both_scenarios_of_every_seed(
+    areas, secondary, tmp_path
+):
+    results = cd.run(1, areas, secondary, tmp_path)
 
     assert list(results.columns) == ["seed", "scenario", "mode", "students"]
     assert len(results) == 2 * len(MODES)

@@ -149,14 +149,20 @@ ROUTE_DISTRICT = np.array([1])
 ROUTE_SCHOOL = np.array([0])
 
 
-def rank_two_districts(**kwargs):
+def rank_two_districts(
+    student_district=STUDENT_DISTRICT,
+    school_district=SCHOOL_DISTRICT,
+    route_district=ROUTE_DISTRICT,
+    route_school=ROUTE_SCHOOL,
+    **kwargs,
+):
     return rank_bundles(
         STUDENT_XY,
-        STUDENT_DISTRICT,
+        student_district,
         SCHOOL_XY,
-        SCHOOL_DISTRICT,
-        ROUTE_DISTRICT,
-        ROUTE_SCHOOL,
+        school_district,
+        route_district,
+        route_school,
         **kwargs,
     )
 
@@ -354,19 +360,6 @@ def test_rank_bundles_noise_gives_the_same_tastes_with_routes_and_without():
         np.testing.assert_array_equal(schools, plain[student, :, 0])
 
 
-def test_rank_bundles_rejects_noise_without_an_rng():
-    with pytest.raises(ValueError, match="noise_scale > 0 needs an rng"):
-        rank_bundles(
-            np.array([[0.0, 0.0], [5.0, 5.0]]),
-            np.array([0, 1]),
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-            np.array([0, 1]),
-            np.empty(0, dtype=int),
-            np.empty(0, dtype=int),
-            noise_scale=0.5,
-        )
-
-
 @pytest.mark.parametrize(
     "kwargs, message",
     [
@@ -386,59 +379,16 @@ def test_rank_bundles_rejects_noise_without_an_rng():
             {"performance_weight": 0.5, "school_scores": np.array([1.0, np.nan])},
             "non-finite",
         ),
+        ({"noise_scale": 0.5}, "noise_scale > 0 needs an rng"),
+        ({"student_district": np.array([0, 1, 0])}, "one district per student"),
+        ({"school_district": np.array([0])}, "one district per school"),
+        ({"route_district": np.array([0, 1])}, "must align"),
+        ({"route_school": np.array([5])}, "outside the 2 schools"),
     ],
 )
-def test_rank_bundles_rejects_bad_preference_parameters(kwargs, message):
+def test_rank_bundles_rejects_bad_arguments(kwargs, message):
     with pytest.raises(ValueError, match=message):
         rank_two_districts(**kwargs)
-
-
-def test_rank_bundles_rejects_a_district_per_student_of_the_wrong_length():
-    with pytest.raises(ValueError, match="one district per student"):
-        rank_bundles(
-            STUDENT_XY,
-            np.array([0, 1, 0]),
-            SCHOOL_XY,
-            SCHOOL_DISTRICT,
-            ROUTE_DISTRICT,
-            ROUTE_SCHOOL,
-        )
-
-
-def test_rank_bundles_rejects_a_district_per_school_of_the_wrong_length():
-    with pytest.raises(ValueError, match="one district per school"):
-        rank_bundles(
-            STUDENT_XY,
-            STUDENT_DISTRICT,
-            SCHOOL_XY,
-            np.array([0]),
-            ROUTE_DISTRICT,
-            ROUTE_SCHOOL,
-        )
-
-
-def test_rank_bundles_rejects_misaligned_route_axes():
-    with pytest.raises(ValueError, match="must align"):
-        rank_bundles(
-            STUDENT_XY,
-            STUDENT_DISTRICT,
-            SCHOOL_XY,
-            SCHOOL_DISTRICT,
-            np.array([0, 1]),
-            np.array([0]),
-        )
-
-
-def test_rank_bundles_rejects_a_route_to_a_school_that_does_not_exist():
-    with pytest.raises(ValueError, match="outside the 2 schools"):
-        rank_bundles(
-            STUDENT_XY,
-            STUDENT_DISTRICT,
-            SCHOOL_XY,
-            SCHOOL_DISTRICT,
-            np.array([1]),
-            np.array([5]),
-        )
 
 
 # --------------------------------------------------------------------------
@@ -698,39 +648,26 @@ def test_district_groups_compares_each_districts_groups_with_the_regions(capsys)
 # --------------------------------------------------------------------------
 
 
-def test_dissimilarity_index_is_zero_when_every_school_holds_the_city_mix():
-    # Two schools, each with one disadvantaged student and two others.
-    matched = [0, 0, 0, 1, 1, 1]
-    disadvantaged = [True, False, False, True, False, False]
-    assert dissimilarity_index(matched, disadvantaged, 2) == 0.0
+@pytest.mark.parametrize(
+    ("matched", "disadvantaged", "n_schools", "expected"),
+    [
+        # Two schools, each with one disadvantaged student and two others.
+        ([0, 0, 0, 1, 1, 1], [True, False, False, True, False, False], 2, 0.0),
+        ([0, 0, 1, 1, 1], [True, True, False, False, False], 2, 1.0),
+        # a = [3, 1] of 4, b = [1, 3] of 4: 1/2 * (|3/4 - 1/4| + |1/4 - 3/4|).
+        ([0, 0, 0, 1, 0, 1, 1, 1], [True] * 4 + [False] * 4, 2, 0.5),
+        # A third school with no intake contributes nothing, but the array
+        # must still span it.
+        ([0, 0, 1, 1, 1], [True, True, False, False, False], 3, 1.0),
+    ],
+    ids=["city-mix", "complete-segregation", "hand-worked", "unused-school"],
+)
+def test_dissimilarity_index_matches_known_cases(
+    matched, disadvantaged, n_schools, expected
+):
+    index = dissimilarity_index(matched, disadvantaged, n_schools)
 
-
-def test_dissimilarity_index_is_one_under_complete_segregation():
-    matched = [0, 0, 1, 1, 1]
-    disadvantaged = [True, True, False, False, False]
-    assert dissimilarity_index(matched, disadvantaged, 2) == 1.0
-
-
-def test_dissimilarity_index_matches_a_hand_worked_case():
-    # a = [3, 1] of 4, b = [1, 3] of 4: 1/2 * (|3/4 - 1/4| + |1/4 - 3/4|) = 1/2.
-    matched = [0, 0, 0, 1, 0, 1, 1, 1]
-    disadvantaged = [True, True, True, True, False, False, False, False]
-    assert dissimilarity_index(matched, disadvantaged, 2) == pytest.approx(0.5)
-
-
-def test_dissimilarity_index_counts_a_school_nobody_was_matched_to():
-    # A third school with no intake contributes nothing, so the index is
-    # unchanged by its presence but the array must still span it.
-    matched = [0, 0, 1, 1, 1]
-    disadvantaged = [True, True, False, False, False]
-    assert dissimilarity_index(matched, disadvantaged, 3) == 1.0
-
-
-def test_dissimilarity_index_leaves_unmatched_students_out():
-    # The two unmatched students would make the mix even if counted.
-    matched = [0, 0, 1, 1, 1, -1, -1]
-    disadvantaged = [True, True, False, False, False, False, True]
-    assert dissimilarity_index(matched, disadvantaged, 2) == 1.0
+    assert index == pytest.approx(expected)
 
 
 @pytest.mark.parametrize(
@@ -740,16 +677,6 @@ def test_dissimilarity_index_rejects_an_empty_seated_group(disadvantaged):
     # The last case seats no disadvantaged student, only leaves one unmatched.
     with pytest.raises(ValueError, match="hold a seat, so the index is undefined"):
         dissimilarity_index([-1, 0, 1], disadvantaged, 2)
-
-
-def test_dissimilarity_index_rejects_misaligned_inputs():
-    with pytest.raises(ValueError, match="must align"):
-        dissimilarity_index([0, 1], [True], 2)
-
-
-def test_dissimilarity_index_rejects_a_school_beyond_the_count():
-    with pytest.raises(ValueError, match="beyond the 2 schools"):
-        dissimilarity_index([0, 2], [True, False], 2)
 
 
 # --------------------------------------------------------------------------

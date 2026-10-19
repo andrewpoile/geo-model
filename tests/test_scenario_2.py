@@ -1,30 +1,25 @@
 import numpy as np
-import pytest
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import maximum_bipartite_matching
 from scipy.spatial import distance as spdist
 
 from geo_model import build_routes as br
-from geo_model import load_data as ld
 from geo_model import scenario_1 as s1
 from geo_model import scenario_2 as s2
 from geo_model.dissimilarity import settings_routes
 
-DATA = ld.POPULATION_DIR.parent.parent
 
+def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(
+    areas, secondary
+):
+    school_xy = secondary[["Easting", "Northing"]].to_numpy()
+    targets = areas.nsmallest(len(secondary), "IDACI")
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts():
-    areas = ld.load_areas()
-    _, schools = ld.load_schools()
-    school_xy = schools[["Easting", "Northing"]].to_numpy()
-    targets = areas.nsmallest(len(schools), "IDACI")
-
-    routes = settings_routes(s2.SCENARIO, areas, schools, s1.ROUND_UP)
+    routes = settings_routes(s2.SCENARIO, areas, secondary, s1.ROUND_UP)
 
     # One route per school, each from a district of its own, the districts
     # being the region's of lowest IDACI rank, as many as there are schools.
-    assert sorted(routes["school_idx"]) == list(range(len(schools)))
+    assert sorted(routes["school_idx"]) == list(range(len(secondary)))
     assert routes["district_idx"].is_unique
     assert set(routes["district_idx"]) == set(targets.index)
     lengths = np.linalg.norm(

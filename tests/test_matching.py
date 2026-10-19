@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from numba.core.dispatcher import Dispatcher
 
 from geo_model.matching import fast_DAT
 from geo_model.utils import rank_bundles
@@ -8,13 +9,19 @@ NO_ROUTES = np.empty(0, dtype=np.int32)
 
 
 def run(preferences, ranks, school_capacities, route_capacities=NO_ROUTES):
-    """Call fast_DAT with the dtypes the compiled kernel is written against."""
-    return fast_DAT(
-        np.asarray(preferences, dtype=np.int32),
-        np.asarray(ranks, dtype=np.int32),
-        np.asarray(school_capacities, dtype=np.int32),
-        np.asarray(route_capacities, dtype=np.int32),
-    )
+    """Call fast_DAT with the dtypes the compiled kernel is written against.
+
+    The kernel's Python source is run too and must return the same matching:
+    coverage cannot see into compiled code, so this is how it is measured.
+    """
+    args = [
+        np.asarray(a, dtype=np.int32)
+        for a in (preferences, ranks, school_capacities, route_capacities)
+    ]
+    matching = fast_DAT(*args)
+    assert isinstance(fast_DAT, Dispatcher)
+    np.testing.assert_array_equal(fast_DAT.py_func(*args), matching)
+    return matching
 
 
 def run_dense(preferences, priorities, school_capacities, route_capacities=NO_ROUTES):
@@ -223,23 +230,15 @@ def test_the_stability_check_catches_justified_envy():
     )
 
 
-@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
-def test_the_matching_is_stable(seed):
-    preferences, ranks, school_capacities, route_capacities = instance(seed)
-    matching = run(preferences, ranks, school_capacities, route_capacities)
-
+def assert_valid(preferences, ranks, school_capacities, route_capacities, matching):
+    """The matching is stable, holds every school and route to its capacity,
+    and seats each student on a bundle it ranked or leaves it unmatched."""
     assert (
         blocking_pairs(
             preferences, ranks, school_capacities, route_capacities, matching
         )
         == []
     )
-
-
-@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
-def test_the_matching_respects_every_capacity(seed):
-    preferences, ranks, school_capacities, route_capacities = instance(seed)
-    matching = run(preferences, ranks, school_capacities, route_capacities)
 
     seats_taken = np.bincount(
         matching[matching[:, 0] >= 0, 0], minlength=len(school_capacities)
@@ -250,20 +249,22 @@ def test_the_matching_respects_every_capacity(seed):
     assert (seats_taken <= school_capacities).all()
     assert (riders <= route_capacities).all()
 
-
-@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
-def test_every_student_is_matched_to_a_bundle_it_ranked(seed):
-    preferences, ranks, school_capacities, route_capacities = instance(seed)
-    matching = run(preferences, ranks, school_capacities, route_capacities)
-
     for student, bundle in enumerate(matching):
         if bundle[0] < 0:
             assert (bundle == -1).all()  # unmatched carries no route either
-            continue
-        assert (preferences[student] == bundle).all(axis=1).any()
+        else:
+            assert (preferences[student] == bundle).all(axis=1).any()
 
 
-def test_a_tighter_instance_is_still_stable():
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_the_matching_is_valid(seed):
+    preferences, ranks, school_capacities, route_capacities = instance(seed)
+    matching = run(preferences, ranks, school_capacities, route_capacities)
+
+    assert_valid(preferences, ranks, school_capacities, route_capacities, matching)
+
+
+def test_a_tighter_instance_is_still_valid():
     # Half the students cannot be seated, so schools ration hard and the
     # eviction paths are walked far more often.
     preferences, ranks, school_capacities, route_capacities = instance(9)
@@ -271,23 +272,13 @@ def test_a_tighter_instance_is_still_stable():
     matching = run(preferences, ranks, school_capacities, route_capacities)
 
     assert (matching[:, 0] < 0).any()
-    assert (
-        blocking_pairs(
-            preferences, ranks, school_capacities, route_capacities, matching
-        )
-        == []
-    )
+    assert_valid(preferences, ranks, school_capacities, route_capacities, matching)
 
 
-def test_a_performance_weighted_instance_is_still_stable():
+def test_a_performance_weighted_instance_is_still_valid():
     preferences, ranks, school_capacities, route_capacities = instance(
         5, school_scores=np.array([-0.7, 0.1, 0.0, 0.5, 1.2]), performance_weight=0.3
     )
     matching = run(preferences, ranks, school_capacities, route_capacities)
 
-    assert (
-        blocking_pairs(
-            preferences, ranks, school_capacities, route_capacities, matching
-        )
-        == []
-    )
+    assert_valid(preferences, ranks, school_capacities, route_capacities, matching)

@@ -38,7 +38,7 @@ Entry points are run as modules, e.g. `uv run python -m geo_model` (the paramete
 
 ## Data, outputs and tests
 
-`data/`, `output/`, `temp/` and `agent_docs/` are gitignored, so they exist only locally. Tests that need `data/` are marked `skipif(not DATA.is_dir())` and are skipped in CI, so a green CI run does not cover them: run the suite locally. Each region writes to `output/<LA names joined by "+", alphabetical>/` (`region_dir` in utils.py). `temp/population_lsoa.pkl` caches the ONS population estimates (`load_data.POPULATION_CACHE`); delete it if those inputs change.
+`data/`, `output/`, `temp/` and `agent_docs/` are gitignored, so they exist only locally. Tests that need `data/` take the session fixtures in `tests/conftest.py`, which load it once and skip where it is absent, as in CI, so a green CI run does not cover them: run the suite locally. Each region writes to `output/<LA names joined by "+", alphabetical>/` (`region_dir` in utils.py). `temp/population_lsoa.pkl` caches the ONS population estimates (`load_data.POPULATION_CACHE`); delete it if those inputs change.
 
 ## Architecture
 
