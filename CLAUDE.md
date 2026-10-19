@@ -18,7 +18,7 @@ If anything breaks or doesn't make sense, DO NOT IGNORE OR SUPPRESS IT; report i
 
 All written code should prioritise accuracy and correctness above all else.
 All written code should be as lean and human-readable as possible, no bloat.
-Test suite shoud be as lean as possible.
+Test suite should be as lean as possible.
 CLAUDE.md should stay concise.
 
 ## Commands
@@ -34,7 +34,7 @@ uv run pytest --cov
 uv run pytest tests/test_matching.py::test_name
 ```
 
-Entry points are run as modules, e.g. `uv run python -m geo_model` (the parameter sweep), `uv run python -m geo_model.optimise`, `uv run python -m geo_model.scenario_1`. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge` (see `add_region_arguments` in utils.py). The `geo-model` console script in pyproject.toml points at a placeholder in `__init__.py`, not the simulation.
+Entry points are run as modules, e.g. `uv run python -m geo_model` (the parameter sweep, also `uv run geo-model`), `uv run python -m geo_model.optimise`, `uv run python -m geo_model.scenario_1`. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge` (see `add_region_arguments` in utils.py).
 
 ## Data, outputs and tests
 
