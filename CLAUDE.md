@@ -34,7 +34,7 @@ uv run pytest --cov
 uv run pytest tests/test_matching.py::test_name
 ```
 
-Entry points are run as modules, e.g. `uv run python -m geo_model` (the parameter sweep, also `uv run geo-model`), `uv run python -m geo_model.optimise`, `uv run python -m geo_model.scenario_1`. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge` (see `add_region_arguments` in utils.py).
+Entry points are run as modules, e.g. `uv run python -m geo_model` (the parameter sweep in sweep.py, also `uv run geo-model`), `uv run python -m geo_model.optimise`, `uv run python -m geo_model.scenario_1`. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge` (see `add_region_arguments` in utils.py).
 
 ## Data, outputs and tests
 
@@ -51,7 +51,7 @@ The pipeline, in dependency order:
 5. `dissimilarity.py` holds `Settings`/`DEFAULTS`, draws the samples, and matches and scores each one with and without routes over the same students. `utils.py` holds the shared measures (dissimilarity index, Gini, expected travel modes, t-tests with Holm correction) and region handling.
 
 Analyses built on top of that pipeline:
-- `__main__.py`: one-at-a-time sweep of each parameter in `GRID` around `DEFAULTS`, with plots and maps.
+- `sweep.py`: one-at-a-time sweep of each parameter in `GRID` around `DEFAULTS`, with plots and maps; `__main__.py` only runs it.
 - `car_displacement.py`: the change in travel mode routes induce (National Travel Survey mode shares).
 - `optimise.py`: NSGA-II (pymoo) search over route parameters, trading off segregation against modal shift.
 - `scenario_1.py`, `scenario_2.py` and `scenario_3.py`: fixed hand-built route networks, scored and plotted with optimise's plots. Scenarios 2 and 3 reuse scenario 1's runner.
