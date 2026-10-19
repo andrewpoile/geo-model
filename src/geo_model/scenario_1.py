@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from geo_model.__main__ import INTAKE_MEASURES
 from geo_model.build_routes import DISADVANTAGE, DISADVANTAGE_CHOICES, save_routes
 from geo_model.dissimilarity import (
     DEFAULTS,
@@ -25,6 +24,7 @@ from geo_model.dissimilarity import (
 )
 from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
 from geo_model.optimise import compare, route_utilisation, utilisation_summary
+from geo_model.sweep import INTAKE_MEASURES
 from geo_model.utils import (
     CIRCUITY,
     MODES,

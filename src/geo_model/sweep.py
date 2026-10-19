@@ -1,3 +1,9 @@
+"""Sweep each model parameter one at a time around DEFAULTS, scoring every
+setting with and without routes over the same student samples, and plot the
+index, the students left unassigned, each school's intake and the change in
+travel mode against every parameter.
+"""
+
 import argparse
 import functools
 from concurrent.futures import ProcessPoolExecutor

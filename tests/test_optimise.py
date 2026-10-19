@@ -11,9 +11,9 @@ from matplotlib.patches import Rectangle
 
 from geo_model import load_data as ld
 from geo_model import optimise as op
-from geo_model.__main__ import COLOURS, GROUP_COLOURS, INTAKE_MEASURES
 from geo_model.build_routes import DISADVANTAGE_CHOICES
 from geo_model.dissimilarity import DEFAULTS, Settings, score_settings, student_samples
+from geo_model.sweep import COLOURS, GROUP_COLOURS, INTAKE_MEASURES
 
 DATA = ld.POPULATION_DIR.parent.parent
 

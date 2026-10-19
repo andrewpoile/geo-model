@@ -8,8 +8,8 @@ from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 from shapely import box
 
-from geo_model import __main__ as sweep_main
 from geo_model import load_data as ld
+from geo_model import sweep as sw
 from geo_model.dissimilarity import score_settings
 from geo_model.utils import (
     MODES,
@@ -30,13 +30,11 @@ DATA = ld.POPULATION_DIR.parent.parent
 
 
 def test_every_grid_varies_its_own_parameter_alone_and_holds_the_default():
-    for parameter, cells in sweep_main.GRID.items():
-        assert sweep_main.DEFAULTS in cells
+    for parameter, cells in sw.GRID.items():
+        assert sw.DEFAULTS in cells
         for cell in cells:
             others = {k: v for k, v in asdict(cell).items() if k != parameter}
-            defaults = {
-                k: v for k, v in asdict(sweep_main.DEFAULTS).items() if k != parameter
-            }
+            defaults = {k: v for k, v in asdict(sw.DEFAULTS).items() if k != parameter}
             assert others == defaults
 
 
@@ -44,13 +42,13 @@ def test_every_grid_varies_its_own_parameter_alone_and_holds_the_default():
 def test_swept_leaves_the_other_students_route_discount_out_unless_they_ride(
     disadvantage,
 ):
-    assert sweep_main.swept(disadvantage) == [
-        parameter for parameter in sweep_main.GRID if parameter != "route_discount"
+    assert sw.swept(disadvantage) == [
+        parameter for parameter in sw.GRID if parameter != "route_discount"
     ]
 
 
 def test_swept_runs_every_grid_when_routes_are_open_to_every_student():
-    assert sweep_main.swept("score-open") == list(sweep_main.GRID)
+    assert sw.swept("score-open") == list(sw.GRID)
 
 
 # --------------------------------------------------------------------------
@@ -61,23 +59,23 @@ def test_swept_runs_every_grid_when_routes_are_open_to_every_student():
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        sweep_main,
+        sw,
         "GRID",
         {
             "capacity_scale": [
-                sweep_main.DEFAULTS,
-                replace(sweep_main.DEFAULTS, capacity_scale=25.0),
+                sw.DEFAULTS,
+                replace(sw.DEFAULTS, capacity_scale=25.0),
             ],
-            "decile": [sweep_main.DEFAULTS],
+            "decile": [sw.DEFAULTS],
         },
     )
     areas = ld.load_areas()
     _, schools = ld.load_schools()
-    samples = list(sweep_main.student_samples(areas, 1))
+    samples = list(sw.student_samples(areas, 1))
 
     shares = ld.load_nts_mode_shares()
 
-    results, intake, modes = sweep_main.sweep(samples, areas, schools, shares, tmp_path)
+    results, intake, modes = sw.sweep(samples, areas, schools, shares, tmp_path)
 
     assert len(results) == 3 * 1 * 2
     assert len(intake) == 3 * 1 * 2 * len(schools)
@@ -86,9 +84,9 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
         assert list(frame.columns[:2]) == ["parameter", "value"]
     assert results["dissimilarity"].between(0, 1).all()
     for name, frame in (
-        (sweep_main.RESULTS_CSV, results),
-        (sweep_main.SCHOOLS_CSV, intake),
-        (sweep_main.MODES_CSV, modes),
+        (sw.RESULTS_CSV, results),
+        (sw.SCHOOLS_CSV, intake),
+        (sw.MODES_CSV, modes),
     ):
         pd.testing.assert_frame_equal(pd.read_csv(tmp_path / name), frame)
 
@@ -108,7 +106,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     )
 
     # Scoring the cells in worker processes changes nothing but the wall time.
-    pooled = sweep_main.sweep(samples, areas, schools, shares, tmp_path, workers=2)
+    pooled = sw.sweep(samples, areas, schools, shares, tmp_path, workers=2)
     for pooled_frame, frame in zip(pooled, (results, intake, modes)):
         pd.testing.assert_frame_equal(pooled_frame, frame)
 
@@ -140,7 +138,7 @@ def synthetic_frames():
             "seed": seed,
             "scenario": scenario,
         }
-        for parameter, grid in sweep_main.GRID.items()
+        for parameter, grid in sw.GRID.items()
         for cell in grid
         for seed in range(2)
         for scenario in ("with routes", "without routes")
@@ -189,30 +187,30 @@ def draw(parameters: list[str]) -> np.ndarray:
     """Draw `parameters` on a bare figure and return its panels, row by row."""
     results, intake, modes, fsm = synthetic_frames()
     fig = Figure(figsize=(4.5 * len(parameters), 20), layout="constrained")
-    sweep_main.draw_columns(fig, results, intake, modes, fsm, parameters)
+    sw.draw_columns(fig, results, intake, modes, fsm, parameters)
     # The subplots come first and in row order; the colorbar follows them.
     grid = np.array(fig.axes[: 5 * (len(parameters) + 1)]).reshape(5, -1)
     return grid[:, :-1]  # the FSM strips take the last column
 
 
-@pytest.mark.parametrize("measure", list(sweep_main.INTAKE_MEASURES))
+@pytest.mark.parametrize("measure", list(sw.INTAKE_MEASURES))
 def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, measure):
     out_dir = tmp_path / "out"
 
-    sweep_main.plot(*synthetic_frames(), list(sweep_main.GRID), out_dir, measure)
+    sw.plot(*synthetic_frames(), list(sw.GRID), out_dir, measure)
 
-    for name in [*(f"{p}.png" for p in sweep_main.GRID), sweep_main.PLOT_PNG]:
+    for name in [*(f"{p}.png" for p in sw.GRID), sw.PLOT_PNG]:
         png = out_dir / name
         assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
 def test_draw_columns_shares_one_x_axis_down_every_column():
-    parameters = list(sweep_main.GRID)
+    parameters = list(sw.GRID)
 
     panels = draw(parameters)
 
     for column, parameter in zip(panels.T, parameters):
-        at = sweep_main.positions(parameter)
+        at = sw.positions(parameter)
         shared = column[0].get_shared_x_axes()
         assert all(shared.joined(column[0], ax) for ax in column[1:])
         # One axis, so one set of limits and one set of ticks for the column.
@@ -220,18 +218,18 @@ def test_draw_columns_shares_one_x_axis_down_every_column():
             assert ax.get_xlim() == (0, len(at))
             assert list(ax.get_xticks()) == list(at)
         # Drawn once, at the foot of the column.
-        assert column[-1].get_xlabel() == sweep_main.AXIS_LABELS[parameter]
+        assert column[-1].get_xlabel() == sw.AXIS_LABELS[parameter]
         assert all(ax.get_xlabel() == "" for ax in column[:-1])
         assert column[-1].xaxis.get_tick_params()["labelbottom"]
         assert not any(ax.xaxis.get_tick_params()["labelbottom"] for ax in column[:-1])
 
 
-@pytest.mark.parametrize("measure", list(sweep_main.INTAKE_MEASURES))
+@pytest.mark.parametrize("measure", list(sw.INTAKE_MEASURES))
 def test_draw_columns_puts_the_intake_panels_and_fsm_strip_on_one_scale(measure):
     results, intake, modes, fsm = synthetic_frames()
     fig = Figure(figsize=(9, 20), layout="constrained")
 
-    sweep_main.draw_columns(fig, results, intake, modes, fsm, ["decile"], measure)
+    sw.draw_columns(fig, results, intake, modes, fsm, ["decile"], measure)
 
     grid = np.array(fig.axes[:10]).reshape(5, 2)
     norms = [ax.collections[0].norm for ax in grid[2:4].flat]
@@ -247,7 +245,7 @@ def test_draw_columns_puts_the_intake_panels_and_fsm_strip_on_one_scale(measure)
         assert norm.vmin == -norm.vmax
         assert norm.vmax == pytest.approx(max(largest, fsm.abs().max()))
     label = fig.axes[-1].get_ylabel()
-    assert label == sweep_main.INTAKE_MEASURES[measure]["label"]
+    assert label == sw.INTAKE_MEASURES[measure]["label"]
 
 
 def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
@@ -255,7 +253,7 @@ def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
     stray = results[results["parameter"] == "decile"].head(1).assign(value=-1)
 
     with pytest.raises(ValueError, match="decile carries values GRID does not sweep"):
-        sweep_main.draw_columns(
+        sw.draw_columns(
             Figure(), pd.concat([results, stray]), intake, modes, fsm, ["decile"]
         )
 
@@ -268,7 +266,7 @@ def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
 def test_sweep_tests_tests_every_cell_and_corrects_over_them_all():
     results, *_ = synthetic_frames()
 
-    tests = sweep_main.sweep_tests(results)
+    tests = sw.sweep_tests(results)
 
     cells = results[["parameter", "value"]].drop_duplicates()
     expected = pd.DataFrame(
@@ -300,7 +298,7 @@ def test_sweep_tests_tests_every_cell_and_corrects_over_them_all():
     ],
 )
 def test_stars_mark_the_level_a_p_value_falls_below(p, mark):
-    assert sweep_main.stars(p) == mark
+    assert sw.stars(p) == mark
 
 
 def test_draw_columns_stars_every_value_by_its_test_over_the_whole_frame():
@@ -317,14 +315,14 @@ def test_draw_columns_stars_every_value_by_its_test_over_the_whole_frame():
     )
     fig = Figure(figsize=(9, 20), layout="constrained")
 
-    sweep_main.draw_columns(fig, results, intake, modes, fsm, ["decile"])
+    sw.draw_columns(fig, results, intake, modes, fsm, ["decile"])
 
     marks = fig.axes[0].texts
     assert [mark.get_text() for mark in marks] == ["*"] * 9
-    corrected = sweep_main.sweep_tests(results)["p_holm"].xs("decile")
-    at = sweep_main.positions("decile")
+    corrected = sw.sweep_tests(results)["p_holm"].xs("decile")
+    at = sw.positions("decile")
     assert [mark.get_position()[0] for mark in marks] == list(at[corrected.index])
-    assert fig.legends[0].get_title().get_text() == sweep_main.SIGNIFICANCE_KEY
+    assert fig.legends[0].get_title().get_text() == sw.SIGNIFICANCE_KEY
 
 
 # --------------------------------------------------------------------------
@@ -333,20 +331,20 @@ def test_draw_columns_stars_every_value_by_its_test_over_the_whole_frame():
 
 
 @pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-@pytest.mark.parametrize("disadvantage", sweep_main.DISADVANTAGE_CHOICES)
+@pytest.mark.parametrize("disadvantage", sw.DISADVANTAGE_CHOICES)
 def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
     disadvantage,
 ):
     areas = ld.load_areas()
     _, schools = ld.load_schools()
-    samples = list(sweep_main.student_samples(areas, 1))
+    samples = list(sw.student_samples(areas, 1))
     shares = ld.load_nts_mode_shares()
 
-    matchings = sweep_main.settings_matchings(
-        sweep_main.DEFAULTS, samples[0], areas, schools, disadvantage=disadvantage
+    matchings = sw.settings_matchings(
+        sw.DEFAULTS, samples[0], areas, schools, disadvantage=disadvantage
     )
     rows, _, _, route_rows = score_settings(
-        sweep_main.DEFAULTS,
+        sw.DEFAULTS,
         samples,
         areas,
         schools,
@@ -358,7 +356,7 @@ def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
 
     _, student_lsoa, drawn, _ = samples[0]
     disadvantaged = disadvantaged_group(
-        student_lsoa, drawn, areas, sweep_main.DEFAULTS.decile, disadvantage
+        student_lsoa, drawn, areas, sw.DEFAULTS.decile, disadvantage
     )
     assert [row["scenario"] for row in rows] == list(matchings)
     for row in rows:
@@ -415,7 +413,7 @@ def test_draw_map_links_every_seated_student_to_their_school():
     areas, schools, student_xy, matchings = synthetic_city()
     fig = Figure(figsize=(16, 8), layout="constrained")
 
-    sweep_main.draw_map(fig, areas, schools, student_xy, matchings)
+    sw.draw_map(fig, areas, schools, student_xy, matchings)
 
     school_xy = schools[["Easting", "Northing"]].to_numpy()
     linked = {
@@ -446,9 +444,7 @@ def test_draw_map_links_every_seated_student_to_their_school():
         assert ax.get_aspect() == 1.0
         # Kilometres ticked above the line and miles below, from one origin.
         origins = []
-        for (unit, (metres, length)), side in zip(
-            sweep_main.SCALE_BAR.items(), (1, -1)
-        ):
+        for (unit, (metres, length)), side in zip(sw.SCALE_BAR.items(), (1, -1)):
             scale = drawn[unit]
             assert isinstance(scale, LineCollection)
             (start, end), *ticks = scale.get_segments()
@@ -467,7 +463,7 @@ def test_draw_map_links_every_seated_student_to_their_school():
 def test_plot_map_writes_a_png(tmp_path):
     png = tmp_path / "out" / "map.png"
 
-    sweep_main.plot_map(*synthetic_city(), png)
+    sw.plot_map(*synthetic_city(), png)
 
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
@@ -479,10 +475,10 @@ def test_plot_map_writes_a_png(tmp_path):
 
 def default_intake(intake: pd.DataFrame) -> pd.DataFrame:
     """The school rows of the first parameter's default cell."""
-    parameter = next(iter(sweep_main.GRID))
+    parameter = next(iter(sw.GRID))
     return intake[
         (intake["parameter"] == parameter)
-        & (intake["value"] == asdict(sweep_main.DEFAULTS)[parameter])
+        & (intake["value"] == asdict(sw.DEFAULTS)[parameter])
     ]
 
 
@@ -491,8 +487,8 @@ def test_draw_lorenz_draws_every_seed_and_its_gini_per_scenario():
     fig = Figure(figsize=(12, 6.5), layout="constrained")
 
     default = default_intake(intake)
-    sweep_main.draw_lorenz(fig, default)
-    for ax, scenario in zip(fig.axes, sweep_main.COLOURS):
+    sw.draw_lorenz(fig, default)
+    for ax, scenario in zip(fig.axes, sw.COLOURS):
         assert ax.get_title() == scenario
         seeds = default[default["scenario"] == scenario].groupby("seed")
         lines = {line.get_label(): line for line in ax.get_lines()}
@@ -511,16 +507,14 @@ def test_draw_lorenz_draws_every_seed_and_its_gini_per_scenario():
 def test_default_cell_picks_the_rows_of_the_first_parameters_default():
     _, intake, _, _ = synthetic_frames()
 
-    pd.testing.assert_frame_equal(
-        sweep_main.default_cell(intake), default_intake(intake)
-    )
+    pd.testing.assert_frame_equal(sw.default_cell(intake), default_intake(intake))
 
 
 def test_default_cell_rejects_rows_without_it():
     _, intake, _, _ = synthetic_frames()
 
     with pytest.raises(ValueError, match="no default cell of"):
-        sweep_main.default_cell(intake.drop(default_intake(intake).index))
+        sw.default_cell(intake.drop(default_intake(intake).index))
 
 
 @pytest.mark.parametrize(
@@ -528,13 +522,13 @@ def test_default_cell_rejects_rows_without_it():
     [
         ("score", "drawn from LSOA IDACI scores"),
         ("score-open", "drawn from LSOA IDACI scores"),
-        ("decile", f"IDACI decile ≤ {sweep_main.DEFAULTS.decile}"),
+        ("decile", f"IDACI decile ≤ {sw.DEFAULTS.decile}"),
     ],
 )
 def test_draw_lorenz_names_the_group_the_rows_were_scored_on(disadvantage, group):
     fig = Figure()
 
-    sweep_main.draw_lorenz(fig, default_intake(synthetic_frames()[1]), disadvantage)
+    sw.draw_lorenz(fig, default_intake(synthetic_frames()[1]), disadvantage)
 
     assert fig.axes[0].get_ylabel() == (
         f"Cumulative share of disadvantaged students ({group})"
@@ -544,7 +538,7 @@ def test_draw_lorenz_names_the_group_the_rows_were_scored_on(disadvantage, group
 def test_plot_lorenz_writes_a_png(tmp_path):
     png = tmp_path / "out" / "lorenz.png"
 
-    sweep_main.plot_lorenz(default_intake(synthetic_frames()[1]), png)
+    sw.plot_lorenz(default_intake(synthetic_frames()[1]), png)
 
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
@@ -555,8 +549,8 @@ def test_plot_lorenz_writes_a_png(tmp_path):
 
 
 def test_positions_centre_every_grid_value_on_its_heatmap_cell():
-    for parameter, cells in sweep_main.GRID.items():
-        at = sweep_main.positions(parameter)
+    for parameter, cells in sw.GRID.items():
+        at = sw.positions(parameter)
 
         assert list(at.index) == [getattr(cell, parameter) for cell in cells]
         assert list(at) == [i + 0.5 for i in range(len(cells))]
@@ -578,9 +572,9 @@ def test_unassigned_rows_splits_each_scenario_into_its_two_groups():
         }
     )
 
-    rows = sweep_main.unassigned_rows(results).set_index("series")
+    rows = sw.unassigned_rows(results).set_index("series")
 
-    assert set(rows.index) == set(sweep_main.GROUP_COLOURS)
+    assert set(rows.index) == set(sw.GROUP_COLOURS)
     # Every unplaced student falls in exactly one group of their scenario.
     counts = rows["unassigned"]
     assert counts["disadvantaged, with routes"] == 40
@@ -602,7 +596,7 @@ def test_fsm_share_scales_the_register_percentage_and_names_a_missing_one(capsys
         }
     )
 
-    fsm = sweep_main.fsm_share(schools)
+    fsm = sw.fsm_share(schools)
 
     assert fsm["Alpha School"] == pytest.approx(0.557)
     assert np.isnan(fsm["Beta School"])
@@ -625,7 +619,7 @@ def test_fsm_term_takes_the_register_counts_over_the_schools_holding_them(capsys
         }
     )
 
-    terms = sweep_main.fsm_term(schools)
+    terms = sw.fsm_term(schools)
 
     # 30 eligible and 50 not over Alpha and Gamma alone: Beta holds no figures.
     assert terms["Alpha School"] == pytest.approx(20 / 30 - 20 / 50)
@@ -644,4 +638,4 @@ def test_fsm_term_rejects_a_school_recording_no_pupil_eligible():
     )
 
     with pytest.raises(ValueError, match="cannot be recovered: Beta School"):
-        sweep_main.fsm_term(schools)
+        sw.fsm_term(schools)

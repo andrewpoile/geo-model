@@ -2,8 +2,8 @@
 against modal shift, by NSGA-II over the pipeline run end to end.
 
 Every candidate setting builds its route network, matches every student
-sample with and without routes and scores both matchings, as the sweep in
-`__main__` scores a cell, so a candidate's objectives are the sweep's own
+sample with and without routes and scores both matchings, as `sweep.sweep`
+scores a cell, so a candidate's objectives are the sweep's own
 measures at that setting. Every candidate matches the same samples, so two
 candidates differ by their parameter values alone, and the front found is
 fitted to those samples. The compromise setting of the front is therefore
@@ -32,20 +32,6 @@ from pymoo.core.problem import Problem
 from pymoo.optimize import minimize
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 
-from geo_model.__main__ import (
-    COLOURS,
-    GRID,
-    GROUP_COLOURS,
-    INK,
-    INTAKE_MEASURES,
-    fsm_share,
-    fsm_term,
-    plot_lorenz,
-    plot_map,
-    settings_matchings,
-    swept,
-    unassigned_rows,
-)
 from geo_model.build_prefs import SEED
 from geo_model.build_routes import (
     DISADVANTAGE,
@@ -66,6 +52,20 @@ from geo_model.dissimilarity import (
 from geo_model.dissimilarity import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.dissimilarity import plot as plot_dissimilarity
 from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
+from geo_model.sweep import (
+    COLOURS,
+    GRID,
+    GROUP_COLOURS,
+    INK,
+    INTAKE_MEASURES,
+    fsm_share,
+    fsm_term,
+    plot_lorenz,
+    plot_map,
+    settings_matchings,
+    swept,
+    unassigned_rows,
+)
 from geo_model.utils import (
     CIRCUITY,
     MODES,
