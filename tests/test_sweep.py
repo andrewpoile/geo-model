@@ -21,9 +21,6 @@ from geo_model.utils import (
     routes_t_test,
 )
 
-DATA = ld.POPULATION_DIR.parent.parent
-
-
 # --------------------------------------------------------------------------
 # GRID
 # --------------------------------------------------------------------------
@@ -56,8 +53,9 @@ def test_swept_runs_every_grid_when_routes_are_open_to_every_student():
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
+def test_sweep_scores_every_cell_on_the_same_samples(
+    samples, areas, secondary, shares, tmp_path, monkeypatch
+):
     monkeypatch.setattr(
         sw,
         "GRID",
@@ -69,16 +67,10 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
             "decile": [sw.DEFAULTS],
         },
     )
-    areas = ld.load_areas()
-    _, schools = ld.load_schools()
-    samples = list(sw.student_samples(areas, 1))
-
-    shares = ld.load_nts_mode_shares()
-
-    results, intake, modes = sw.sweep(samples, areas, schools, shares, tmp_path)
+    results, intake, modes = sw.sweep(samples, areas, secondary, shares, tmp_path)
 
     assert len(results) == 3 * 1 * 2
-    assert len(intake) == 3 * 1 * 2 * len(schools)
+    assert len(intake) == 3 * 1 * 2 * len(secondary)
     assert len(modes) == 3 * 1 * 2 * len(MODES)
     for frame in (results, intake, modes):
         assert list(frame.columns[:2]) == ["parameter", "value"]
@@ -106,7 +98,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(tmp_path, monkeypatch):
     )
 
     # Scoring the cells in worker processes changes nothing but the wall time.
-    pooled = sw.sweep(samples, areas, schools, shares, tmp_path, workers=2)
+    pooled = sw.sweep(samples, areas, secondary, shares, tmp_path, workers=2)
     for pooled_frame, frame in zip(pooled, (results, intake, modes)):
         pd.testing.assert_frame_equal(pooled_frame, frame)
 
@@ -183,6 +175,11 @@ def synthetic_frames():
     return results, intake, modes, fsm
 
 
+# Two of GRID's parameters, enough to show how the columns are laid side by
+# side; every parameter's positions are checked in the `positions` test.
+DRAWN = ["decile", "capacity_scale"]
+
+
 def draw(parameters: list[str]) -> np.ndarray:
     """Draw `parameters` on a bare figure and return its panels, row by row."""
     results, intake, modes, fsm = synthetic_frames()
@@ -193,19 +190,18 @@ def draw(parameters: list[str]) -> np.ndarray:
     return grid[:, :-1]  # the FSM strips take the last column
 
 
-@pytest.mark.parametrize("measure", list(sw.INTAKE_MEASURES))
-def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path, measure):
+def test_plot_writes_a_png_per_parameter_and_the_matrix(tmp_path):
     out_dir = tmp_path / "out"
 
-    sw.plot(*synthetic_frames(), list(sw.GRID), out_dir, measure)
+    sw.plot(*synthetic_frames(), DRAWN, out_dir)
 
-    for name in [*(f"{p}.png" for p in sw.GRID), sw.PLOT_PNG]:
+    for name in [*(f"{p}.png" for p in DRAWN), sw.PLOT_PNG]:
         png = out_dir / name
         assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
 def test_draw_columns_shares_one_x_axis_down_every_column():
-    parameters = list(sw.GRID)
+    parameters = DRAWN
 
     panels = draw(parameters)
 
@@ -330,24 +326,18 @@ def test_draw_columns_stars_every_value_by_its_test_over_the_whole_frame():
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
 @pytest.mark.parametrize("disadvantage", sw.DISADVANTAGE_CHOICES)
 def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
-    disadvantage,
+    samples, areas, secondary, shares, disadvantage
 ):
-    areas = ld.load_areas()
-    _, schools = ld.load_schools()
-    samples = list(sw.student_samples(areas, 1))
-    shares = ld.load_nts_mode_shares()
-
     matchings = sw.settings_matchings(
-        sw.DEFAULTS, samples[0], areas, schools, disadvantage=disadvantage
+        sw.DEFAULTS, samples[0], areas, secondary, disadvantage=disadvantage
     )
     rows, _, _, route_rows = score_settings(
         sw.DEFAULTS,
         samples,
         areas,
-        schools,
+        secondary,
         shares,
         disadvantage=disadvantage,
     )
@@ -362,7 +352,7 @@ def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
     for row in rows:
         matched_school = matchings[row["scenario"]][:, 0]
         assert (
-            dissimilarity_index(matched_school, disadvantaged, len(schools))
+            dissimilarity_index(matched_school, disadvantaged, len(secondary))
             == row["dissimilarity"]
         )
         assert (matched_school >= 0).sum() == row["n_matched"]

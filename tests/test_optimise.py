@@ -9,13 +9,10 @@ from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
-from geo_model import load_data as ld
 from geo_model import optimise as op
 from geo_model.build_routes import DISADVANTAGE_CHOICES
-from geo_model.dissimilarity import DEFAULTS, Settings, score_settings, student_samples
+from geo_model.dissimilarity import DEFAULTS, Settings, score_settings
 from geo_model.sweep import COLOURS, GROUP_COLOURS, INTAKE_MEASURES
-
-DATA = ld.POPULATION_DIR.parent.parent
 
 # A sample of no students, for the checks made before anything is scored.
 NO_STUDENTS = [
@@ -240,18 +237,9 @@ def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def secondary():
-    """One sample and the frames it is scored with, loaded once for the module."""
-    areas = ld.load_areas()
-    _, schools = ld.load_schools()
-    samples = list(student_samples(areas, 1))
-    return samples, areas, schools, ld.load_nts_mode_shares()
-
-
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_score_feasible_names_a_setting_that_leaves_no_route(secondary, capsys):
-    samples, areas, schools, shares = secondary
+def test_score_feasible_names_a_setting_that_leaves_no_route(
+    samples, areas, secondary, shares, capsys
+):
     # Every Southampton district lies within 9.9km of every school.
     settings = replace(DEFAULTS, min_distance=20_000)
 
@@ -259,7 +247,7 @@ def test_score_feasible_names_a_setting_that_leaves_no_route(secondary, capsys):
         settings,
         samples=samples,
         areas=areas,
-        secondary_schools=schools,
+        secondary_schools=secondary,
         shares=shares,
     )
 
@@ -269,15 +257,15 @@ def test_score_feasible_names_a_setting_that_leaves_no_route(secondary, capsys):
     assert "so the route set is empty" in out
 
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_optimise_finds_the_front_of_every_setting_scored(secondary, tmp_path):
-    samples, areas, schools, shares = secondary
+def test_optimise_finds_the_front_of_every_setting_scored(
+    samples, areas, secondary, shares, tmp_path
+):
     parameters = ["capacity_scale", "progressivity"]
 
     evaluations, front = op.optimise(
         samples,
         areas,
-        schools,
+        secondary,
         shares,
         tmp_path,
         parameters,
@@ -319,7 +307,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(secondary, tmp_path):
     changes: dict[str, Any] = {p: float(best[p]) for p in parameters}
     settings = replace(DEFAULTS, **changes)
     rescored = op.objective_values(
-        score_settings(settings, samples, areas, schools, shares),
+        score_settings(settings, samples, areas, secondary, shares),
         op.DEFAULT_OBJECTIVES,
     )
     assert rescored == {name: best[name] for name in op.DEFAULT_OBJECTIVES}
@@ -328,7 +316,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(secondary, tmp_path):
     pooled, _ = op.optimise(
         samples,
         areas,
-        schools,
+        secondary,
         shares,
         tmp_path / "pooled",
         parameters,
@@ -568,17 +556,17 @@ def test_draw_route_utilisation_stacks_the_riders_below_the_unused_seats(
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_compare_scores_and_plots_the_setting_against_no_routes(secondary, tmp_path):
-    samples, areas, schools, shares = secondary
+def test_compare_scores_and_plots_the_setting_against_no_routes(
+    samples, areas, secondary, shares, tmp_path
+):
     settings = replace(DEFAULTS, capacity_scale=2.0, progressivity=0.5)
 
     results, intake, modes, routes = op.compare(
-        settings, samples, areas, schools, shares, tmp_path
+        settings, samples, areas, secondary, shares, tmp_path
     )
 
     rows, school_rows, mode_rows, route_rows = score_settings(
-        settings, samples, areas, schools, shares, utilisation=True
+        settings, samples, areas, secondary, shares, utilisation=True
     )
     pd.testing.assert_frame_equal(results, pd.DataFrame(rows))
     pd.testing.assert_frame_equal(intake, pd.DataFrame(school_rows))

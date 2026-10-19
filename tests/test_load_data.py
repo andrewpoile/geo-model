@@ -339,13 +339,8 @@ def test_load_places_offered_fails_loudly_when_the_file_is_missing(
 # load_areas: against the real data folder
 # --------------------------------------------------------------------------
 
-DATA = ld.POPULATION_DIR.parent.parent
 
-
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_load_areas_carries_an_idaci_score_the_decile_ranks():
-    areas = ld.load_areas()
-
+def test_load_areas_carries_an_idaci_score_the_decile_ranks(areas):
     assert areas["IDACI Score"].between(0, 1).all()
     # The decile ranks LSOAs on the score, 1 the most deprived, so no LSOA
     # scores above one in a more deprived decile.
@@ -353,9 +348,9 @@ def test_load_areas_carries_an_idaci_score_the_decile_ranks():
     assert (by_decile["max"].iloc[1:].to_numpy() <= by_decile["min"].iloc[:-1]).all()
 
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
-def test_load_areas_holds_every_lsoa_of_the_authority_and_no_other():
-    areas = ld.load_areas(["Southampton"])
+def test_load_areas_holds_every_lsoa_of_the_authority_and_no_other(areas):
+    # The fixture loads the default region, Southampton alone.
+    assert ld.LAS == ["Southampton"]
 
     # Southampton is a unitary authority, so its LSOAs are those its own name
     # heads, as they were selected before authorities could be named.
@@ -365,7 +360,7 @@ def test_load_areas_holds_every_lsoa_of_the_authority_and_no_other():
     assert areas.index.equals(pd.RangeIndex(152))
 
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+@pytest.mark.usefixtures("data")
 def test_load_areas_reads_a_county_through_its_districts():
     areas = ld.load_areas(["Hampshire"])
 
@@ -376,7 +371,7 @@ def test_load_areas_reads_a_county_through_its_districts():
     assert not areas["LSOA21NM"].str.startswith("Southampton ").any()
 
 
-@pytest.mark.skipif(not DATA.is_dir(), reason=f"the {DATA} folder is not present")
+@pytest.mark.usefixtures("data")
 def test_load_areas_rejects_an_authority_the_deprivation_files_do_not_rank():
     # Welsh LSOAs are ranked by an index of their own, outside the IoD.
     with pytest.raises(ValueError, match=r"ranks no LSOA in \['Cardiff'\]"):

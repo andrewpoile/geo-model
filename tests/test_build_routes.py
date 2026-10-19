@@ -338,10 +338,29 @@ def test_route_network_uses_the_module_defaults():
     assert set(routes["district_idx"]) == {0, 1, 2}
 
 
-@pytest.mark.parametrize("decile", [0, 11, -1])
-def test_route_network_rejects_a_decile_outside_one_to_ten(decile):
-    with pytest.raises(ValueError, match="must be an IDACI decile"):
-        network(make_areas([1, 2]), decile=decile)
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"decile": 0}, "must be an IDACI decile"),
+        ({"decile": 11}, "must be an IDACI decile"),
+        ({"decile": -1}, "must be an IDACI decile"),
+        ({"disadvantage": "district"}, "disadvantage must be one of"),
+        # Misaligned scores would gate on the wrong schools, plausibly and
+        # silently.
+        ({"school_scores": np.array([0.0])}, "school_scores must align"),
+        ({"school_places": np.array([100])}, "school_places must align"),
+        ({"district_cohort": np.array([10])}, "district_cohort must align"),
+        ({"capacity_scale": 0.0}, "capacity_scale must be positive"),
+        ({"capacity_scale": -1.0}, "capacity_scale must be positive"),
+        ({"progressivity": -0.1}, "progressivity must be non-negative"),
+        ({"shortest_only": True, "bottleneck": True}, "only one may be set"),
+        ({"shortest_only": True, "largest_first": True}, "only one may be set"),
+        ({"bottleneck": True, "largest_first": True}, "only one may be set"),
+    ],
+)
+def test_route_network_rejects_bad_arguments(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        network(make_areas([1, 1]), **kwargs)
 
 
 def test_route_network_rejects_an_area_frame_that_is_not_positionally_indexed():
@@ -350,11 +369,6 @@ def test_route_network_rejects_an_area_frame_that_is_not_positionally_indexed():
     areas = make_areas([1, 1], index=[3, 9])
     with pytest.raises(ValueError, match="not positionally indexed"):
         network(areas)
-
-
-def test_route_network_rejects_an_unknown_choice_of_disadvantage():
-    with pytest.raises(ValueError, match="disadvantage must be one of"):
-        network(make_areas([1, 1]), disadvantage="district")
 
 
 def test_route_network_rejects_an_instance_with_no_district_at_or_below_the_decile():
@@ -400,28 +414,6 @@ def test_route_network_rejects_an_instance_with_no_route_eligible_district():
         network(
             make_areas([1, 1]), school_scores=np.array([1.0, 1.0]), local_radius=50_000
         )
-
-
-def test_route_network_rejects_school_scores_that_do_not_align_with_the_coordinates():
-    # Misaligned scores would gate on the wrong schools, plausibly and silently.
-    with pytest.raises(ValueError, match="school_scores must align"):
-        network(make_areas([1, 1]), school_scores=np.array([0.0]))
-
-
-def test_route_network_rejects_places_that_do_not_align_with_the_schools():
-    with pytest.raises(ValueError, match="school_places must align"):
-        network(make_areas([1, 1]), school_places=np.array([100]))
-
-
-def test_route_network_rejects_cohorts_that_do_not_align_with_the_areas():
-    with pytest.raises(ValueError, match="district_cohort must align"):
-        network(make_areas([1, 1]), district_cohort=np.array([10]))
-
-
-@pytest.mark.parametrize("scale", [0.0, -1.0])
-def test_route_network_rejects_a_capacity_scale_that_is_not_positive(scale):
-    with pytest.raises(ValueError, match="capacity_scale must be positive"):
-        network(make_areas([1, 1]), capacity_scale=scale)
 
 
 def test_route_network_seats_each_school_on_the_regions_disadvantaged_share():
@@ -523,11 +515,6 @@ def test_route_network_weights_the_middle_deciles_by_the_profile_chosen(linear, 
 
     np.testing.assert_array_equal(routes["district_idx"], [0, 1])
     np.testing.assert_array_equal(routes["capacity"], seats)
-
-
-def test_route_network_rejects_a_negative_progressivity():
-    with pytest.raises(ValueError, match="progressivity must be non-negative"):
-        network(make_areas([1, 1]), progressivity=-0.1)
 
 
 @pytest.mark.parametrize(
@@ -650,19 +637,6 @@ def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(caps
     out = capsys.readouterr().out
     assert "2 districts holding the most disadvantaged students" in out
     assert "each paired with the free school offering the most places" in out
-
-
-@pytest.mark.parametrize(
-    "rules",
-    [
-        {"shortest_only": True, "bottleneck": True},
-        {"shortest_only": True, "largest_first": True},
-        {"bottleneck": True, "largest_first": True},
-    ],
-)
-def test_route_network_rejects_two_one_route_rules_together(rules):
-    with pytest.raises(ValueError, match="only one may be set"):
-        network(make_areas([1, 1]), **rules)
 
 
 # --------------------------------------------------------------------------
