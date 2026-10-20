@@ -90,6 +90,7 @@ MODES_PNG = "car_displacement.png"
 LORENZ_PNG = "lorenz.png"
 MAP_PNG = "map.png"
 ROUTES_PNG = "route_utilisation.png"
+LOCALS_PNG = "local_acceptance.png"
 
 # Past this many routes the utilisation bars go unlabelled, too narrow to name.
 MAX_LABELLED_ROUTES = 40
@@ -715,6 +716,161 @@ def draw_route_utilisation(fig: Figure, routes: pd.DataFrame) -> None:
     sns.despine(ax=ax)
 
 
+def local_acceptance(schools: pd.DataFrame) -> pd.DataFrame:
+    """Each school's local applicants and those of them it accepts, the mean
+    over seeds, with routes and without.
+
+    Args:
+        schools (pd.DataFrame): The school rows of one setting, as
+        `score_settings` returns them.
+
+    Returns:
+        pd.DataFrame: One row per (school, scenario), with "school",
+        "scenario", the mean "local_applicants" and "local_disadvantaged"
+        and "local_other" accepted, the "accepted" of both groups, the
+        "rejected" (applicants less those accepted) and "acceptance"
+        (accepted over applicants, NaN where none applied). The schools with
+        the most local applicants without routes come first, each with
+        routes then without.
+    """
+    # Counted per seed before the mean, so a school rejecting nobody shows
+    # exactly 0 rather than a rounding error of the means.
+    accepted = schools["local_disadvantaged"] + schools["local_other"]
+    per_school = (
+        schools.assign(
+            accepted=accepted, rejected=schools["local_applicants"] - accepted
+        )
+        .groupby(["school", "scenario"])[
+            [
+                "local_applicants",
+                "local_disadvantaged",
+                "local_other",
+                "accepted",
+                "rejected",
+            ]
+        ]
+        .mean()
+    )
+    per_school = per_school.assign(
+        acceptance=per_school["accepted"] / per_school["local_applicants"]
+    )
+    order = (
+        per_school.xs("without routes", level="scenario")
+        .reset_index()
+        .sort_values(["local_applicants", "school"], ascending=[False, True])
+    )
+    return per_school.reindex(
+        pd.MultiIndex.from_product(
+            [order["school"], list(COLOURS)], names=["school", "scenario"]
+        )
+    ).reset_index()
+
+
+def local_summary(schools: pd.DataFrame) -> str:
+    """The local students who applied to their own school and the share of
+    them accepted, with routes and without, as lines to print, from the
+    school rows of one setting."""
+    totals = (
+        local_acceptance(schools)
+        .groupby("scenario")[["local_applicants", "accepted"]]
+        .sum()
+        .loc[list(COLOURS)]
+    )
+    return "\n".join(
+        f"{scenario.capitalize()}: {applied:.1f} local students applied to "
+        f"their own school, {accepted:.1f} of them accepted, the mean over "
+        f"seeds ({accepted / applied:.1%})."
+        for scenario, applied, accepted in zip(
+            COLOURS, totals["local_applicants"], totals["accepted"]
+        )
+    )
+
+
+def draw_local_acceptance(fig: Figure, schools: pd.DataFrame) -> None:
+    """Fill `fig` with a pair of bars per school, with routes and without:
+    the local students it accepts of each group, the mean over seeds,
+    stacked below the local applicants it rejects, so every bar stands at
+    the school's local applicants.
+
+    The students accepted carry the seeds' range. Schools are ordered as
+    `local_acceptance` orders them.
+
+    Args:
+        fig (Figure): Figure to draw on, using constrained layout.
+
+        schools (pd.DataFrame): The school rows of one setting, as
+        `score_settings` returns them.
+    """
+    per_school = local_acceptance(schools)
+    accepted = schools.assign(
+        accepted=schools["local_disadvantaged"] + schools["local_other"]
+    ).groupby(["school", "scenario"])["accepted"]
+    pairs = pd.MultiIndex.from_frame(per_school[["school", "scenario"]])
+    low = accepted.min().reindex(pairs).to_numpy()
+    high = accepted.max().reindex(pairs).to_numpy()
+    mean = per_school["accepted"].to_numpy()
+    names = per_school["school"].unique()
+    # Each school's pair of bars sits either side of its tick, with routes on
+    # the left.
+    width = 0.4
+    x = np.arange(len(names)).repeat(2) + np.tile([-width / 2, width / 2], len(names))
+
+    ax = fig.subplots()
+    bottom = np.zeros(len(per_school))
+    for column, colour in (
+        (
+            "local_disadvantaged",
+            [GROUP_COLOURS[f"disadvantaged, {s}"] for s in per_school["scenario"]],
+        ),
+        (
+            "local_other",
+            [GROUP_COLOURS[f"other, {s}"] for s in per_school["scenario"]],
+        ),
+        ("rejected", "#e1e0d9"),
+    ):
+        ax.bar(
+            x,
+            per_school[column],
+            width,
+            bottom=bottom,
+            color=colour,
+            edgecolor="white",
+            linewidth=0.5,
+        )
+        bottom += per_school[column].to_numpy()
+    seeds_range = ax.errorbar(
+        x,
+        mean,
+        yerr=[mean - low, high - mean],
+        fmt="none",
+        ecolor=INK,
+        elinewidth=1,
+        capsize=2,
+        label="seeds' range of those accepted",
+    )
+    ax.set_xticks(np.arange(len(names)), names, rotation=90, fontsize="small")
+    ax.set_xlim(-0.5, len(names) - 0.5)
+    # Above the axis, where no bar reaches.
+    ax.legend(
+        handles=[
+            *(
+                Patch(color=colour, label=label.replace(", ", " accepted, "))
+                for label, colour in GROUP_COLOURS.items()
+            ),
+            Patch(color="#e1e0d9", label="rejected"),
+            seeds_range,
+        ],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1),
+        ncol=2,
+        frameon=False,
+    )
+    ax.set_ylabel("Local applicants (mean over seeds)")
+    ax.yaxis.grid(True, color="#e1e0d9")
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+
 def compare(
     settings: Settings,
     samples: list[Sample],
@@ -735,8 +891,9 @@ def compare(
     paired t-test to DISSIMILARITY_PNG, who is left unassigned to
     UNASSIGNED_PNG, each school's intake to INTAKE_PNG and the expected modes
     and their change to MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map of the
-    first sample's two matchings to MAP_PNG, and the seats each route
-    provides and its riders take to ROUTES_PNG. Each plot the scripts share
+    first sample's two matchings to MAP_PNG, the seats each route provides
+    and its riders take to ROUTES_PNG, and the local students each school
+    accepts of those who applied to LOCALS_PNG. Each plot the scripts share
     is drawn with the function its own script uses.
 
     Args:
@@ -824,6 +981,12 @@ def compare(
     )
     draw_route_utilisation(fig, routes)
     save(fig, out_dir / ROUTES_PNG)
+    n_schools = schools["school"].nunique()
+    fig = Figure(
+        figsize=(min(max(8.0, 2 + 0.4 * n_schools), 30.0), 9), layout="constrained"
+    )
+    draw_local_acceptance(fig, schools)
+    save(fig, out_dir / LOCALS_PNG)
     return results, schools, modes, routes
 
 
@@ -983,7 +1146,7 @@ def search(
     print("Compromise setting:")
     print(chosen.round(3).to_string())
 
-    results, _, modes, routes = compare(
+    results, schools, modes, routes = compare(
         replace(DEFAULTS, **cast({p: chosen[p] for p in args.parameters})),
         held_out,
         areas,
@@ -1014,6 +1177,7 @@ def search(
         mode_change(modes).groupby("mode")["change"].mean()[MODES].round(1).to_string()
     )
     print(utilisation_summary(routes))
+    print(local_summary(schools))
 
     plots = [
         DISSIMILARITY_PNG,
@@ -1023,6 +1187,7 @@ def search(
         LORENZ_PNG,
         MAP_PNG,
         ROUTES_PNG,
+        LOCALS_PNG,
     ]
     if len(args.objectives) == 2:
         plot_front(

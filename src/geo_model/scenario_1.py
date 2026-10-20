@@ -23,7 +23,13 @@ from geo_model.dissimilarity import (
     t_test_label,
 )
 from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
-from geo_model.optimise import compare, route_utilisation, utilisation_summary
+from geo_model.optimise import (
+    compare,
+    local_acceptance,
+    local_summary,
+    route_utilisation,
+    utilisation_summary,
+)
 from geo_model.sweep import INTAKE_MEASURES
 from geo_model.utils import (
     CIRCUITY,
@@ -224,6 +230,12 @@ def run(settings: Settings, scenario_dir: Path, description: str) -> None:
             .to_string(index=False)
         )
         print(utilisation_summary(routes))
+        print(
+            "Local students applying to each school and those it accepts, "
+            "mean over samples:"
+        )
+        print(local_acceptance(schools).round(2).to_string(index=False))
+        print(local_summary(schools))
         print(
             f"Wrote the routes, {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, "
             f"{ROUTE_UTILISATION_CSV}, {DISTRICTS_CSV} and the plots in {out_dir}."

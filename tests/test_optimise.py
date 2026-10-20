@@ -552,6 +552,84 @@ def test_draw_route_utilisation_stacks_the_riders_below_the_unused_seats(
 
 
 # --------------------------------------------------------------------------
+# local_acceptance, local_summary and draw_local_acceptance
+# --------------------------------------------------------------------------
+
+
+def local_rows() -> pd.DataFrame:
+    """School rows over two seeds of three schools' local applicants and the
+    disadvantaged and other of them seated."""
+    counts = {
+        # (seed, scenario): applicants, disadvantaged and other seated at
+        # Alpha, Beta and Gamma.
+        (0, "with routes"): ([4, 8, 0], [1, 3, 0], [2, 4, 0]),
+        (1, "with routes"): ([6, 8, 0], [1, 3, 0], [2, 5, 0]),
+        (0, "without routes"): ([4, 8, 0], [2, 4, 0], [2, 4, 0]),
+        (1, "without routes"): ([6, 8, 0], [2, 4, 0], [2, 4, 0]),
+    }
+    return pd.DataFrame(
+        {
+            "seed": seed,
+            "scenario": scenario,
+            "school": school,
+            "local_applicants": n,
+            "local_disadvantaged": a,
+            "local_other": b,
+        }
+        for (seed, scenario), columns in counts.items()
+        for school, n, a, b in zip(("Alpha", "Beta", "Gamma"), *columns)
+    )
+
+
+def test_local_acceptance_averages_each_schools_locals_over_seeds():
+    per_school = op.local_acceptance(local_rows())
+
+    # Beta has the most local applicants without routes, so it comes first,
+    # and Gamma, with none, has no acceptance rate.
+    assert list(per_school["school"]) == ["Beta"] * 2 + ["Alpha"] * 2 + ["Gamma"] * 2
+    assert list(per_school["scenario"]) == list(COLOURS) * 3
+    np.testing.assert_array_equal(per_school["local_applicants"], [8, 8, 5, 5, 0, 0])
+    np.testing.assert_array_equal(per_school["accepted"], [7.5, 8, 3, 4, 0, 0])
+    np.testing.assert_array_equal(per_school["rejected"], [0.5, 0, 2, 1, 0, 0])
+    np.testing.assert_allclose(
+        per_school["acceptance"], [0.9375, 1, 0.6, 0.8, np.nan, np.nan]
+    )
+
+
+def test_local_summary_totals_the_applicants_and_those_accepted():
+    assert op.local_summary(local_rows()) == (
+        "With routes: 13.0 local students applied to their own school, 10.5 of "
+        "them accepted, the mean over seeds (80.8%).\n"
+        "Without routes: 13.0 local students applied to their own school, 12.0 "
+        "of them accepted, the mean over seeds (92.3%)."
+    )
+
+
+def test_draw_local_acceptance_stacks_the_accepted_below_the_rejected():
+    fig = Figure()
+    op.draw_local_acceptance(fig, local_rows())
+    ax = fig.axes[0]
+
+    per_school = op.local_acceptance(local_rows())
+    bars = ax.containers[:3]
+    heights = np.array([[bar.get_height() for bar in stack] for stack in bars])
+    # Disadvantaged accepted, then the others, then those rejected, so every
+    # bar stands at its school's local applicants.
+    np.testing.assert_allclose(heights[0], per_school["local_disadvantaged"])
+    np.testing.assert_allclose(heights[1], per_school["local_other"])
+    np.testing.assert_allclose(heights.sum(axis=0), per_school["local_applicants"])
+    # Each school's bars with routes then without, in the scenario's colours.
+    assert [to_hex(bar.get_facecolor()) for bar in bars[0][:2]] == [
+        GROUP_COLOURS[f"disadvantaged, {scenario}"] for scenario in COLOURS
+    ]
+    assert [tick.get_text() for tick in ax.get_xticklabels()] == [
+        "Beta",
+        "Alpha",
+        "Gamma",
+    ]
+
+
+# --------------------------------------------------------------------------
 # compare: against the real data folder
 # --------------------------------------------------------------------------
 
@@ -582,6 +660,7 @@ def test_compare_scores_and_plots_the_setting_against_no_routes(
         op.LORENZ_PNG,
         op.MAP_PNG,
         op.ROUTES_PNG,
+        op.LOCALS_PNG,
     ):
         assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
