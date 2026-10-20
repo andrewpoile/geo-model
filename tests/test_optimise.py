@@ -605,10 +605,38 @@ def test_local_summary_totals_the_applicants_and_those_accepted():
     )
 
 
+def test_local_difference_pairs_each_schools_accepted_by_seed():
+    difference = op.local_difference(local_rows())
+
+    assert list(difference.columns) == ["seed", "school", "difference"]
+    pd.testing.assert_series_equal(
+        difference.set_index(["seed", "school"])["difference"],
+        pd.Series(
+            [-1, -1, 0, -1, 0, 0],
+            index=pd.MultiIndex.from_product(
+                [[0, 1], ["Alpha", "Beta", "Gamma"]], names=["seed", "school"]
+            ),
+            name="difference",
+        ),
+    )
+
+
+def test_local_difference_rejects_a_school_without_its_pair():
+    rows = local_rows()
+    unpaired = ~(
+        (rows["seed"] == 1)
+        & (rows["school"] == "Beta")
+        & (rows["scenario"] == "with routes")
+    )
+
+    with pytest.raises(ValueError, match=r"\(1, 'Beta'\)"):
+        op.local_difference(rows[unpaired])
+
+
 def test_draw_local_acceptance_stacks_the_accepted_below_the_rejected():
     fig = Figure()
     op.draw_local_acceptance(fig, local_rows())
-    ax = fig.axes[0]
+    ax, change = fig.axes
 
     per_school = op.local_acceptance(local_rows())
     bars = ax.containers[:3]
@@ -622,11 +650,19 @@ def test_draw_local_acceptance_stacks_the_accepted_below_the_rejected():
     assert [to_hex(bar.get_facecolor()) for bar in bars[0][:2]] == [
         GROUP_COLOURS[f"disadvantaged, {scenario}"] for scenario in COLOURS
     ]
-    assert [tick.get_text() for tick in ax.get_xticklabels()] == [
+    # Below, a point per seed and school at its paired difference, under the
+    # same schools.
+    assert [tick.get_text() for tick in change.get_xticklabels()] == [
         "Beta",
         "Alpha",
         "Gamma",
     ]
+    points = np.concatenate(
+        [np.asarray(c.get_offsets())[:, 1] for c in change.collections]
+    )
+    np.testing.assert_array_equal(
+        np.sort(points), np.sort(op.local_difference(local_rows())["difference"])
+    )
 
 
 # --------------------------------------------------------------------------

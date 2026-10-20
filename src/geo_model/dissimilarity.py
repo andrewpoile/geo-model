@@ -599,8 +599,15 @@ def plot(results: pd.DataFrame, path: Path) -> None:
     fig = Figure(figsize=(5, 4))
     ax = fig.subplots()
     ax.set_title(t_test_label(routes_t_test(results)), fontsize="small")
+    # Every seed is drawn as a point, so the box draws no outliers of its own.
     sns.boxplot(
-        results, x="scenario", y="dissimilarity", color="#d9dde3", width=0.5, ax=ax
+        results,
+        x="scenario",
+        y="dissimilarity",
+        color="#d9dde3",
+        width=0.5,
+        showfliers=False,
+        ax=ax,
     )
     sns.stripplot(results, x="scenario", y="dissimilarity", color="#1f2933", ax=ax)
     ax.set_xlabel("")

@@ -786,14 +786,50 @@ def local_summary(schools: pd.DataFrame) -> str:
     )
 
 
+def local_difference(schools: pd.DataFrame) -> pd.DataFrame:
+    """Each school's local students accepted with routes less those without,
+    per seed.
+
+    Both scenarios of a seed match the same students, so the counts pair by
+    seed, as `routes_t_test` pairs the index.
+
+    Args:
+        schools (pd.DataFrame): The school rows of one setting, as
+        `score_settings` returns them.
+
+    Returns:
+        pd.DataFrame: One row per (seed, school), with "seed", "school" and
+        "difference".
+
+    Raises:
+        ValueError: If a seed holds a school's row of one scenario alone.
+    """
+    paired = schools.assign(
+        accepted=schools["local_disadvantaged"] + schools["local_other"]
+    ).pivot(index=["seed", "school"], columns="scenario", values="accepted")
+    if paired.isna().any(axis=None):
+        raise ValueError(
+            "Schools scored in one scenario alone have no pair, at (seed, "
+            "school): "
+            + ", ".join(str(pair) for pair in paired.index[paired.isna().any(axis=1)])
+        )
+    return (
+        (paired["with routes"] - paired["without routes"])
+        .rename("difference")
+        .reset_index()
+    )
+
+
 def draw_local_acceptance(fig: Figure, schools: pd.DataFrame) -> None:
     """Fill `fig` with a pair of bars per school, with routes and without:
     the local students it accepts of each group, the mean over seeds,
     stacked below the local applicants it rejects, so every bar stands at
     the school's local applicants.
 
-    The students accepted carry the seeds' range. Schools are ordered as
-    `local_acceptance` orders them.
+    Below them, the local students each school accepts with routes less
+    those without, a box over the seeds and a point per seed, as
+    `car_displacement.plot` draws the change per mode. Schools are ordered
+    as `local_acceptance` orders them.
 
     Args:
         fig (Figure): Figure to draw on, using constrained layout.
@@ -802,20 +838,13 @@ def draw_local_acceptance(fig: Figure, schools: pd.DataFrame) -> None:
         `score_settings` returns them.
     """
     per_school = local_acceptance(schools)
-    accepted = schools.assign(
-        accepted=schools["local_disadvantaged"] + schools["local_other"]
-    ).groupby(["school", "scenario"])["accepted"]
-    pairs = pd.MultiIndex.from_frame(per_school[["school", "scenario"]])
-    low = accepted.min().reindex(pairs).to_numpy()
-    high = accepted.max().reindex(pairs).to_numpy()
-    mean = per_school["accepted"].to_numpy()
     names = per_school["school"].unique()
     # Each school's pair of bars sits either side of its tick, with routes on
     # the left.
     width = 0.4
     x = np.arange(len(names)).repeat(2) + np.tile([-width / 2, width / 2], len(names))
 
-    ax = fig.subplots()
+    ax, change = fig.subplots(2, 1, sharex=True, height_ratios=[2, 1])
     bottom = np.zeros(len(per_school))
     for column, colour in (
         (
@@ -838,18 +867,6 @@ def draw_local_acceptance(fig: Figure, schools: pd.DataFrame) -> None:
             linewidth=0.5,
         )
         bottom += per_school[column].to_numpy()
-    seeds_range = ax.errorbar(
-        x,
-        mean,
-        yerr=[mean - low, high - mean],
-        fmt="none",
-        ecolor=INK,
-        elinewidth=1,
-        capsize=2,
-        label="seeds' range of those accepted",
-    )
-    ax.set_xticks(np.arange(len(names)), names, rotation=90, fontsize="small")
-    ax.set_xlim(-0.5, len(names) - 0.5)
     # Above the axis, where no bar reaches.
     ax.legend(
         handles=[
@@ -858,7 +875,6 @@ def draw_local_acceptance(fig: Figure, schools: pd.DataFrame) -> None:
                 for label, colour in GROUP_COLOURS.items()
             ),
             Patch(color="#e1e0d9", label="rejected"),
-            seeds_range,
         ],
         loc="lower center",
         bbox_to_anchor=(0.5, 1),
@@ -866,9 +882,34 @@ def draw_local_acceptance(fig: Figure, schools: pd.DataFrame) -> None:
         frameon=False,
     )
     ax.set_ylabel("Local applicants (mean over seeds)")
-    ax.yaxis.grid(True, color="#e1e0d9")
-    ax.set_axisbelow(True)
-    sns.despine(ax=ax)
+    # The rejected bars rest on the accepted, so where a school rejects
+    # nobody their foot would pin the axis to its tallest bar. Set to the
+    # default margin above it instead.
+    ax.set_ylim(0, 1.05 * per_school["local_applicants"].max())
+
+    difference = local_difference(schools)
+    # Every seed is drawn as a point, so the box draws no outliers of its own.
+    sns.boxplot(
+        difference,
+        x="school",
+        y="difference",
+        order=names,
+        color="#d9dde3",
+        showfliers=False,
+        ax=change,
+    )
+    sns.stripplot(
+        difference, x="school", y="difference", order=names, color=INK, ax=change
+    )
+    change.axhline(0, color="#898781", linewidth=1)
+    change.set_ylabel("Local students accepted,\nwith routes minus without")
+    change.set_xlabel("")
+    change.tick_params(axis="x", rotation=90, labelsize="small")
+    change.set_xlim(-0.5, len(names) - 0.5)
+    for panel in (ax, change):
+        panel.yaxis.grid(True, color="#e1e0d9")
+        panel.set_axisbelow(True)
+        sns.despine(ax=panel)
 
 
 def compare(
@@ -893,7 +934,8 @@ def compare(
     and their change to MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map of the
     first sample's two matchings to MAP_PNG, the seats each route provides
     and its riders take to ROUTES_PNG, and the local students each school
-    accepts of those who applied to LOCALS_PNG. Each plot the scripts share
+    accepts of those who applied, with the change the routes make to them
+    per seed, to LOCALS_PNG. Each plot the scripts share
     is drawn with the function its own script uses.
 
     Args:
@@ -983,7 +1025,7 @@ def compare(
     save(fig, out_dir / ROUTES_PNG)
     n_schools = schools["school"].nunique()
     fig = Figure(
-        figsize=(min(max(8.0, 2 + 0.4 * n_schools), 30.0), 9), layout="constrained"
+        figsize=(min(max(8.0, 2 + 0.4 * n_schools), 30.0), 11), layout="constrained"
     )
     draw_local_acceptance(fig, schools)
     save(fig, out_dir / LOCALS_PNG)

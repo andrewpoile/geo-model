@@ -141,8 +141,16 @@ def plot(results: pd.DataFrame, path: Path) -> None:
     modes.set_title("Expected mode")
     modes.set_ylabel("Students")
     modes.legend(frameon=False)
+    # Every seed is drawn as a point, so the box draws no outliers of its own.
     sns.boxplot(
-        change, x="mode", y="change", order=MODES, color="#d9dde3", width=0.5, ax=shift
+        change,
+        x="mode",
+        y="change",
+        order=MODES,
+        color="#d9dde3",
+        width=0.5,
+        showfliers=False,
+        ax=shift,
     )
     sns.stripplot(change, x="mode", y="change", order=MODES, color="#1f2933", ax=shift)
     shift.axhline(0, color="#898781", linewidth=1)
