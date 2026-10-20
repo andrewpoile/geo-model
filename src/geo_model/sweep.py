@@ -898,8 +898,9 @@ def settings_matchings(
         then "without routes", as returned by `fast_DAT`.
     """
     student_xy, student_lsoa, drawn, noise_seed = sample
-    return dict(
-        match_sample(
+    return {
+        scenario: matching
+        for scenario, _, matching in match_sample(
             student_xy,
             student_lsoa,
             areas,
@@ -917,7 +918,7 @@ def settings_matchings(
             settings.disadvantaged_route_discount,
             disadvantage,
         )
-    )
+    }
 
 
 def draw_map(

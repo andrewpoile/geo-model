@@ -590,6 +590,79 @@ def school_intake(
     )
 
 
+def local_intake(
+    preferences: np.ndarray,
+    matching: np.ndarray,
+    student_district: ArrayLike,
+    school_district: ArrayLike,
+    disadvantaged: ArrayLike,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Count each school's local applicants, and the disadvantaged and the
+    other students among them it seats.
+
+    A student is local to a school sitting in their own district, the
+    students the top bracket of its priorities holds without a route. A
+    student applied to a school if they proposed any bundle of it, and
+    Deferred Acceptance has every student propose down their list: to every
+    bundle up to the one they hold, or to every bundle on it if they hold
+    none.
+
+    Args:
+        preferences (np.ndarray): Student preferences, as `rank_bundles`
+        returns them, shape (n_students, max_options, 2).
+
+        matching (np.ndarray): The matching `fast_DAT` returns of those
+        preferences, shape (n_students, 2).
+
+        student_district (ArrayLike): Positional index of the district each
+        student lives in, shape (n_students,).
+
+        school_district (ArrayLike): Positional index of the district each
+        school sits in, as `district_index` gives it, shape (n_schools,).
+
+        disadvantaged (ArrayLike): Whether each student is disadvantaged,
+        shape (n_students,).
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]: Local students who applied
+        to each school, and the disadvantaged and the other of them it seats,
+        each of shape (n_schools,).
+    """
+    student_district = np.asarray(student_district, dtype=np.int64)
+    school_district = np.asarray(school_district, dtype=np.int64)
+    disadvantaged = np.asarray(disadvantaged, dtype=bool)
+    n_students, max_options, _ = preferences.shape
+    n_schools = len(school_district)
+    if not (
+        matching.shape == (n_students, 2)
+        and student_district.shape == disadvantaged.shape == (n_students,)
+    ):
+        raise ValueError(
+            f"preferences, matching, student_district and disadvantaged must "
+            f"hold one row per student: got {preferences.shape}, "
+            f"{matching.shape}, {student_district.shape} and "
+            f"{disadvantaged.shape}."
+        )
+
+    matched = matching[:, 0] >= 0
+    held = (preferences == matching[:, None, :]).all(axis=2)
+    if not held[matched].any(axis=1).all():
+        raise ValueError("A student holds a bundle missing from their own list.")
+    last = np.where(matched, held.argmax(axis=1), max_options - 1)
+    proposed = (np.arange(max_options) <= last[:, None]) & (preferences[:, :, 0] >= 0)
+
+    applied = np.zeros((n_students, n_schools), dtype=bool)
+    student, option = np.nonzero(proposed)
+    applied[student, preferences[student, option, 0]] = True
+    applied &= student_district[:, None] == school_district
+    seated = applied & (matching[:, [0]] == np.arange(n_schools))
+    return (
+        applied.sum(axis=0),
+        (seated & disadvantaged[:, None]).sum(axis=0),
+        (seated & ~disadvantaged[:, None]).sum(axis=0),
+    )
+
+
 def dissimilarity_terms(group_a: ArrayLike, group_b: ArrayLike) -> np.ndarray:
     """Each school's term of the dissimilarity index.
 

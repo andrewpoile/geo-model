@@ -43,7 +43,9 @@ from geo_model.utils import (
     disadvantaged_students,
     dissimilarity_index,
     dissimilarity_terms,
+    district_index,
     expected_modes,
+    local_intake,
     region_dir,
     regions,
     routes_t_test,
@@ -129,7 +131,7 @@ def match_sample(
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
     disadvantage: str = DISADVANTAGE,
-) -> Iterator[tuple[str, np.ndarray]]:
+) -> Iterator[tuple[str, np.ndarray, np.ndarray]]:
     """Match one student sample with and without routes.
 
     The sample is matched twice: as the transport instance with its routes,
@@ -170,8 +172,10 @@ def match_sample(
         to DISADVANTAGE.
 
     Yields:
-        tuple[str, np.ndarray]: The scenario, "with routes" then "without
-        routes", and its matching as returned by `fast_DAT`.
+        tuple[str, np.ndarray, np.ndarray]: The scenario, "with routes" then
+        "without routes", the students' preferences in it, as
+        `secondary_instance` ranks them, and its matching as returned by
+        `fast_DAT`.
     """
     for scenario, route_set in [("with routes", routes), ("without routes", None)]:
         instance = secondary_instance(
@@ -188,7 +192,7 @@ def match_sample(
             disadvantage,
             noise_seed=noise_seed,
         )
-        yield scenario, fast_DAT(*instance)
+        yield scenario, instance[0], fast_DAT(*instance)
 
 
 def score_sample(
@@ -212,10 +216,11 @@ def score_sample(
 
     Both matchings are scored for segregation on the same students, so the
     two scores differ by the routes alone. Each school's intake is counted by
-    group as well, so the composition behind the index can be seen, the
-    students seated are counted by expected travel mode, so the modal shift
-    the routes induce can be seen too, and each route's riders by group, so
-    the use made of its seats can be seen.
+    group as well, so the composition behind the index can be seen, and its
+    local applicants and those of them seated, so any displacement of local
+    students can be seen. The students seated are counted by expected travel
+    mode, so the modal shift the routes induce can be seen too, and each
+    route's riders by group, so the use made of its seats can be seen.
 
     Args:
         student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
@@ -264,18 +269,22 @@ def score_sample(
         "n_unmatched", "n_disadvantaged" (students disadvantaged) and
         "unassigned_disadvantaged" (those of them left without a place); one
         row per (scenario, school), with keys "scenario", "school" (the
-        establishment name), "disadvantaged" and "other" (students seated)
-        and "dissimilarity_term" (the school's term of the index, as
-        `dissimilarity_terms` gives it); one row per (scenario, mode), with
-        keys "scenario", "mode" and "students" (expected); and one row per
+        establishment name), "disadvantaged" and "other" (students seated),
+        "dissimilarity_term" (the school's term of the index, as
+        `dissimilarity_terms` gives it), "local_applicants" (students of the
+        school's district who applied to it) and "local_disadvantaged" and
+        "local_other" (those of them seated, as `local_intake` counts them);
+        one row per (scenario, mode), with keys "scenario", "mode" and
+        "students" (expected); and one row per
         route of the routed matching, with keys "route" (its route_id),
         "LSOA21CD", "school" (the establishment name), "capacity" and
         "disadvantaged" and "other" (students riding it).
     """
     n_schools = len(secondary_schools)
     school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
+    school_district = district_index(secondary_schools, areas)
     rows, school_rows, mode_rows, route_rows = [], [], [], []
-    for scenario, matching in match_sample(
+    for scenario, preferences, matching in match_sample(
         student_xy,
         student_lsoa,
         areas,
@@ -305,6 +314,9 @@ def score_sample(
             }
         )
         group_a, group_b = school_intake(matched_school, disadvantaged, n_schools)
+        applicants, local_a, local_b = local_intake(
+            preferences, matching, student_lsoa, school_district, disadvantaged
+        )
         school_rows += [
             {
                 "scenario": scenario,
@@ -312,12 +324,18 @@ def score_sample(
                 "disadvantaged": a,
                 "other": b,
                 "dissimilarity_term": term,
+                "local_applicants": applied,
+                "local_disadvantaged": seated_a,
+                "local_other": seated_b,
             }
-            for name, a, b, term in zip(
+            for name, a, b, term, applied, seated_a, seated_b in zip(
                 secondary_schools["EstablishmentName"],
                 group_a,
                 group_b,
                 dissimilarity_terms(group_a, group_b),
+                applicants,
+                local_a,
+                local_b,
             )
         ]
         modes = expected_modes(matching, student_xy, school_xy, shares, circuity)
@@ -581,8 +599,15 @@ def plot(results: pd.DataFrame, path: Path) -> None:
     fig = Figure(figsize=(5, 4))
     ax = fig.subplots()
     ax.set_title(t_test_label(routes_t_test(results)), fontsize="small")
+    # Every seed is drawn as a point, so the box draws no outliers of its own.
     sns.boxplot(
-        results, x="scenario", y="dissimilarity", color="#d9dde3", width=0.5, ax=ax
+        results,
+        x="scenario",
+        y="dissimilarity",
+        color="#d9dde3",
+        width=0.5,
+        showfliers=False,
+        ax=ax,
     )
     sns.stripplot(results, x="scenario", y="dissimilarity", color="#1f2933", ax=ax)
     ax.set_xlabel("")

@@ -24,6 +24,7 @@ from geo_model.utils import (
     expected_modes,
     gini,
     holm,
+    local_intake,
     lorenz_curve,
     mode_change,
     rank_bundles,
@@ -570,6 +571,46 @@ def test_school_intake_rejects_misaligned_inputs():
 def test_school_intake_rejects_a_school_beyond_the_count():
     with pytest.raises(ValueError, match="beyond the 2 schools"):
         school_intake([0, 2], [True, False], 2)
+
+
+# --------------------------------------------------------------------------
+# local_intake
+# --------------------------------------------------------------------------
+
+
+# School 0 sits in district 0 and school 1 in district 1, and route 0 runs
+# from district 1 to school 0. Students 0 and 1 propose to school 1 first,
+# students 2 and 3 to school 0 by the route.
+LOCAL_PREFERENCES = np.array(
+    [
+        [[1, -1], [0, -1], [-1, -1]],
+        [[1, -1], [0, -1], [-1, -1]],
+        [[0, 0], [1, -1], [0, -1]],
+        [[0, 0], [1, -1], [0, -1]],
+    ]
+)
+
+
+def test_local_intake_counts_the_locals_who_proposed_and_those_seated():
+    # Student 0 is seated at their own school after school 1 rejects them,
+    # student 1 at theirs, student 2 is rejected everywhere, and student 3
+    # rides to school 0 before ever proposing to their own.
+    matching = np.array([[0, -1], [1, -1], [-1, -1], [0, 0]])
+
+    applicants, group_a, group_b = local_intake(
+        LOCAL_PREFERENCES, matching, [0, 1, 1, 1], [0, 1], [True, False, False, True]
+    )
+
+    np.testing.assert_array_equal(applicants, [1, 2])
+    np.testing.assert_array_equal(group_a, [1, 0])
+    np.testing.assert_array_equal(group_b, [0, 1])
+
+
+def test_local_intake_rejects_a_bundle_missing_from_the_list():
+    matching = np.array([[0, 0], [1, -1], [-1, -1], [0, 0]])
+
+    with pytest.raises(ValueError, match="missing from their own list"):
+        local_intake(LOCAL_PREFERENCES, matching, [0, 1, 1, 1], [0, 1], [False] * 4)
 
 
 # --------------------------------------------------------------------------

@@ -21,6 +21,7 @@ COMPARE_PNGS = [
     op.LORENZ_PNG,
     op.MAP_PNG,
     op.ROUTES_PNG,
+    op.LOCALS_PNG,
 ]
 
 # Two parameters of three cells in all, so the sweep scores and plots quickly.

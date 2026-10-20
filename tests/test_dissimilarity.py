@@ -112,6 +112,14 @@ def test_score_sample_scores_both_scenarios_of_one_sample(
         check_names=False,
     )
 
+    # A school's local students seated are among its local applicants and
+    # its students seated of the same group, and some school seats some.
+    seated_locals = intake["local_disadvantaged"] + intake["local_other"]
+    assert (seated_locals <= intake["local_applicants"]).all()
+    assert (intake["local_disadvantaged"] <= intake["disadvantaged"]).all()
+    assert (intake["local_other"] <= intake["other"]).all()
+    assert seated_locals.sum() > 0
+
     # The schools' terms are the index taken apart: they cancel out, and
     # half their absolute sum is the scenario's index.
     terms = intake.groupby("scenario")["dissimilarity_term"]
