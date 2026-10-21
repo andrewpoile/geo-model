@@ -5,9 +5,9 @@ in rank. Each school is paired with one of them so the longest route is as
 short as it can be, with no condition on nearby schools, the route holding
 all of the school's route seats.
 
-The scenario's students are matched with and without routes over fresh
-samples, and every plot `optimise` draws of a setting is drawn of it, as
-scenario 1 draws them.
+The scenario is a preset of `run`: its students are matched with and
+without routes over fresh samples, and written, plotted and reported as
+`run` does, every option of `run` defaulting to the scenario's value.
 """
 
 from dataclasses import replace
@@ -16,10 +16,12 @@ from pathlib import Path
 import numpy as np
 
 from geo_model.model.settings import DEFAULTS
-from geo_model.scripts.scenario_1 import run
+from geo_model.scripts import run
 
 # The scenario's folder within each region's.
 OUT_DIR = Path("scenario_2")
+
+N_SEEDS = 100
 
 # A route only to a school beyond the default minimum distance, two miles, and
 # no school scoring above Progress 8 infinity, so no district is served by its
@@ -33,15 +35,20 @@ SCENARIO = replace(
     max_local_p8=np.inf,
     bottleneck=True,
 )
+# Seats are rounded up, as scenario 1 rounds them, so a school's one route
+# keeps a seat where the school's route seats fall below half of one.
+ROUND_UP = True
 
 
 def main() -> None:
-    run(
+    run.main(
         SCENARIO,
         OUT_DIR,
         "Match fresh samples with and without scenario 2's routes, each "
         "school paired with one of the most deprived districts so the longest "
         "route is shortest, and plot and map the two against each other.",
+        seeds=N_SEEDS,
+        round_up=ROUND_UP,
     )
 
 

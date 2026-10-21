@@ -5,7 +5,6 @@ from geo_model.analysis.scoring import settings_routes
 from geo_model.model import routes as rt
 from geo_model.model.settings import MIN_ROUTE_DISTANCE
 from geo_model.model.students import cohort_sizes, disadvantaged_cohort
-from geo_model.scripts import scenario_1 as s1
 from geo_model.scripts import scenario_2 as s2
 
 
@@ -23,7 +22,7 @@ def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(
     )[:, None]
     targets = ranked[rt.first_districts(allowed)]
 
-    routes = settings_routes(s2.SCENARIO, areas, secondary, s1.ROUND_UP)
+    routes = settings_routes(s2.SCENARIO, areas, secondary, s2.ROUND_UP)
 
     # One route per school, each from a district of its own, the districts the
     # most deprived that can each have a school of their own.

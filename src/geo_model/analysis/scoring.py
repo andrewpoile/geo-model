@@ -346,6 +346,7 @@ def settings_matchings(
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
+    routes: pd.DataFrame | None = None,
 ) -> dict[str, np.ndarray]:
     """Match one student sample at `settings`, with routes and without.
 
@@ -374,11 +375,19 @@ def settings_matchings(
         disadvantage (str, optional): As `score_settings` takes it. Defaults
         to DISADVANTAGE.
 
+        routes (pd.DataFrame | None, optional): The route set at `settings`,
+        as `settings_routes` builds it, where the caller has built it already.
+        Defaults to None, building it here.
+
     Returns:
         dict[str, np.ndarray]: The matching of each scenario, "with routes"
         then "without routes", as returned by `fast_DAT`.
     """
     student_xy, student_lsoa, drawn, noise_seed = sample
+    if routes is None:
+        routes = settings_routes(
+            settings, areas, secondary_schools, round_up, linear, disadvantage
+        )
     return {
         scenario: matching
         for scenario, _, matching in match_sample(
@@ -386,9 +395,7 @@ def settings_matchings(
             student_lsoa,
             areas,
             secondary_schools,
-            settings_routes(
-                settings, areas, secondary_schools, round_up, linear, disadvantage
-            ),
+            routes,
             disadvantaged_group(
                 student_lsoa, drawn, areas, settings.decile, disadvantage
             ),

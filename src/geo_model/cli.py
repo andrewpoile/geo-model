@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import fields
 
 from geo_model.data.sources import LAS
 from geo_model.data.travel import NTS_YEARS
@@ -7,6 +8,7 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     DISADVANTAGE_CHOICES,
     LINEAR_PROGRESSIVITY,
+    Settings,
 )
 from geo_model.output import OUTPUT_DIR
 
@@ -149,3 +151,32 @@ def add_intake_argument(parser: argparse.ArgumentParser, measures: list[str]) ->
         help="what the intake figures show of each school: its term of the "
         "dissimilarity index, or the disadvantaged share of its intake",
     )
+
+
+def add_settings_arguments(parser: argparse.ArgumentParser, settings: Settings) -> None:
+    """Add an option for every field of Settings, each defaulting to its value
+    in `settings`, so any setting can be run from the command line.
+
+    Args:
+        parser (argparse.ArgumentParser): The entry point's parser.
+
+        settings (Settings): The values the options default to: DEFAULTS, or
+        a preset's.
+    """
+    for field in fields(Settings):
+        flag = "--" + field.name.replace("_", "-")
+        default = getattr(settings, field.name)
+        if field.type is bool:
+            parser.add_argument(
+                flag,
+                action=argparse.BooleanOptionalAction,
+                default=default,
+                help=field.metadata["help"],
+            )
+        else:
+            parser.add_argument(
+                flag,
+                type=int if field.type is int else float,
+                default=default,
+                help=field.metadata["help"],
+            )

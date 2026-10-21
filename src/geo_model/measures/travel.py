@@ -1,3 +1,19 @@
+"""Estimate the change in travel mode that routed matching induces.
+
+The routeless matching is taken to reproduce the existing statistics: a
+student seated without a route travels by the National Travel Survey's mode
+split for school trips of their length (NTS0614a, aged 11 to 16), so the
+count of every mode is an expected value and the only randomness is the
+student sample per seed. A student seated with a route takes it with
+certainty, counted as a mode of its own, so the change in each existing mode
+shows where routed students are drawn from. Trip length is the straight-line
+distance to the seated school, scaled by a circuity factor for the road
+distance the survey records, and an unseated student makes no trip. The
+counting itself is `expected_modes`, which `analysis.scoring.score_sample`
+applies to every matching it scores, so every run, sweep cell and search
+candidate carries the same estimate.
+"""
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -5,17 +21,11 @@ from numpy.typing import ArrayLike
 from geo_model.data.travel import NTS_BANDS, NTS_MODES
 
 MILE = 1609.344  # metres
-
-
 # Miles, the lower edge of every NTS trip-length band but the first.
 BAND_EDGES = np.array([1.0, 2.0, 5.0])
-
-
 # Road distance per straight-line metre, applied before a trip is banded. 1 is
 # no uplift, so a trip is banded on its straight-line length.
 CIRCUITY = 1.0
-
-
 # The NTS main modes and the route, which a routed student takes with certainty.
 MODES = [*NTS_MODES.values(), "route"]
 

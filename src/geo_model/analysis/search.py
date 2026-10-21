@@ -13,8 +13,6 @@ from geo_model.model.settings import DEFAULTS, Settings
 # Every swept parameter. Which of them a search may vary depends on the
 # choice of DISADVANTAGE, as `searchable` gives it.
 OPTIMISABLE = list(GRID)
-
-
 # The settings a transport authority holds. The preference weights describe
 # the students, so they hold DEFAULTS unless named.
 LEVERS = [
@@ -24,7 +22,6 @@ LEVERS = [
     "max_local_p8",
     "local_radius",
 ]
-
 
 Scored = tuple[list[dict], list[dict], list[dict], list[dict]]
 
@@ -65,8 +62,6 @@ OBJECTIVES = {
         car_displacement, True, "Students displaced from car travel (higher is better)"
     ),
 }
-
-
 DEFAULT_OBJECTIVES = list(OBJECTIVES)
 
 

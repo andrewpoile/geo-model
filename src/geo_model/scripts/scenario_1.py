@@ -2,52 +2,21 @@
 route-eligible districts beyond the default minimum distance, with no
 condition on nearby schools, holding all of the school's route seats.
 
-The scenario's students are matched with and without routes over fresh
-samples, and every plot `optimise` draws of a setting is drawn of it.
+The scenario is a preset of `run`: its students are matched with and
+without routes over fresh samples, and written, plotted and reported as
+`run` does, every option of `run` defaulting to the scenario's value.
 """
 
-import argparse
 from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
-from geo_model.analysis.scoring import district_rows, settings_routes
-from geo_model.cli import (
-    add_disadvantage_argument,
-    add_intake_argument,
-    add_region_arguments,
-    add_seat_arguments,
-    add_seeds_argument,
-    add_travel_arguments,
-)
-from geo_model.data.regions import regions
-from geo_model.data.schools import load_schools
-from geo_model.data.travel import load_nts_mode_shares
-from geo_model.measures.statistics import routes_t_test, t_test_label
-from geo_model.measures.summaries import (
-    local_acceptance,
-    local_summary,
-    route_utilisation,
-    utilisation_summary,
-)
-from geo_model.measures.travel import MODES, mode_change
-from geo_model.model.settings import (
-    DEFAULTS,
-    Settings,
-)
-from geo_model.model.students import student_samples
-from geo_model.output import region_dir, save_routes
-from geo_model.plots.style import INTAKE_MEASURES
-from geo_model.scripts.optimise import compare
+from geo_model.model.settings import DEFAULTS
+from geo_model.scripts import run
 
-# The scenario's folder within each region's, and the score rows written to it.
+# The scenario's folder within each region's.
 OUT_DIR = Path("scenario_1")
-RESULTS_CSV = "results.csv"
-SCHOOLS_CSV = "schools.csv"
-MODES_CSV = "modes.csv"
-ROUTE_UTILISATION_CSV = "route_utilisation.csv"
-DISTRICTS_CSV = "districts.csv"
 
 N_SEEDS = 100
 
@@ -67,118 +36,14 @@ SCENARIO = replace(
 ROUND_UP = True
 
 
-def run(settings: Settings, scenario_dir: Path, description: str) -> None:
-    """Match fresh samples with and without the routes of a scenario, as the
-    command line sets out, and write and report the two against each other.
-
-    Args:
-        settings (Settings): The scenario, its capacity scale the command
-        line's default.
-
-        scenario_dir (Path): The scenario's folder within each region's.
-
-        description (str): The command line's description.
-    """
-    parser = argparse.ArgumentParser(description=description)
-    add_seeds_argument(parser, N_SEEDS)
-    parser.add_argument(
-        "--capacity-scale",
-        type=float,
-        default=settings.capacity_scale,
-        help="seats on a school's route as a multiple of the disadvantaged "
-        "students' fair share of the places it offers",
-    )
-    add_travel_arguments(parser)
-    add_seat_arguments(parser, ROUND_UP)
-    add_disadvantage_argument(parser)
-    add_intake_argument(parser, list(INTAKE_MEASURES))
-    add_region_arguments(parser)
-    args = parser.parse_args()
-
-    settings = replace(settings, capacity_scale=args.capacity_scale)
-    shares = load_nts_mode_shares(args.years)
-    for las, areas in regions(args.la, args.merge):
-        print(" + ".join(las) + ":")
-        out_dir = region_dir(las) / scenario_dir
-        _, secondary_schools = load_schools(las)
-        samples = list(student_samples(areas, args.seeds))
-
-        save_routes(
-            settings_routes(
-                settings,
-                areas,
-                secondary_schools,
-                args.round_up_seats,
-                disadvantage=args.disadvantage,
-            ),
-            out_dir,
-        )
-        results, schools, modes, routes = compare(
-            settings,
-            samples,
-            areas,
-            secondary_schools,
-            shares,
-            out_dir,
-            args.circuity,
-            args.round_up_seats,
-            disadvantage=args.disadvantage,
-            measure=args.intake,
-        )
-        districts = district_rows(samples, areas, settings.decile, args.disadvantage)
-        for frame, name in (
-            (results, RESULTS_CSV),
-            (schools, SCHOOLS_CSV),
-            (modes, MODES_CSV),
-            (routes, ROUTE_UTILISATION_CSV),
-            (districts, DISTRICTS_CSV),
-        ):
-            frame.to_csv(out_dir / name, index=False)
-
-        print(f"With routes and without, mean over {len(samples)} samples:")
-        print(
-            results.groupby("scenario")[
-                ["dissimilarity", "n_unmatched", "unassigned_disadvantaged"]
-            ]
-            .mean()
-            .round(3)
-            .to_string()
-        )
-        print(t_test_label(routes_t_test(results)))
-        print("Change in students per mode with routes:")
-        print(
-            mode_change(modes)
-            .groupby("mode")["change"]
-            .mean()[MODES]
-            .round(1)
-            .to_string()
-        )
-        print("Seats on each route and the riders taking them, mean over samples:")
-        print(
-            route_utilisation(routes)
-            .drop(columns="used")
-            .round(2)
-            .to_string(index=False)
-        )
-        print(utilisation_summary(routes))
-        print(
-            "Local students applying to each school and those it accepts, "
-            "mean over samples:"
-        )
-        print(local_acceptance(schools).round(2).to_string(index=False))
-        print(local_summary(schools))
-        print(
-            f"Wrote the routes, {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, "
-            f"{ROUTE_UTILISATION_CSV}, {DISTRICTS_CSV} and the plots in {out_dir}."
-        )
-
-
 def main() -> None:
-    run(
+    run.main(
         SCENARIO,
         OUT_DIR,
         "Match fresh samples with and without scenario 1's routes, each "
         "school's shortest, and plot and map the two against each other.",
+        seeds=N_SEEDS,
+        round_up=ROUND_UP,
     )
 
 

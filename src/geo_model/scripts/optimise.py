@@ -21,12 +21,10 @@ from typing import Any
 
 import geopandas as gpd
 import pandas as pd
-from matplotlib.figure import Figure
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.optimize import minimize
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 
-from geo_model.analysis.scoring import settings_matchings
 from geo_model.analysis.search import (
     DEFAULT_OBJECTIVES,
     LEVERS,
@@ -53,13 +51,7 @@ from geo_model.cli import (
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
-from geo_model.measures.segregation import fsm_share, fsm_term
-from geo_model.measures.statistics import routes_t_test, t_test_label
-from geo_model.measures.summaries import (
-    local_summary,
-    utilisation_summary,
-)
-from geo_model.measures.travel import CIRCUITY, MODES, mode_change
+from geo_model.measures.travel import CIRCUITY
 from geo_model.model.routes import EmptyRouteSet
 from geo_model.model.settings import (
     DEFAULTS,
@@ -71,41 +63,21 @@ from geo_model.model.settings import (
 )
 from geo_model.model.settings import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.model.students import Sample, student_samples
-from geo_model.output import region_dir, save
-from geo_model.plots.comparison import (
-    draw_local_acceptance,
-    draw_route_utilisation,
-    draw_school_intake,
-    draw_unassigned,
-    plot_dissimilarity,
-    plot_lorenz,
-    plot_modes,
-)
+from geo_model.output import region_dir
 from geo_model.plots.front import plot_front
-from geo_model.plots.maps import plot_map
 from geo_model.plots.style import INTAKE_MEASURES
-from geo_model.scripts.dissimilarity import score_settings
+from geo_model.scripts.run import run, score_settings
 
 # The search's folder within each region's, and the files written to it.
 OUT_DIR = Path("optimise")
 EVALUATIONS_CSV = "evaluations.csv"
 FRONT_CSV = "front.csv"
 FRONT_PNG = "front.png"
-# The compromise setting against the same students without routes: every
-# metric the sweep draws, the Lorenz curves and the map.
-DISSIMILARITY_PNG = "dissimilarity.png"
-UNASSIGNED_PNG = "unassigned.png"
-INTAKE_PNG = "intake.png"
-MODES_PNG = "car_displacement.png"
-LORENZ_PNG = "lorenz.png"
-MAP_PNG = "map.png"
-ROUTES_PNG = "route_utilisation.png"
-LOCALS_PNG = "local_acceptance.png"
 
 
-# Several samples rather than the 30 `dissimilarity` draws, since every
-# candidate scores them all. The comparison is drawn on HELD_OUT_SEEDS more,
-# as many as `dissimilarity` draws, taken from the seeds after these.
+# Several samples rather than the 30 `run` draws, since every candidate
+# scores them all. The compromise is run on HELD_OUT_SEEDS more, as many as
+# `run` draws, taken from the seeds after these.
 N_SEEDS = 5
 POP_SIZE = 20
 GENERATIONS = 10
@@ -262,126 +234,6 @@ def optimise(
     return evaluations, front
 
 
-def compare(
-    settings: Settings,
-    samples: list[Sample],
-    areas: gpd.GeoDataFrame,
-    secondary_schools: gpd.GeoDataFrame,
-    shares: pd.DataFrame,
-    out_dir: Path,
-    circuity: float = CIRCUITY,
-    round_up: bool = ROUND_UP_SEATS,
-    linear: bool = LINEAR_PROGRESSIVITY,
-    disadvantage: str = DISADVANTAGE,
-    measure: str = "dissimilarity",
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Score `settings` over `samples` with routes and without, and plot the
-    two against each other in `out_dir`.
-
-    Draws every metric the sweep draws: the index per scenario and its
-    paired t-test to DISSIMILARITY_PNG, who is left unassigned to
-    UNASSIGNED_PNG, each school's intake to INTAKE_PNG and the expected modes
-    and their change to MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map of the
-    first sample's two matchings to MAP_PNG, the seats each route provides
-    and its riders take to ROUTES_PNG, and the local students each school
-    accepts of those who applied, with the change the routes make to them
-    per seed, to LOCALS_PNG. Each plot is drawn
-    with its function in the plots subpackage.
-
-    Args:
-        settings (Settings): The parameter values to compare.
-
-        samples (list[Sample]): Student samples, as yielded by
-        `student_samples`, in seed order.
-
-        areas (gpd.GeoDataFrame): Passed to `score_settings`.
-
-        secondary_schools (gpd.GeoDataFrame): Passed to `score_settings`.
-
-        shares (pd.DataFrame): Passed to `score_settings`.
-
-        out_dir (Path): Folder the plots are written to.
-
-        circuity (float, optional): Passed to `score_settings`. Defaults to
-        CIRCUITY.
-
-        round_up (bool, optional): Passed to `score_settings`. Defaults to
-        ROUND_UP_SEATS.
-
-        linear (bool, optional): Passed to `score_settings`. Defaults to
-        LINEAR_PROGRESSIVITY.
-
-        disadvantage (str, optional): Passed to `score_settings`,
-        `plot_lorenz` and `settings_matchings`. Defaults to DISADVANTAGE.
-
-        measure (str, optional): A key of INTAKE_MEASURES, what the intake
-        heatmap shows. Defaults to "dissimilarity".
-
-    Returns:
-        tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]: The
-        scenario, school, mode and route rows `score_settings` returns with
-        `utilisation`.
-    """
-    if not samples:
-        raise ValueError("No student sample to compare on.")
-    results, schools, modes, routes = (
-        pd.DataFrame(rows)
-        for rows in score_settings(
-            settings,
-            samples,
-            areas,
-            secondary_schools,
-            shares,
-            circuity,
-            round_up,
-            linear,
-            disadvantage,
-            utilisation=True,
-        )
-    )
-    plot_dissimilarity(results, out_dir / DISSIMILARITY_PNG)
-    # A bare Figure draws without a display backend, which pyplot would need.
-    fig = Figure(figsize=(5, 4.5), layout="constrained")
-    draw_unassigned(fig.subplots(), results)
-    save(fig, out_dir / UNASSIGNED_PNG)
-    fig = Figure(
-        figsize=(8, 1.5 + 0.4 * schools["school"].nunique()), layout="constrained"
-    )
-    fsm = {"dissimilarity": fsm_term, "share": fsm_share}[measure]
-    draw_school_intake(fig, schools, fsm(secondary_schools), measure)
-    save(fig, out_dir / INTAKE_PNG)
-    plot_modes(modes, out_dir / MODES_PNG)
-    plot_lorenz(schools, out_dir / LORENZ_PNG, disadvantage)
-    plot_map(
-        areas,
-        secondary_schools,
-        samples[0][0],
-        settings_matchings(
-            settings,
-            samples[0],
-            areas,
-            secondary_schools,
-            round_up,
-            linear,
-            disadvantage,
-        ),
-        out_dir / MAP_PNG,
-    )
-    n_routes = routes["route"].nunique()
-    fig = Figure(
-        figsize=(min(max(8.0, 2 + 0.3 * n_routes), 30.0), 9), layout="constrained"
-    )
-    draw_route_utilisation(fig, routes)
-    save(fig, out_dir / ROUTES_PNG)
-    n_schools = schools["school"].nunique()
-    fig = Figure(
-        figsize=(min(max(8.0, 2 + 0.4 * n_schools), 30.0), 11), layout="constrained"
-    )
-    draw_local_acceptance(fig, schools)
-    save(fig, out_dir / LOCALS_PNG)
-    return results, schools, modes, routes
-
-
 def search(
     args: argparse.Namespace,
     las: list[str],
@@ -390,7 +242,7 @@ def search(
     shares: pd.DataFrame,
     out_dir: Path,
 ) -> None:
-    """Search one region's settings, then compare its compromise with and
+    """Search one region's settings, then run its compromise with and
     without routes on held-out samples, as `main`'s arguments set out.
 
     Args:
@@ -458,7 +310,8 @@ def search(
     print("Compromise setting:")
     print(chosen.round(3).to_string())
 
-    results, schools, modes, routes = compare(
+    print(f"At the compromise, on {len(held_out)} held-out samples:")
+    run(
         replace(DEFAULTS, **cast({p: chosen[p] for p in args.parameters})),
         held_out,
         areas,
@@ -471,36 +324,8 @@ def search(
         args.disadvantage,
         args.intake,
     )
-    print(
-        f"At the compromise with routes and without, mean over "
-        f"{len(held_out)} held-out samples:"
-    )
-    print(
-        results.groupby("scenario")[
-            ["dissimilarity", "n_unmatched", "unassigned_disadvantaged"]
-        ]
-        .mean()
-        .round(3)
-        .to_string()
-    )
-    print(t_test_label(routes_t_test(results)))
-    print("Change in students per mode with routes:")
-    print(
-        mode_change(modes).groupby("mode")["change"].mean()[MODES].round(1).to_string()
-    )
-    print(utilisation_summary(routes))
-    print(local_summary(schools))
 
-    plots = [
-        DISSIMILARITY_PNG,
-        UNASSIGNED_PNG,
-        INTAKE_PNG,
-        MODES_PNG,
-        LORENZ_PNG,
-        MAP_PNG,
-        ROUTES_PNG,
-        LOCALS_PNG,
-    ]
+    written = [EVALUATIONS_CSV, FRONT_CSV]
     if len(args.objectives) == 2:
         plot_front(
             evaluations,
@@ -510,12 +335,10 @@ def search(
             args.objectives,
             out_dir / FRONT_PNG,
         )
-        plots.append(FRONT_PNG)
+        written.append(FRONT_PNG)
     else:
         print("The front is plotted in two objectives only, so no front plot.")
-    print(
-        f"Wrote {EVALUATIONS_CSV}, {FRONT_CSV}, " + ", ".join(plots) + f" in {out_dir}."
-    )
+    print("Wrote " + ", ".join(written) + f" in {out_dir}.")
 
 
 def main() -> None:

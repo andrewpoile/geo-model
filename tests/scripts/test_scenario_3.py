@@ -5,7 +5,6 @@ from geo_model.analysis.scoring import settings_routes
 from geo_model.model import routes as rt
 from geo_model.model.settings import MIN_ROUTE_DISTANCE
 from geo_model.model.students import cohort_sizes, disadvantaged_cohort
-from geo_model.scripts import scenario_1 as s1
 from geo_model.scripts import scenario_3 as s3
 
 
@@ -19,7 +18,7 @@ def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
         .head(len(secondary))
     )
 
-    routes = settings_routes(s3.SCENARIO, areas, secondary, s1.ROUND_UP)
+    routes = settings_routes(s3.SCENARIO, areas, secondary, s3.ROUND_UP)
 
     # One route per school, each from a district of its own, the districts
     # being the region's holding the most disadvantaged students, as many as

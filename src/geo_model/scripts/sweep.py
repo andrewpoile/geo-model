@@ -46,7 +46,7 @@ from geo_model.plots.comparison import plot_lorenz
 from geo_model.plots.maps import plot_map
 from geo_model.plots.style import INTAKE_MEASURES
 from geo_model.plots.sweep import plot_sweep
-from geo_model.scripts.dissimilarity import score_settings
+from geo_model.scripts.run import score_settings
 
 # The sweep's folder within each region's, and the files written to it.
 SWEEP_DIR = Path("sweep")
@@ -75,8 +75,8 @@ def sweep(
 
     Every cell matches the same student samples, so the scores of two cells
     differ by their parameter values alone, and the default cell of every
-    parameter reproduces `dissimilarity.run` and `car_displacement.run` at the
-    same `disadvantage`.
+    parameter reproduces the scores `run` gives the defaults, on the same
+    samples at the same `disadvantage`.
 
     Args:
         samples (list[Sample]): Student samples, as yielded by

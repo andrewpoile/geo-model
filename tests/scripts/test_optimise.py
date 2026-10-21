@@ -9,7 +9,7 @@ import pytest
 from geo_model.analysis.search import DEFAULT_OBJECTIVES, bounds, objective_values
 from geo_model.model.settings import DEFAULTS
 from geo_model.scripts import optimise as op
-from geo_model.scripts.dissimilarity import score_settings
+from geo_model.scripts.run import score_settings
 
 # A sample of no students, for the checks made before anything is scored.
 NO_STUDENTS = [
@@ -168,51 +168,3 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         workers=2,
     )
     pd.testing.assert_frame_equal(pooled, evaluations)
-
-
-# --------------------------------------------------------------------------
-# compare: against the real data folder
-# --------------------------------------------------------------------------
-
-
-def test_compare_scores_and_plots_the_setting_against_no_routes(
-    samples, areas, secondary, shares, tmp_path
-):
-    settings = replace(DEFAULTS, capacity_scale=2.0, progressivity=0.5)
-
-    results, intake, modes, routes = op.compare(
-        settings, samples, areas, secondary, shares, tmp_path
-    )
-
-    rows, school_rows, mode_rows, route_rows = score_settings(
-        settings, samples, areas, secondary, shares, utilisation=True
-    )
-    pd.testing.assert_frame_equal(results, pd.DataFrame(rows))
-    pd.testing.assert_frame_equal(intake, pd.DataFrame(school_rows))
-    pd.testing.assert_frame_equal(modes, pd.DataFrame(mode_rows))
-    pd.testing.assert_frame_equal(routes, pd.DataFrame(route_rows))
-    assert len(routes) == results["n_routes"].iloc[0] * len(samples)
-    assert list(results["scenario"]) == ["with routes", "without routes"]
-    for name in (
-        op.DISSIMILARITY_PNG,
-        op.UNASSIGNED_PNG,
-        op.INTAKE_PNG,
-        op.MODES_PNG,
-        op.LORENZ_PNG,
-        op.MAP_PNG,
-        op.ROUTES_PNG,
-        op.LOCALS_PNG,
-    ):
-        assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
-
-
-def test_compare_rejects_no_samples(tmp_path):
-    with pytest.raises(ValueError, match="No student sample"):
-        op.compare(
-            DEFAULTS,
-            [],
-            gpd.GeoDataFrame(),
-            gpd.GeoDataFrame(),
-            pd.DataFrame(),
-            tmp_path,
-        )

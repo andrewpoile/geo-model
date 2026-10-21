@@ -1,9 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 SEED = 20260907
-# Samples drawn unless --seeds says otherwise by dissimilarity.py,
-# car_displacement.py and sweep.py, and by optimise.py for its held-out
-# comparison. optimise.py's search and the scenarios set counts of their own.
+# Samples drawn unless --seeds says otherwise by run.py and sweep.py, and by
+# optimise.py for the compromise it runs on held-out samples. optimise.py's
+# search and the scenarios set counts of their own.
 N_SEEDS = 30
 
 # Routes are built only from LSOAs at or below this IDACI decile, 1 being the
@@ -115,21 +115,112 @@ PREFERENCE_NOISE = 0.5
 
 @dataclass(frozen=True)
 class Settings:
-    """The parameters a matching can be scored under, at the model's defaults."""
+    """The parameters a matching can be scored under, at the model's defaults,
+    each field's metadata holding the help of its command-line option."""
 
-    decile: int = DISADVANTAGED_DECILE
-    min_distance: float = MIN_ROUTE_DISTANCE
-    capacity_scale: float = ROUTE_CAPACITY_SCALE
-    progressivity: float = ROUTE_PROGRESSIVITY
-    max_local_p8: float = MAX_LOCAL_P8
-    local_radius: float = LOCAL_RADIUS
-    performance_weight: float = PERFORMANCE_WEIGHT
-    route_discount: float = ROUTE_DISCOUNT
-    disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT
-    disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT
-    shortest_only: bool = SHORTEST_ROUTE_ONLY
-    bottleneck: bool = BOTTLENECK_ROUTES
-    largest_first: bool = LARGEST_FIRST_ROUTES
+    decile: int = field(
+        default=DISADVANTAGED_DECILE,
+        metadata={
+            "help": "routes are built only from LSOAs at or below this IDACI decile"
+        },
+    )
+    min_distance: float = field(
+        default=MIN_ROUTE_DISTANCE,
+        metadata={
+            "help": (
+                "districts are routed only to schools further away than this, in metres"
+            )
+        },
+    )
+    capacity_scale: float = field(
+        default=ROUTE_CAPACITY_SCALE,
+        metadata={
+            "help": (
+                "seats on a school's route as a multiple of the disadvantaged students'"
+                " fair share of the places it offers"
+            )
+        },
+    )
+    progressivity: float = field(
+        default=ROUTE_PROGRESSIVITY,
+        metadata={
+            "help": (
+                "how far a school's route seats lean towards the more deprived "
+                "districts, 0 flat"
+            )
+        },
+    )
+    max_local_p8: float = field(
+        default=MAX_LOCAL_P8,
+        metadata={
+            "help": (
+                "a district with a school scoring above this Progress 8 within the "
+                "local radius is not routed"
+            )
+        },
+    )
+    local_radius: float = field(
+        default=LOCAL_RADIUS,
+        metadata={
+            "help": (
+                "metres around a district's centroid its local schools are read from"
+            )
+        },
+    )
+    performance_weight: float = field(
+        default=PERFORMANCE_WEIGHT,
+        metadata={
+            "help": (
+                "share of the preference ranking driven by Progress 8 rather than "
+                "travel, for students who are not disadvantaged"
+            )
+        },
+    )
+    route_discount: float = field(
+        default=ROUTE_DISCOUNT,
+        metadata={
+            "help": (
+                "share of the travel a route takes out of the ranking of the school it "
+                "serves, for students who are not disadvantaged"
+            )
+        },
+    )
+    disadvantaged_performance_weight: float = field(
+        default=DISADVANTAGED_PERFORMANCE_WEIGHT,
+        metadata={"help": "as --performance-weight, for disadvantaged students"},
+    )
+    disadvantaged_route_discount: float = field(
+        default=DISADVANTAGED_ROUTE_DISCOUNT,
+        metadata={"help": "as --route-discount, for disadvantaged students"},
+    )
+    shortest_only: bool = field(
+        default=SHORTEST_ROUTE_ONLY,
+        metadata={
+            "help": (
+                "keep only each school's route to its nearest route-eligible district"
+            )
+        },
+    )
+    bottleneck: bool = field(
+        default=BOTTLENECK_ROUTES,
+        metadata={
+            "help": (
+                "route only as many districts as there are schools, the most deprived "
+                "by IDACI rank that can each have a school of their own, each school "
+                "paired with one so the longest route is as short as it can be"
+            )
+        },
+    )
+    largest_first: bool = field(
+        default=LARGEST_FIRST_ROUTES,
+        metadata={
+            "help": (
+                "route only the districts holding the most disadvantaged students, as "
+                "many as there are schools, each paired in turn with the free school "
+                "offering the most places"
+            )
+        },
+    )
 
 
 DEFAULTS = Settings()
