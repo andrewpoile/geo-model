@@ -1,26 +1,17 @@
-import warnings
-
 import numpy as np
 import pandas as pd
 import pytest
-from scipy import stats
 
-from geo_model import utils
-from geo_model.data.travel import NTS_BANDS
-from geo_model.utils import (
-    MILE,
-    MODES,
+from geo_model.measures.segregation import (
     dissimilarity_index,
     dissimilarity_terms,
-    expected_modes,
+    district_groups,
+    fsm_share,
+    fsm_term,
     gini,
-    holm,
     local_intake,
     lorenz_curve,
-    mode_change,
-    routes_t_test,
     school_intake,
-    trip_band,
 )
 
 # --------------------------------------------------------------------------
@@ -142,7 +133,7 @@ def test_district_groups_compares_each_districts_groups_with_the_regions(capsys)
     student_lsoa = np.array([0, 0, 0, 0, 1, 1, 1, 1])
     disadvantaged = np.array([True, True, True, False, True, False, False, False])
 
-    districts = utils.district_groups(areas, student_lsoa, disadvantaged)
+    districts = district_groups(areas, student_lsoa, disadvantaged)
 
     pd.testing.assert_frame_equal(districts.iloc[:, :4], areas)
     np.testing.assert_array_equal(districts["cohort"], [4, 4, 0])
@@ -257,168 +248,58 @@ def test_gini_is_the_mean_difference_of_school_shares():
 
 
 # --------------------------------------------------------------------------
-# trip_band
+# fsm_share
 # --------------------------------------------------------------------------
 
 
-def test_trip_band_bins_on_the_nts_edges():
-    miles = np.array([0.0, 0.99, 1.0, 1.99, 2.0, 4.99, 5.0, 40.0])
-
-    bands = trip_band(miles * MILE)
-
-    np.testing.assert_array_equal(
-        bands, [NTS_BANDS[i] for i in (0, 0, 1, 1, 2, 2, 3, 3)]
-    )
-
-
-def test_trip_band_scales_by_circuity_before_binning():
-    # 0.8 straight-line miles is a 1.04 mile road trip at a circuity of 1.3.
-    assert trip_band(np.array([0.8 * MILE]), circuity=1.3)[0] == NTS_BANDS[1]
-
-
-def test_trip_band_rejects_a_non_positive_circuity():
-    with pytest.raises(ValueError, match="circuity must be positive"):
-        trip_band(np.array([100.0]), circuity=0)
-
-
-# --------------------------------------------------------------------------
-# expected_modes and mode_change
-# --------------------------------------------------------------------------
-
-SHARES = pd.DataFrame(
-    {
-        "walk": [0.8, 0.5, 0.1, 0.0],
-        "cycle": [0.1, 0.1, 0.1, 0.0],
-        "car": [0.1, 0.3, 0.5, 0.4],
-        "bus": [0.0, 0.1, 0.2, 0.5],
-        "other": [0.0, 0.0, 0.1, 0.1],
-    },
-    index=NTS_BANDS,
-)
-
-
-def test_expected_modes_counts_routed_routeless_and_drops_unseated():
-    school_xy = np.array([[0.0, 0.0], [10_000.0, 0.0]])
-    # Student 0 walks distance 0 to school 0, student 1 rides a route to
-    # school 1, student 2 is 3 miles from school 1 without a route, student 3
-    # holds no seat.
-    student_xy = np.array(
-        [[0.0, 0.0], [0.0, 0.0], [10_000 - 3 * MILE, 0.0], [5.0, 5.0]]
-    )
-    matching = np.array([[0, -1], [1, 0], [1, -1], [-1, -1]], dtype=np.int32)
-
-    modes = expected_modes(matching, student_xy, school_xy, SHARES)
-
-    expected = SHARES.loc[[NTS_BANDS[0], NTS_BANDS[2]]].sum()
-    expected["route"] = 1
-    assert list(modes.index) == MODES
-    assert modes.to_dict() == pytest.approx(expected.to_dict())
-    assert modes.sum() == pytest.approx(3)
-
-
-def test_mode_change_subtracts_the_unrouted_count_within_every_key():
-    results = pd.DataFrame(
+def test_fsm_share_scales_the_register_percentage_and_names_a_missing_one(capsys):
+    schools = pd.DataFrame(
         {
-            "parameter": ["capacity_scale"] * 4,
-            "value": [1, 1, 1, 1],
-            "seed": [0, 0, 0, 0],
-            "scenario": ["with routes", "without routes"] * 2,
-            "mode": ["walk", "walk", "route", "route"],
-            "students": [30.0, 50.0, 20.0, 0.0],
+            "EstablishmentName": ["Alpha School", "Beta School"],
+            "PercentageFSM": [55.7, np.nan],
         }
     )
 
-    change = mode_change(results)
+    fsm = fsm_share(schools)
 
-    assert list(change.columns) == ["parameter", "value", "seed", "mode", "change"]
-    assert change.set_index("mode")["change"].to_dict() == {
-        "walk": -20.0,
-        "route": 20.0,
-    }
+    assert fsm["Alpha School"] == pytest.approx(0.557)
+    assert np.isnan(fsm["Beta School"])
+    assert "drawn blank: Beta School" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------
-# routes_t_test and holm
+# fsm_term
 # --------------------------------------------------------------------------
 
 
-def scenario_rows(with_routes: list[float], without_routes: list[float]):
-    """Scenario rows of one setting, seed s scoring `with_routes[s]` with
-    routes and `without_routes[s]` without."""
-    return pd.DataFrame(
-        {"seed": seed, "scenario": scenario, "dissimilarity": index}
-        for seed, pair in enumerate(zip(with_routes, without_routes))
-        for scenario, index in zip(("with routes", "without routes"), pair)
+def test_fsm_term_takes_the_register_counts_over_the_schools_holding_them(capsys):
+    # Alpha takes its 50% over 40 of its 60 pupils, as a school with a sixth
+    # form does, so 20 are eligible and 20 are not; Gamma has 10 of 40.
+    schools = pd.DataFrame(
+        {
+            "EstablishmentName": ["Alpha School", "Beta School", "Gamma School"],
+            "FSM": [20, np.nan, 10],
+            "PercentageFSM": [50.0, np.nan, 25.0],
+        }
     )
 
+    terms = fsm_term(schools)
 
-def test_routes_t_test_is_the_paired_test_over_each_seeds_difference():
-    with_routes, without_routes = [0.30, 0.28, 0.33], [0.35, 0.36, 0.34]
-    difference = np.subtract(with_routes, without_routes)
-    t = difference.mean() / (difference.std(ddof=1) / np.sqrt(3))
-
-    test = routes_t_test(scenario_rows(with_routes, without_routes))
-
-    assert test["seeds"] == 3
-    assert test["difference"] == pytest.approx(difference.mean())
-    assert test["t"] == pytest.approx(t)
-    assert test["p"] == pytest.approx(2 * stats.t.sf(abs(t), 2))
+    # 30 eligible and 50 not over Alpha and Gamma alone: Beta holds no figures.
+    assert terms["Alpha School"] == pytest.approx(20 / 30 - 20 / 50)
+    assert terms["Gamma School"] == pytest.approx(10 / 30 - 30 / 50)
+    assert np.isnan(terms["Beta School"])
+    assert "left out of the FSM totals: Beta School" in capsys.readouterr().out
 
 
-def test_routes_t_test_pairs_the_scenarios_by_seed_not_by_row():
-    rows = scenario_rows([0.30, 0.28, 0.33], [0.35, 0.36, 0.34])
+def test_fsm_term_rejects_a_school_recording_no_pupil_eligible():
+    schools = pd.DataFrame(
+        {
+            "EstablishmentName": ["Alpha School", "Beta School"],
+            "FSM": [20, 0],
+            "PercentageFSM": [50.0, 0.0],
+        }
+    )
 
-    shuffled = rows.sample(frac=1, random_state=0)
-
-    pd.testing.assert_series_equal(routes_t_test(shuffled), routes_t_test(rows))
-
-
-def test_routes_t_test_is_undefined_where_routes_change_no_seed():
-    test = routes_t_test(scenario_rows([0.30, 0.28], [0.30, 0.28]))
-
-    assert test["difference"] == 0
-    assert np.isnan(test["t"]) and np.isnan(test["p"])
-
-
-def test_routes_t_test_is_undefined_over_one_seed_without_a_warning():
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        test = routes_t_test(scenario_rows([0.30], [0.35]))
-
-    assert test["seeds"] == 1
-    assert test["difference"] == pytest.approx(-0.05)
-    assert np.isnan(test["t"]) and np.isnan(test["p"])
-
-
-def test_routes_t_test_rejects_a_seed_scored_in_one_scenario_alone():
-    rows = scenario_rows([0.30, 0.28], [0.35, 0.36]).iloc[:-1]
-
-    with pytest.raises(ValueError, match="one scenario alone have no pair to test: 1"):
-        routes_t_test(rows)
-
-
-def test_routes_t_test_rejects_a_seed_scored_twice():
-    rows = scenario_rows([0.30, 0.28], [0.35, 0.36])
-
-    with pytest.raises(ValueError, match="duplicate"):
-        routes_t_test(pd.concat([rows, rows]))
-
-
-def test_holm_steps_down_over_the_ordered_p_values():
-    # Ordered 0.005, 0.01, 0.03, 0.04 they scale to 0.02, 0.03, 0.06, 0.04,
-    # and the last takes the 0.06 before it.
-    adjusted = holm(pd.Series([0.01, 0.04, 0.03, 0.005]))
-
-    assert adjusted.tolist() == pytest.approx([0.03, 0.06, 0.06, 0.02])
-
-
-def test_holm_keeps_an_undefined_test_out_of_the_count():
-    adjusted = holm(pd.Series([0.01, np.nan, 0.02], index=["a", "b", "c"]))
-
-    assert list(adjusted.index) == ["a", "b", "c"]
-    assert np.isnan(adjusted["b"])
-    assert adjusted[["a", "c"]].tolist() == pytest.approx([0.02, 0.02])
-
-
-def test_holm_caps_the_adjusted_p_values_at_one():
-    assert holm(pd.Series([0.6, 0.9])).tolist() == [1.0, 1.0]
+    with pytest.raises(ValueError, match="cannot be recovered: Beta School"):
+        fsm_term(schools)

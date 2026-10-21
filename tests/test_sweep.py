@@ -1,52 +1,19 @@
-from dataclasses import asdict, replace
+from dataclasses import replace
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+from frames import default_intake, synthetic_frames
 from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 from shapely import box
 
 from geo_model import sweep as sw
+from geo_model.analysis.sweep import GRID, sweep_tests
 from geo_model.data import sources
-from geo_model.dissimilarity import score_settings
-from geo_model.model.students import disadvantaged_group
-from geo_model.utils import (
-    MODES,
-    dissimilarity_index,
-    gini,
-    holm,
-    lorenz_curve,
-    routes_t_test,
-)
-
-# --------------------------------------------------------------------------
-# GRID
-# --------------------------------------------------------------------------
-
-
-def test_every_grid_varies_its_own_parameter_alone_and_holds_the_default():
-    for parameter, cells in sw.GRID.items():
-        assert sw.DEFAULTS in cells
-        for cell in cells:
-            others = {k: v for k, v in asdict(cell).items() if k != parameter}
-            defaults = {k: v for k, v in asdict(sw.DEFAULTS).items() if k != parameter}
-            assert others == defaults
-
-
-@pytest.mark.parametrize("disadvantage", ["score", "decile"])
-def test_swept_leaves_the_other_students_route_discount_out_unless_they_ride(
-    disadvantage,
-):
-    assert sw.swept(disadvantage) == [
-        parameter for parameter in sw.GRID if parameter != "route_discount"
-    ]
-
-
-def test_swept_runs_every_grid_when_routes_are_open_to_every_student():
-    assert sw.swept("score-open") == list(sw.GRID)
-
+from geo_model.measures.segregation import gini, lorenz_curve
+from geo_model.measures.travel import MODES
 
 # --------------------------------------------------------------------------
 # sweep: against the real data folder
@@ -114,65 +81,6 @@ def test_sweep_scores_every_cell_on_the_same_samples(
 # --------------------------------------------------------------------------
 # plot
 # --------------------------------------------------------------------------
-
-
-def synthetic_frames():
-    """Frames shaped like the ones `sweep` returns, covering every cell of GRID.
-
-    A school without an FSM figure is included, so the plots are exercised on
-    one that draws blank rather than failing.
-    """
-    rng = np.random.default_rng(0)
-    cells = [
-        {
-            "parameter": parameter,
-            "value": getattr(cell, parameter),
-            "seed": seed,
-            "scenario": scenario,
-        }
-        for parameter, grid in sw.GRID.items()
-        for cell in grid
-        for seed in range(2)
-        for scenario in ("with routes", "without routes")
-    ]
-    results = pd.DataFrame(
-        {
-            **cell,
-            "dissimilarity": rng.uniform(0, 1),
-            "n_matched": 900,
-            "n_unmatched": 100,
-            "n_disadvantaged": 300,
-            "unassigned_disadvantaged": int(rng.integers(0, 100)),
-        }
-        for cell in cells
-    )
-    intake = pd.DataFrame(
-        {
-            **cell,
-            "school": school,
-            "disadvantaged": rng.integers(0, 50),
-            "other": rng.integers(1, 200),
-        }
-        for cell in cells
-        for school in ("Alpha School", "Beta School", "Gamma School")
-    )
-    # Each school's term of its matching's index, as `score_sample` gives it.
-    totals = intake.groupby(["parameter", "value", "seed", "scenario"])[
-        ["disadvantaged", "other"]
-    ].transform("sum")
-    intake["dissimilarity_term"] = (
-        intake["disadvantaged"] / totals["disadvantaged"]
-        - intake["other"] / totals["other"]
-    )
-
-    modes = pd.DataFrame(
-        {**cell, "mode": mode, "students": rng.uniform(0, 500)}
-        for cell in cells
-        for mode in MODES
-    )
-
-    fsm = pd.Series({"Alpha School": 0.4, "Beta School": np.nan, "Gamma School": 0.1})
-    return results, intake, modes, fsm
 
 
 # Two of GRID's parameters, enough to show how the columns are laid side by
@@ -259,27 +167,6 @@ def test_draw_columns_rejects_a_value_the_grid_does_not_sweep():
 # --------------------------------------------------------------------------
 
 
-def test_sweep_tests_tests_every_cell_and_corrects_over_them_all():
-    results, *_ = synthetic_frames()
-
-    tests = sw.sweep_tests(results)
-
-    cells = results[["parameter", "value"]].drop_duplicates()
-    expected = pd.DataFrame(
-        [
-            routes_t_test(
-                results[
-                    (results["parameter"] == parameter) & (results["value"] == value)
-                ]
-            )
-            for parameter, value in zip(cells["parameter"], cells["value"])
-        ],
-        index=pd.MultiIndex.from_frame(cells),
-    ).sort_index()
-    pd.testing.assert_frame_equal(tests.drop(columns="p_holm"), expected)
-    pd.testing.assert_series_equal(tests["p_holm"], holm(tests["p"]), check_names=False)
-
-
 @pytest.mark.parametrize(
     ("p", "mark"),
     [
@@ -315,49 +202,10 @@ def test_draw_columns_stars_every_value_by_its_test_over_the_whole_frame():
 
     marks = fig.axes[0].texts
     assert [mark.get_text() for mark in marks] == ["*"] * 9
-    corrected = sw.sweep_tests(results)["p_holm"].xs("decile")
+    corrected = sweep_tests(results)["p_holm"].xs("decile")
     at = sw.positions("decile")
     assert [mark.get_position()[0] for mark in marks] == list(at[corrected.index])
     assert fig.legends[0].get_title().get_text() == sw.SIGNIFICANCE_KEY
-
-
-# --------------------------------------------------------------------------
-# settings_matchings: against the real data folder
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("disadvantage", sw.DISADVANTAGE_CHOICES)
-def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
-    samples, areas, secondary, shares, disadvantage
-):
-    matchings = sw.settings_matchings(
-        sw.DEFAULTS, samples[0], areas, secondary, disadvantage=disadvantage
-    )
-    rows, _, _, route_rows = score_settings(
-        sw.DEFAULTS,
-        samples,
-        areas,
-        secondary,
-        shares,
-        disadvantage=disadvantage,
-    )
-    # The route rows are kept only when asked for.
-    assert route_rows == []
-
-    _, student_lsoa, drawn, _ = samples[0]
-    disadvantaged = disadvantaged_group(
-        student_lsoa, drawn, areas, sw.DEFAULTS.decile, disadvantage
-    )
-    assert [row["scenario"] for row in rows] == list(matchings)
-    for row in rows:
-        matched_school = matchings[row["scenario"]][:, 0]
-        assert (
-            dissimilarity_index(matched_school, disadvantaged, len(secondary))
-            == row["dissimilarity"]
-        )
-        assert (matched_school >= 0).sum() == row["n_matched"]
-    assert (matchings["with routes"][:, 1] >= 0).any()
-    assert (matchings["without routes"][:, 1] < 0).all()
 
 
 # --------------------------------------------------------------------------
@@ -463,15 +311,6 @@ def test_plot_map_writes_a_png(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def default_intake(intake: pd.DataFrame) -> pd.DataFrame:
-    """The school rows of the first parameter's default cell."""
-    parameter = next(iter(sw.GRID))
-    return intake[
-        (intake["parameter"] == parameter)
-        & (intake["value"] == asdict(sw.DEFAULTS)[parameter])
-    ]
-
-
 def test_draw_lorenz_draws_every_seed_and_its_gini_per_scenario():
     _, intake, _, _ = synthetic_frames()
     fig = Figure(figsize=(12, 6.5), layout="constrained")
@@ -492,19 +331,6 @@ def test_draw_lorenz_draws_every_seed_and_its_gini_per_scenario():
             coefficients.append(gini(x, y))
         (text,) = ax.texts
         assert text.get_text().startswith(f"Gini {np.mean(coefficients):.3f} (mean)")
-
-
-def test_default_cell_picks_the_rows_of_the_first_parameters_default():
-    _, intake, _, _ = synthetic_frames()
-
-    pd.testing.assert_frame_equal(sw.default_cell(intake), default_intake(intake))
-
-
-def test_default_cell_rejects_rows_without_it():
-    _, intake, _, _ = synthetic_frames()
-
-    with pytest.raises(ValueError, match="no default cell of"):
-        sw.default_cell(intake.drop(default_intake(intake).index))
 
 
 @pytest.mark.parametrize(
@@ -539,93 +365,8 @@ def test_plot_lorenz_writes_a_png(tmp_path):
 
 
 def test_positions_centre_every_grid_value_on_its_heatmap_cell():
-    for parameter, cells in sw.GRID.items():
+    for parameter, cells in GRID.items():
         at = sw.positions(parameter)
 
         assert list(at.index) == [getattr(cell, parameter) for cell in cells]
         assert list(at) == [i + 0.5 for i in range(len(cells))]
-
-
-# --------------------------------------------------------------------------
-# unassigned_rows
-# --------------------------------------------------------------------------
-
-
-def test_unassigned_rows_splits_each_scenario_into_its_two_groups():
-    results = pd.DataFrame(
-        {
-            "scenario": ["with routes", "without routes"],
-            "n_matched": [900, 800],
-            "n_unmatched": [100, 200],
-            "n_disadvantaged": [400, 400],
-            "unassigned_disadvantaged": [40, 150],
-        }
-    )
-
-    rows = sw.unassigned_rows(results).set_index("series")
-
-    assert set(rows.index) == set(sw.GROUP_COLOURS)
-    # Every unplaced student falls in exactly one group of their scenario.
-    counts = rows["unassigned"]
-    assert counts["disadvantaged, with routes"] == 40
-    assert counts["other, with routes"] == 60
-    assert counts["disadvantaged, without routes"] == 150
-    assert counts["other, without routes"] == 50
-
-
-# --------------------------------------------------------------------------
-# fsm_share
-# --------------------------------------------------------------------------
-
-
-def test_fsm_share_scales_the_register_percentage_and_names_a_missing_one(capsys):
-    schools = pd.DataFrame(
-        {
-            "EstablishmentName": ["Alpha School", "Beta School"],
-            "PercentageFSM": [55.7, np.nan],
-        }
-    )
-
-    fsm = sw.fsm_share(schools)
-
-    assert fsm["Alpha School"] == pytest.approx(0.557)
-    assert np.isnan(fsm["Beta School"])
-    assert "drawn blank: Beta School" in capsys.readouterr().out
-
-
-# --------------------------------------------------------------------------
-# fsm_term
-# --------------------------------------------------------------------------
-
-
-def test_fsm_term_takes_the_register_counts_over_the_schools_holding_them(capsys):
-    # Alpha takes its 50% over 40 of its 60 pupils, as a school with a sixth
-    # form does, so 20 are eligible and 20 are not; Gamma has 10 of 40.
-    schools = pd.DataFrame(
-        {
-            "EstablishmentName": ["Alpha School", "Beta School", "Gamma School"],
-            "FSM": [20, np.nan, 10],
-            "PercentageFSM": [50.0, np.nan, 25.0],
-        }
-    )
-
-    terms = sw.fsm_term(schools)
-
-    # 30 eligible and 50 not over Alpha and Gamma alone: Beta holds no figures.
-    assert terms["Alpha School"] == pytest.approx(20 / 30 - 20 / 50)
-    assert terms["Gamma School"] == pytest.approx(10 / 30 - 30 / 50)
-    assert np.isnan(terms["Beta School"])
-    assert "left out of the FSM totals: Beta School" in capsys.readouterr().out
-
-
-def test_fsm_term_rejects_a_school_recording_no_pupil_eligible():
-    schools = pd.DataFrame(
-        {
-            "EstablishmentName": ["Alpha School", "Beta School"],
-            "FSM": [20, 0],
-            "PercentageFSM": [50.0, 0.0],
-        }
-    )
-
-    with pytest.raises(ValueError, match="cannot be recovered: Beta School"):
-        sw.fsm_term(schools)

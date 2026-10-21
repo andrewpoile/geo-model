@@ -1,18 +1,6 @@
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
-from scipy.stats import ttest_rel
-
-from geo_model.data.travel import NTS_BANDS, NTS_MODES
-
-MILE = 1609.344  # metres
-# Miles, the lower edge of every NTS trip-length band but the first.
-BAND_EDGES = np.array([1.0, 2.0, 5.0])
-# Road distance per straight-line metre, applied before a trip is banded. 1 is
-# no uplift, so a trip is banded on its straight-line length.
-CIRCUITY = 1.0
-# The NTS main modes and the route, which a routed student takes with certainty.
-MODES = [*NTS_MODES.values(), "route"]
 
 
 def school_intake(
@@ -312,140 +300,75 @@ def gini(x: np.ndarray, y: np.ndarray) -> float:
     return 1 - 2 * float(np.trapezoid(y, x))
 
 
-def trip_band(distance_m: ArrayLike, circuity: float = CIRCUITY) -> np.ndarray:
-    """The NTS trip-length band of each trip.
+def fsm_share(secondary_schools: pd.DataFrame) -> pd.Series:
+    """The share of each school's pupils eligible for free school meals.
+
+    The register's own measure of a school's disadvantage, so the point of
+    comparison for the share the model seats. The two are not the same
+    measure: the model draws students disadvantaged in proportion to their
+    district's IDACI score, or under DISADVANTAGE "decile" counts them by
+    their district's decile, while the register counts pupils by their own
+    eligibility.
 
     Args:
-        distance_m (ArrayLike): Straight-line length of each trip, in metres.
-
-        circuity (float, optional): Road distance per straight-line metre.
-        Defaults to CIRCUITY.
+        secondary_schools (pd.DataFrame): Schools carrying
+        "EstablishmentName" and "PercentageFSM".
 
     Returns:
-        np.ndarray: The band of each trip, one of NTS_BANDS.
+        pd.Series: The share, in [0, 1], indexed by establishment name. A
+        school the register holds no figure for is named and left NaN.
     """
-    if circuity <= 0:
-        raise ValueError(f"circuity must be positive, got {circuity}.")
-    miles = np.asarray(distance_m, dtype=float) * circuity / MILE
-    return np.array(NTS_BANDS)[np.digitize(miles, BAND_EDGES)]
+    fsm = secondary_schools.set_index("EstablishmentName")["PercentageFSM"] / 100
+    if fsm.isna().any():
+        print(
+            "No FSM percentage recorded, so drawn blank: "
+            + ", ".join(fsm.index[fsm.isna()])
+        )
+    return fsm
 
 
-def expected_modes(
-    matching: np.ndarray,
-    student_xy: np.ndarray,
-    school_xy: np.ndarray,
-    shares: pd.DataFrame,
-    circuity: float = CIRCUITY,
-) -> pd.Series:
-    """Expected students per travel mode under a matching.
+def fsm_term(secondary_schools: pd.DataFrame) -> pd.Series:
+    """Each school's term of the dissimilarity index, pupils eligible for free
+    school meals against the rest, as the register counts them.
 
-    A student seated without a route travels by the NTS mode split for school
-    trips of their length, held as a probability vector rather than sampled,
-    so the count is an expected value. A student seated with a route takes it
-    with certainty. An unseated student makes no trip and is left out.
-
-    Args:
-        matching (np.ndarray): (school, route) per student, -1 when absent, as
-        returned by `fast_DAT`.
-
-        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
-
-        school_xy (np.ndarray): School coordinates, shape (n_schools, 2), in
-        the same CRS as `student_xy`.
-
-        shares (pd.DataFrame): Mode share within each band, as returned by
-        `load_nts_mode_shares`.
-
-        circuity (float, optional): Passed to `trip_band`. Defaults to
-        CIRCUITY.
-
-    Returns:
-        pd.Series: Expected students per mode, indexed by MODES, summing to
-        the number seated.
-    """
-    seated = matching[:, 0] >= 0
-    school, route = matching[seated, 0], matching[seated, 1]
-    distance = np.linalg.norm(student_xy[seated] - school_xy[school], axis=1)
-    band = trip_band(distance, circuity)
-
-    modes = shares.loc[band[route < 0]].sum()
-    modes["route"] = int((route >= 0).sum())
-    return modes.reindex(MODES)
-
-
-def mode_change(results: pd.DataFrame) -> pd.DataFrame:
-    """The change in expected students per mode the routes induce, per seed.
+    The register's own measure of how a school's intake departs from the
+    region's, on the scale of the terms the model seats, though not the same
+    measure: the model draws students disadvantaged in proportion to their
+    district's IDACI score, or under DISADVANTAGE "decile" counts them by
+    their district's decile, while the register counts pupils by their own
+    eligibility. The
+    register takes "PercentageFSM" over fewer pupils than "NumberOfPupils"
+    at schools with a sixth form, so the pupils it was taken over are
+    recovered as FSM * 100 / PercentageFSM, to within the percentage's
+    rounding.
 
     Args:
-        results (pd.DataFrame): As returned by `run`, or any frame carrying
-        "seed", "scenario", "mode" and "students" plus other key columns.
+        secondary_schools (pd.DataFrame): Schools carrying
+        "EstablishmentName", "FSM" and "PercentageFSM".
 
     Returns:
-        pd.DataFrame: One row per (seed, mode) and any other key columns,
-        with "change" as the students with routes minus those without.
-    """
-    keys = [c for c in results.columns if c not in ("scenario", "students")]
-    change = results.pivot(index=keys, columns="scenario", values="students")
-    change = change["with routes"] - change["without routes"]
-    return change.rename("change").reset_index()
-
-
-def routes_t_test(results: pd.DataFrame) -> pd.Series:
-    """Paired t-test of the dissimilarity index with routes against without.
-
-    Both scenarios of a seed match the same students, so the indices pair by
-    seed and the test is taken over each seed's difference, with routes less
-    without. It is undefined, t and p NaN, with fewer than two seeds, and
-    with more where every seed's difference is 0, the only case in which
-    `ttest_rel` returns NaN on finite indices.
-
-    Args:
-        results (pd.DataFrame): The scenario rows of one setting, carrying
-        "seed", "scenario" and "dissimilarity".
-
-    Returns:
-        pd.Series: "seeds" (the pairs tested), "difference" (their mean
-        difference), "t" and "p" (two-sided).
+        pd.Series: The term, indexed by establishment name. A school the
+        register holds no figures for is named, left NaN and left out of the
+        totals the other terms are taken over.
 
     Raises:
-        ValueError: If a seed holds more than one row of a scenario, or a
-        row of one scenario alone.
+        ValueError: If a school records no pupil eligible, from which the
+        pupils the percentage was taken over cannot be recovered.
     """
-    paired = results.pivot(index="seed", columns="scenario", values="dissimilarity")
-    paired = paired[["with routes", "without routes"]]
-    if paired.isna().any(axis=None):
-        raise ValueError(
-            "Seeds scored in one scenario alone have no pair to test: "
-            + ", ".join(str(seed) for seed in paired.index[paired.isna().any(axis=1)])
+    fsm = secondary_schools.set_index("EstablishmentName")[["FSM", "PercentageFSM"]]
+    missing = fsm.isna().any(axis=1)
+    if missing.any():
+        print(
+            "No FSM count recorded, so drawn blank and left out of the FSM "
+            "totals: " + ", ".join(fsm.index[missing])
         )
-    if len(paired) < 2:
-        t = p = np.nan
-    else:
-        test = ttest_rel(paired["with routes"], paired["without routes"])
-        t, p = float(test.statistic), float(test.pvalue)
-    return pd.Series(
-        {
-            "seeds": len(paired),
-            "difference": (paired["with routes"] - paired["without routes"]).mean(),
-            "t": t,
-            "p": p,
-        }
-    )
-
-
-def holm(p: pd.Series) -> pd.Series:
-    """Holm's step-down adjustment of the p-values `p` for testing them all.
-
-    With the m p-values defined in ascending order, the i-th is adjusted to
-    the largest of (m - j + 1) p_j over j <= i, capped at 1. A NaN p-value,
-    a test left undefined, stays NaN and is not counted in m.
-
-    Args:
-        p (pd.Series): P-values, uniquely indexed.
-
-    Returns:
-        pd.Series: The adjusted p-values, indexed as `p`.
-    """
-    defined = p.dropna().sort_values()
-    adjusted = (defined * np.arange(len(defined), 0, -1)).cummax().clip(upper=1)
-    return adjusted.reindex(p.index)
+    held = fsm[~missing]
+    if (held["PercentageFSM"] == 0).any():
+        raise ValueError(
+            "No pupil recorded eligible, so the pupils the percentage was taken "
+            "over cannot be recovered: "
+            + ", ".join(held.index[held["PercentageFSM"] == 0])
+        )
+    assessed = held["FSM"] * 100 / held["PercentageFSM"]
+    terms = dissimilarity_terms(held["FSM"], assessed - held["FSM"])
+    return pd.Series(terms, index=held.index).reindex(fsm.index)

@@ -1,108 +1,12 @@
-import numpy as np
 import pandas as pd
+import pytest
 from matplotlib.figure import Figure
 
 from geo_model import dissimilarity as ds
-from geo_model.utils import MODES
-
-# --------------------------------------------------------------------------
-# score_sample: against the real data folder
-# --------------------------------------------------------------------------
-
-
-def test_score_sample_scores_both_scenarios_of_one_sample(
-    areas, secondary, routes, shares, samples
-):
-    ((student_xy, student_lsoa, disadvantaged, noise_seed),) = samples
-
-    rows, school_rows, mode_rows, route_rows = ds.score_sample(
-        student_xy,
-        student_lsoa,
-        areas,
-        secondary,
-        routes,
-        disadvantaged,
-        shares,
-        noise_seed,
-    )
-    rows, intake, modes, riders = map(
-        pd.DataFrame, (rows, school_rows, mode_rows, route_rows)
-    )
-
-    assert list(rows["scenario"]) == ["with routes", "without routes"]
-    assert rows["dissimilarity"].between(0, 1).all()
-    assert (rows["n_matched"] + rows["n_unmatched"] == len(student_xy)).all()
-
-    # The disadvantaged group is the sample's, not the matching's, so it is
-    # the same in both scenarios, and those of it without a place are a
-    # subset of both the group and the unmatched.
-    assert (rows["n_disadvantaged"] == disadvantaged.sum()).all()
-    assert 0 < rows["n_disadvantaged"].iloc[0] < len(student_xy)
-    assert (rows["unassigned_disadvantaged"] <= rows["n_unmatched"]).all()
-    assert (rows["unassigned_disadvantaged"] <= rows["n_disadvantaged"]).all()
-
-    # Every school of both scenarios has its intake counted, and the counts
-    # add up to the students seated in that scenario.
-    assert len(intake) == 2 * len(secondary)
-    assert set(intake["school"]) == set(secondary["EstablishmentName"])
-    seated = intake.groupby("scenario")[["disadvantaged", "other"]].sum().sum(axis=1)
-    pd.testing.assert_series_equal(
-        seated, rows.set_index("scenario")["n_matched"], check_names=False
-    )
-
-    # Every disadvantaged student is either seated somewhere or unassigned.
-    placed = intake.groupby("scenario")["disadvantaged"].sum()
-    indexed = rows.set_index("scenario")
-    pd.testing.assert_series_equal(
-        placed + indexed["unassigned_disadvantaged"],
-        indexed["n_disadvantaged"],
-        check_names=False,
-    )
-
-    # A school's local students seated are among its local applicants and
-    # its students seated of the same group, and some school seats some.
-    seated_locals = intake["local_disadvantaged"] + intake["local_other"]
-    assert (seated_locals <= intake["local_applicants"]).all()
-    assert (intake["local_disadvantaged"] <= intake["disadvantaged"]).all()
-    assert (intake["local_other"] <= intake["other"]).all()
-    assert seated_locals.sum() > 0
-
-    # The schools' terms are the index taken apart: they cancel out, and
-    # half their absolute sum is the scenario's index.
-    terms = intake.groupby("scenario")["dissimilarity_term"]
-    assert terms.sum().abs().max() < 1e-12
-    pd.testing.assert_series_equal(
-        0.5 * terms.apply(lambda t: t.abs().sum()),
-        indexed["dissimilarity"],
-        check_names=False,
-    )
-
-    # Every seated student travels by exactly one expected mode, and only
-    # the routed scenario seats anyone on a route.
-    assert len(modes) == 2 * len(MODES)
-    pd.testing.assert_series_equal(
-        modes.groupby("scenario")["students"].sum(),
-        rows.set_index("scenario")["n_matched"].astype(float),
-        check_names=False,
-    )
-    on_route = modes[modes["mode"] == "route"].set_index("scenario")["students"]
-    assert on_route["with routes"] > 0
-    assert on_route["without routes"] == 0
-
-    # Every route of the routed matching has its riders counted, none more
-    # than its seats, and together they are the students seated on a route.
-    pd.testing.assert_series_equal(
-        riders["route"], routes["route_id"], check_names=False, check_dtype=False
-    )
-    np.testing.assert_array_equal(riders["capacity"], routes["capacity"])
-    used = riders["disadvantaged"] + riders["other"]
-    assert (used <= riders["capacity"]).all()
-    assert used.sum() == on_route["with routes"]
-    assert (
-        riders["disadvantaged"].sum()
-        <= intake.groupby("scenario")["disadvantaged"].sum()["with routes"]
-    )
-
+from geo_model.analysis.scoring import settings_matchings
+from geo_model.measures.segregation import dissimilarity_index
+from geo_model.model.settings import DEFAULTS, DISADVANTAGE_CHOICES
+from geo_model.model.students import disadvantaged_group
 
 # --------------------------------------------------------------------------
 # plot
@@ -161,31 +65,6 @@ def test_plot_draws_one_seed_with_its_test_undefined(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# t_test_label
-# --------------------------------------------------------------------------
-
-
-def test_t_test_label_gives_the_seeds_difference_t_and_p():
-    test = pd.Series({"seeds": 30, "difference": -0.0123, "t": -4.214, "p": 0.00023})
-
-    assert ds.t_test_label(test) == (
-        "Paired t-test over 30 seeds\nmean difference -0.0123, t = -4.21, p = 0.00023"
-    )
-
-
-def test_t_test_label_says_why_a_test_is_undefined():
-    one_seed = pd.Series({"seeds": 1, "difference": -0.05, "t": np.nan, "p": np.nan})
-    unchanged = pd.Series({"seeds": 5, "difference": 0.0, "t": np.nan, "p": np.nan})
-
-    assert ds.t_test_label(one_seed) == (
-        "Paired t-test over 1 seed\nundefined: one seed"
-    )
-    assert ds.t_test_label(unchanged).endswith(
-        "undefined: routes change no seed's index"
-    )
-
-
-# --------------------------------------------------------------------------
 # run: against the real data folder
 # --------------------------------------------------------------------------
 
@@ -198,3 +77,42 @@ def test_run_scores_both_scenarios_of_every_seed(areas, secondary, tmp_path):
     # Both scenarios match the same student sample.
     assert results["n_matched"].add(results["n_unmatched"]).nunique() == 1
     pd.testing.assert_frame_equal(pd.read_csv(tmp_path / ds.RESULTS_CSV), results)
+
+
+# --------------------------------------------------------------------------
+# settings_matchings: against the real data folder
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("disadvantage", DISADVANTAGE_CHOICES)
+def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
+    samples, areas, secondary, shares, disadvantage
+):
+    matchings = settings_matchings(
+        DEFAULTS, samples[0], areas, secondary, disadvantage=disadvantage
+    )
+    rows, _, _, route_rows = ds.score_settings(
+        DEFAULTS,
+        samples,
+        areas,
+        secondary,
+        shares,
+        disadvantage=disadvantage,
+    )
+    # The route rows are kept only when asked for.
+    assert route_rows == []
+
+    _, student_lsoa, drawn, _ = samples[0]
+    disadvantaged = disadvantaged_group(
+        student_lsoa, drawn, areas, DEFAULTS.decile, disadvantage
+    )
+    assert [row["scenario"] for row in rows] == list(matchings)
+    for row in rows:
+        matched_school = matchings[row["scenario"]][:, 0]
+        assert (
+            dissimilarity_index(matched_school, disadvantaged, len(secondary))
+            == row["dissimilarity"]
+        )
+        assert (matched_school >= 0).sum() == row["n_matched"]
+    assert (matchings["with routes"][:, 1] >= 0).any()
+    assert (matchings["without routes"][:, 1] < 0).all()

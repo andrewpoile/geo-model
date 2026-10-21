@@ -38,7 +38,7 @@ Entry points are run as modules, e.g. `uv run python -m geo_model` (the paramete
 
 ## Data, outputs and tests
 
-`data/`, `output/`, `temp/` and `agent_docs/` are gitignored, so they exist only locally. Tests that need `data/` take the session fixtures in `tests/conftest.py`, which load it once and skip where it is absent, as in CI, so a green CI run does not cover them: run the suite locally. Each region writes to `output/<LA names joined by "+", alphabetical>/` (`region_dir` in output.py). `temp/population_lsoa.pkl` caches the ONS population estimates (`POPULATION_CACHE` in data/sources.py); delete it if those inputs change.
+`data/`, `output/`, `temp/` and `agent_docs/` are gitignored, so they exist only locally. Tests that need `data/` take the session fixtures in `tests/conftest.py`, which load it once and skip where it is absent, as in CI, so a green CI run does not cover them: run the suite locally. Tests mirror the package and run in pytest's importlib mode, so a test file cannot import another; builders several folders share live in `tests/shared/frames.py`, on pytest's `pythonpath`. Each region writes to `output/<LA names joined by "+", alphabetical>/` (`region_dir` in output.py). `temp/population_lsoa.pkl` caches the ONS population estimates (`POPULATION_CACHE` in data/sources.py); delete it if those inputs change.
 
 ## Architecture
 
@@ -48,7 +48,8 @@ The pipeline, in dependency order:
 2. The `model` subpackage simulates one instance. `settings.py` holds the seed, the default sample count, the route and preference defaults and `Settings`/`DEFAULTS`; `DISADVANTAGE` (`--disadvantage`) sets who is disadvantaged and who may ride.
 3. `model/students.py` samples students per seed, `model/preferences.py` builds their ranked preferences over schools and school-route bundles, and the schools' priorities, and `model/routes.py` builds the route network (which districts get routes to which schools, and the seats on each) from a `Settings` of route parameters. `build_prefs.py` writes one instance of both phases.
 4. `model/matching.py` runs Deferred Acceptance with Transportation (numba `@njit`), the mechanism defined formally in agent_docs/matching.md.
-5. `dissimilarity.py` matches and scores each sample with and without routes over the same students. `utils.py` holds the shared measures (dissimilarity index, Gini, expected travel modes, t-tests with Holm correction).
+5. The `measures` subpackage holds the shared measures: `segregation.py` (dissimilarity index, Gini), `travel.py` (expected travel modes), `statistics.py` (t-tests with Holm correction) and `summaries.py` (tables of one setting's rows).
+6. The `analysis` subpackage holds what the analyses share: `scoring.py` matches and scores each sample with and without routes over the same students, `sweep.py` holds `GRID`, and `search.py` the NSGA-II problem. `dissimilarity.py`'s `score_settings` scores every sample at one setting.
 
 Analyses built on top of that pipeline:
 - `sweep.py`: one-at-a-time sweep of each parameter in `GRID` around `DEFAULTS`, with plots and maps; `__main__.py` only runs it.

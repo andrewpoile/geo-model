@@ -133,3 +133,7 @@ class Settings:
 
 
 DEFAULTS = Settings()
+
+# The two scenarios every sample is matched in: with the routes, and the same
+# students with none, the baseline the routes are measured against.
+SCENARIOS = ("with routes", "without routes")

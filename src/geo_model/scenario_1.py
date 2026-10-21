@@ -11,30 +11,30 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
+from geo_model.analysis.scoring import district_rows, settings_routes
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.dissimilarity import settings_routes, t_test_label
+from geo_model.measures.statistics import routes_t_test, t_test_label
+from geo_model.measures.summaries import (
+    local_acceptance,
+    local_summary,
+    route_utilisation,
+    utilisation_summary,
+)
+from geo_model.measures.travel import CIRCUITY, MODES, mode_change
 from geo_model.model.settings import (
     DEFAULTS,
     DISADVANTAGE,
     DISADVANTAGE_CHOICES,
     Settings,
 )
-from geo_model.model.students import Sample, disadvantaged_group, student_samples
-from geo_model.optimise import (
-    compare,
-    local_acceptance,
-    local_summary,
-    route_utilisation,
-    utilisation_summary,
-)
+from geo_model.model.students import student_samples
+from geo_model.optimise import compare
 from geo_model.output import region_dir, save_routes
 from geo_model.sweep import INTAKE_MEASURES
-from geo_model.utils import CIRCUITY, MODES, district_groups, mode_change, routes_t_test
 
 # The scenario's folder within each region's, and the score rows written to it.
 OUT_DIR = Path("scenario_1")
@@ -60,40 +60,6 @@ SCENARIO = replace(
 # Seats are rounded up, so a school's shortest route keeps a seat where the
 # school's route seats fall below half of one.
 ROUND_UP = True
-
-
-def district_rows(
-    samples: list[Sample], areas: pd.DataFrame, decile: int, disadvantage: str
-) -> pd.DataFrame:
-    """Each district's disadvantaged and advantaged students in every
-    sample, as `district_groups` gives them, a seed's cohorts being drawn
-    afresh.
-
-    Args:
-        samples (list[Sample]): Student samples, as yielded by
-        `student_samples`, in seed order.
-
-        areas (pd.DataFrame): Districts, as `district_groups` takes them.
-
-        decile (int): Passed to `disadvantaged_group`.
-
-        disadvantage (str): Passed to `disadvantaged_group`.
-
-    Returns:
-        pd.DataFrame: One row per (seed, district), "seed" ahead of the
-        columns `district_groups` returns.
-    """
-    return pd.concat(
-        [
-            district_groups(
-                areas,
-                student_lsoa,
-                disadvantaged_group(student_lsoa, drawn, areas, decile, disadvantage),
-            ).assign(seed=seed)
-            for seed, (_, student_lsoa, drawn, _) in enumerate(samples)
-        ],
-        ignore_index=True,
-    ).pipe(lambda rows: rows[["seed", *rows.columns.drop("seed")]])
 
 
 def run(settings: Settings, scenario_dir: Path, description: str) -> None:

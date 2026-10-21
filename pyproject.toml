@@ -45,12 +45,17 @@ dev = [
 testpaths = ["tests"]
 # Test files mirror the package, so a basename can repeat across folders.
 addopts = ["--import-mode=importlib"]
+# tests/shared/frames.py, the synthetic frames tests in several folders share,
+# which importlib mode leaves them unable to import from one another. Its
+# folder alone, so the mirrored test folders are not importable as packages.
+pythonpath = ["tests/shared"]
 
 [tool.coverage.run]
 source = ["geo_model"]
 core = "sysmon"
 
 [tool.pyrefly]
+search-path = ["src", "tests/shared"]
 project-includes = [
     "**/*.py*",
     "**/*.ipynb",

@@ -3,7 +3,7 @@ from scipy.spatial import distance as spdist
 
 from geo_model import scenario_1 as s1
 from geo_model import scenario_2 as s2
-from geo_model.dissimilarity import settings_routes
+from geo_model.analysis.scoring import settings_routes
 from geo_model.model import routes as rt
 from geo_model.model.settings import MIN_ROUTE_DISTANCE
 from geo_model.model.students import cohort_sizes, disadvantaged_cohort
