@@ -131,6 +131,30 @@ def test_bottleneck_pairs_rejects_schools_that_cannot_each_have_a_district():
 
 
 # --------------------------------------------------------------------------
+# first_districts
+# --------------------------------------------------------------------------
+
+
+def test_first_districts_passes_over_a_district_that_cannot_have_a_school():
+    # District 1 may be routed to no school, and district 2 only to school 0,
+    # which district 0 needs, so both give way to district 3. Every school has
+    # a district by then, so district 4 is not taken.
+    allowed = np.array([[1, 0], [0, 0], [1, 0], [0, 1], [1, 1]], dtype=bool)
+
+    np.testing.assert_array_equal(
+        br.first_districts(allowed), [True, False, False, True, False]
+    )
+
+
+def test_first_districts_rejects_schools_that_cannot_each_have_a_district():
+    # Both districts may be routed to school 0 alone.
+    allowed = np.array([[1, 0], [1, 0]], dtype=bool)
+
+    with pytest.raises(ValueError, match="Only 1 of the 2 schools"):
+        br.first_districts(allowed)
+
+
+# --------------------------------------------------------------------------
 # largest_first_pairs
 # --------------------------------------------------------------------------
 
@@ -608,9 +632,30 @@ def test_route_network_pairs_each_school_with_one_of_the_lowest_ranked_districts
     np.testing.assert_array_equal(routes["school_idx"], [0, 1])
     np.testing.assert_array_equal(routes["capacity"], [100, 100])
     out = capsys.readouterr().out
-    assert "2 districts of lowest IDACI rank" in out
+    assert "4 districts in IDACI rank order" in out
     assert "each school paired with a district of its own" in out
     assert "the longest route 25000m" in out
+    assert "passed over" not in out
+
+
+def test_route_network_passes_over_a_lowest_ranked_district_too_near_every_school(
+    capsys,
+):
+    # Districts at 0, 10 and 20km, schools at 0 and 1km. District 0, of lowest
+    # rank, lies within the minimum distance of both schools, so district 2
+    # takes its place. School 0 takes district 1 and school 1 district 2, the
+    # longest route 19km, rather than the other way round, the longest 20km.
+    areas = make_areas([1, 1, 1])
+
+    routes = network(areas, np.array([[0.0, 0.0], [1_000.0, 0.0]]), bottleneck=True)
+
+    np.testing.assert_array_equal(routes["district_idx"], [1, 2])
+    np.testing.assert_array_equal(routes["school_idx"], [0, 1])
+    out = capsys.readouterr().out
+    assert "3 districts in IDACI rank order" in out
+    assert "Districts passed over for the next in order" in out
+    assert "E00000000" in out
+    assert "the longest route 19000m" in out
 
 
 def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(capsys):

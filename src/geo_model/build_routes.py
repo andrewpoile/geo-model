@@ -65,10 +65,13 @@ ROUND_UP_SEATS = False
 # a seat on one, so every school offers a single route.
 SHORTEST_ROUTE_ONLY = False
 
-# True routes from only as many districts as there are schools, those of lowest
-# IDACI rank, the most deprived in England, whatever their decile, and pairs
-# each school with one of them so the longest route is as short as it can be,
-# ties going to the least total length. Every school offers a single route.
+# True routes from only as many districts as there are schools, whatever their
+# decile. The route-eligible districts are taken in IDACI rank order, the most
+# deprived in England first, each kept if it and those kept before it can still
+# each have a school of its own beyond the minimum distance, so a district that
+# cannot is passed over for the next. Each school is paired with one of them so
+# the longest route is as short as it can be, ties going to the least total
+# length. Every school offers a single route.
 BOTTLENECK_ROUTES = False
 
 # True routes from only as many districts as there are schools, those holding
@@ -197,6 +200,48 @@ def bottleneck_pairs(distances: np.ndarray) -> np.ndarray:
     return pairs
 
 
+def first_districts(allowed: np.ndarray) -> np.ndarray:
+    """Take the districts in order, keeping each that can still have a school
+    of its own alongside those kept before it, until every school has one.
+
+    A district is passed over when it may be routed to no school, or only to
+    schools the districts kept before it need. The sets of districts that can
+    each have a school of their own form a transversal matroid, so taking them
+    greedily in order keeps the earliest set there is: its k-th district comes
+    no later than the k-th of any other set giving every school a district.
+
+    Args:
+        allowed (np.ndarray): Whether each district may be routed to each
+        school, shape (n_districts, n_schools), the districts in the order
+        they are taken.
+
+    Returns:
+        np.ndarray: Whether each district is kept, shape (n_districts,), as
+        many kept as there are schools.
+
+    Raises:
+        ValueError: If no set of the districts gives every school a district
+        of its own.
+    """
+    n_schools = allowed.shape[1]
+    kept = np.zeros(len(allowed), dtype=bool)
+    for district in range(len(allowed)):
+        if kept.sum() == n_schools:
+            break
+        kept[district] = True
+        # The school each kept district is matched to, -1 for none.
+        matched = maximum_bipartite_matching(
+            csr_matrix(allowed[kept]), perm_type="column"
+        )
+        kept[district] = (matched >= 0).all()
+    if kept.sum() < n_schools:
+        raise ValueError(
+            f"Only {kept.sum()} of the {n_schools} schools can each have a "
+            f"district of its own among the {len(allowed)} districts."
+        )
+    return kept
+
+
 def largest_first_pairs(distances: np.ndarray, places: np.ndarray) -> np.ndarray:
     """Pair the districts in turn, each with the school offering the most
     places that no district before it took, a tie going to the nearer.
@@ -259,13 +304,14 @@ def build_routes(
     from the population centroid of the district, the point its students are
     sampled around, to the school. With `shortest_only` each school keeps only
     the shortest of its routes, the first district winning a tie. With
-    `bottleneck` each school keeps only its route to a district of its own, as
-    `bottleneck_pairs` pairs them. Given `school_places`, the districts take
-    turns in the frame's order, each keeping only its route to a school of its
-    own, as `largest_first_pairs` pairs them. A school's
-    seats are split between its routes in proportion to their districts'
-    weight, by `apportion`, so they sum to its seats exactly; a route
-    apportioned none is not built.
+    `bottleneck` the districts are taken in the frame's order, as
+    `first_districts` takes them, and each school keeps only its route to one
+    of those kept, as `bottleneck_pairs` pairs them. Given `school_places`, the
+    districts take turns in the frame's order, each keeping only its route to a
+    school of its own, as `largest_first_pairs` pairs them. A school's seats
+    are split between its routes in proportion to their districts' weight, by
+    `apportion`, so they sum to its seats exactly; a route apportioned none is
+    not built.
 
     Args:
         districts (gpd.GeoDataFrame): Route-eligible districts, carrying an
@@ -289,8 +335,9 @@ def build_routes(
         shortest_only (bool, optional): Keep only each school's shortest
         route. Defaults to False.
 
-        bottleneck (bool, optional): Keep only each school's route to the
-        district `bottleneck_pairs` pairs it with. Defaults to False.
+        bottleneck (bool, optional): Keep only the districts `first_districts`
+        keeps in the frame's order, and each school's route to the one
+        `bottleneck_pairs` pairs it with. Defaults to False.
 
         school_places (np.ndarray | None, optional): Places each school
         offers, shape (n_schools,). Given, keep only each school's route to
@@ -309,6 +356,17 @@ def build_routes(
         nearest = np.where(routed, distances, np.inf).argmin(axis=0)
         routed &= np.arange(len(districts))[:, None] == nearest
     elif bottleneck:
+        kept = first_districts(routed)
+        last = np.flatnonzero(kept)[-1]
+        passed = districts["LSOA21CD"].to_numpy()[:last][~kept[:last]]
+        if len(passed):
+            print(
+                "Districts passed over for the next in order, holding no "
+                "disadvantaged student or having no school beyond "
+                f"{min_distance}m that those before them leave free: "
+                + ", ".join(passed)
+            )
+        routed &= kept[:, None]
         routed &= bottleneck_pairs(np.where(routed, distances, np.inf))
     elif school_places is not None:
         routed &= largest_first_pairs(
@@ -367,9 +425,11 @@ def route_network(
     and no school scoring above `max_local_p8` lies within `local_radius` of it,
     since a district a high-performing school already serves needs no transport
     past it. The local schools are read from the same population centroid the
-    distance condition measures from. Under `bottleneck` the districts of
-    lowest IDACI rank, as many as there are schools, take the place of those
-    at or below `decile`, and under `largest_first` those holding the most
+    distance condition measures from. Under `bottleneck` every district, in
+    IDACI rank order, takes the place of those at or below `decile`, and of
+    the route-eligible the most deprived that can each have a school of their
+    own are routed, as many as there are schools. Under `largest_first` those
+    holding the most
     disadvantaged students, n_d below, as many as there are schools, a tie
     going to the lower IDACI rank.
 
@@ -451,11 +511,12 @@ def route_network(
         then holds all of the school's route seats. Defaults to
         SHORTEST_ROUTE_ONLY.
 
-        bottleneck (bool, optional): Route only the districts of lowest IDACI
-        rank, as many as there are schools, whatever their decile, and pair
-        each school with one of them by `bottleneck_pairs`, the route then
-        holding all of the school's route seats. Defaults to
-        BOTTLENECK_ROUTES.
+        bottleneck (bool, optional): Route only as many districts as there
+        are schools, whatever their decile: the route-eligible districts
+        `first_districts` keeps in IDACI rank order, so a district that cannot
+        have a school of its own gives way to the next in rank. Pair each
+        school with one of them by `bottleneck_pairs`, the route then holding
+        all of the school's route seats. Defaults to BOTTLENECK_ROUTES.
 
         largest_first (bool, optional): Route only the districts holding the
         most disadvantaged students, as many as there are schools, whatever
@@ -516,8 +577,11 @@ def route_network(
         else disadvantaged_cohort(areas, cohort)
     )
     if bottleneck:
-        deprived = areas.nsmallest(len(school_xy), "IDACI")
-        selected = f"{len(deprived)} districts of lowest IDACI rank"
+        # Every district, most deprived first: the order `first_districts`
+        # takes the route-eligible in, once the conditions have excluded the
+        # rest, so a district excluded gives way to the next in rank.
+        deprived = areas.sort_values("IDACI", kind="stable")
+        selected = f"{len(deprived)} districts in IDACI rank order"
     elif largest_first:
         # Most disadvantaged students first, a tie going to the lower IDACI
         # rank: the order the districts take their turns in.
@@ -585,9 +649,11 @@ def route_network(
     # an error, but it is silent, so it is named here. Districts the
     # performance condition excludes are counted in the summary instead, since
     # it excludes them by the dozen. Under `shortest_only` most districts are
-    # nearest no school, which leaves them unrouted for that reason instead,
-    # and under `bottleneck` and `largest_first` every district is paired
-    # unless its route holds no seat, which `build_routes` names.
+    # nearest no school, which leaves them unrouted for that reason instead.
+    # Under `bottleneck` all but as many as there are schools go unrouted,
+    # and `build_routes` names those passed over for one later in rank. Under
+    # `largest_first` every district is paired unless its route holds no
+    # seat, which `build_routes` names.
     unrouted = eligible.loc[~eligible.index.isin(routes["district_idx"]), "LSOA21CD"]
     if len(unrouted) and not (shortest_only or bottleneck or largest_first):
         print(
