@@ -8,8 +8,8 @@ from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 from shapely import box
 
-from geo_model import load_data as ld
 from geo_model import sweep as sw
+from geo_model.data import sources
 from geo_model.dissimilarity import score_settings
 from geo_model.utils import (
     MODES,
@@ -375,7 +375,7 @@ def synthetic_city():
     areas = gpd.GeoDataFrame(
         {"IDACI Decile": [1, 10]},
         geometry=[box(0, 0, 10_000, 10_000), box(10_000, 0, 20_000, 10_000)],
-        crs=ld.CRS,
+        crs=sources.CRS,
     )
     schools = pd.DataFrame(
         {

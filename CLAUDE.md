@@ -34,21 +34,21 @@ uv run pytest --cov
 uv run pytest tests/test_matching.py::test_name
 ```
 
-Entry points are run as modules, e.g. `uv run python -m geo_model` (the parameter sweep in sweep.py, also `uv run geo-model`), `uv run python -m geo_model.optimise`, `uv run python -m geo_model.scenario_1`. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge` (see `add_region_arguments` in utils.py).
+Entry points are run as modules, e.g. `uv run python -m geo_model` (the parameter sweep in sweep.py, also `uv run geo-model`), `uv run python -m geo_model.optimise`, `uv run python -m geo_model.scenario_1`. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge` (see `add_region_arguments` in cli.py).
 
 ## Data, outputs and tests
 
-`data/`, `output/`, `temp/` and `agent_docs/` are gitignored, so they exist only locally. Tests that need `data/` take the session fixtures in `tests/conftest.py`, which load it once and skip where it is absent, as in CI, so a green CI run does not cover them: run the suite locally. Each region writes to `output/<LA names joined by "+", alphabetical>/` (`region_dir` in utils.py). `temp/population_lsoa.pkl` caches the ONS population estimates (`load_data.POPULATION_CACHE`); delete it if those inputs change.
+`data/`, `output/`, `temp/` and `agent_docs/` are gitignored, so they exist only locally. Tests that need `data/` take the session fixtures in `tests/conftest.py`, which load it once and skip where it is absent, as in CI, so a green CI run does not cover them: run the suite locally. Each region writes to `output/<LA names joined by "+", alphabetical>/` (`region_dir` in output.py). `temp/population_lsoa.pkl` caches the ONS population estimates (`POPULATION_CACHE` in data/sources.py); delete it if those inputs change.
 
 ## Architecture
 
 The pipeline, in dependency order:
 
-1. `load_data.py` reads `data/` into GeoDataFrames of LSOAs (districts) and schools for the chosen LAs.
+1. The `data` subpackage reads `data/` into GeoDataFrames of LSOAs (districts) and schools for the chosen LAs: `sources.py` holds every path, `areas.py`, `schools.py` and `travel.py` the readers, and `regions.py` the grouping of LAs into regions.
 2. `build_routes.py` builds the route network (which districts get routes to which schools, and the seats on each) from a `Settings` of route parameters. `DISADVANTAGE` here (`--disadvantage`) sets who is disadvantaged and who may ride.
 3. `build_prefs.py` samples students per seed and builds their ranked preferences over schools and school-route bundles, and the schools' priorities.
 4. `matching.py` runs Deferred Acceptance with Transportation (numba `@njit`), the mechanism defined formally in agent_docs/matching.md.
-5. `dissimilarity.py` holds `Settings`/`DEFAULTS`, draws the samples, and matches and scores each one with and without routes over the same students. `utils.py` holds the shared measures (dissimilarity index, Gini, expected travel modes, t-tests with Holm correction) and region handling.
+5. `dissimilarity.py` holds `Settings`/`DEFAULTS`, draws the samples, and matches and scores each one with and without routes over the same students. `utils.py` holds the shared measures (dissimilarity index, Gini, expected travel modes, t-tests with Holm correction).
 
 Analyses built on top of that pipeline:
 - `sweep.py`: one-at-a-time sweep of each parameter in `GRID` around `DEFAULTS`, with plots and maps; `__main__.py` only runs it.

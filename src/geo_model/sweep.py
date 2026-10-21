@@ -28,6 +28,10 @@ from geo_model.build_routes import (
     LINEAR_PROGRESSIVITY,
     ROUND_UP_SEATS,
 )
+from geo_model.cli import add_region_arguments
+from geo_model.data.regions import regions
+from geo_model.data.schools import load_schools
+from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
 from geo_model.dissimilarity import (
     DEFAULTS,
     N_SEEDS,
@@ -38,20 +42,17 @@ from geo_model.dissimilarity import (
     settings_routes,
     student_samples,
 )
-from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
+from geo_model.output import region_dir
 from geo_model.utils import (
     CIRCUITY,
     MILE,
     MODES,
-    add_region_arguments,
     disadvantaged_group,
     dissimilarity_terms,
     gini,
     holm,
     lorenz_curve,
     mode_change,
-    region_dir,
-    regions,
     routes_t_test,
 )
 

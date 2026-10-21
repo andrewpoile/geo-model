@@ -8,9 +8,10 @@ from geo_model import build_routes as br
 from geo_model import car_displacement as cd
 from geo_model import dissimilarity as ds
 from geo_model import optimise as op
+from geo_model import output
 from geo_model import scenario_1 as s1
 from geo_model import sweep as sw
-from geo_model import utils
+from geo_model.data import regions as rg
 
 # The plots `compare` writes for the scenarios an entry point compares.
 COMPARE_PNGS = [
@@ -94,8 +95,8 @@ def test_main_writes_its_outputs_and_nothing_else(
 ):
     # The real output folder holds the user's results, so the region is
     # written to a temporary one, from the frames the session has loaded.
-    monkeypatch.setattr(utils, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setattr(utils, "load_areas", lambda las: areas)
+    monkeypatch.setattr(output, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(rg, "load_areas", lambda las: areas)
     monkeypatch.setattr(module, "load_schools", lambda las: schools)
     monkeypatch.setattr(sys, "argv", [module.__name__, *argv])
     if module is sw:

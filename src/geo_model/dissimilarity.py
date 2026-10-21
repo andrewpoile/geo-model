@@ -34,11 +34,14 @@ from geo_model.build_routes import (
     SHORTEST_ROUTE_ONLY,
     route_network,
 )
-from geo_model.load_data import load_nts_mode_shares, load_schools
+from geo_model.cli import add_region_arguments
+from geo_model.data.regions import regions
+from geo_model.data.schools import load_schools
+from geo_model.data.travel import load_nts_mode_shares
 from geo_model.matching import fast_DAT
+from geo_model.output import region_dir
 from geo_model.utils import (
     CIRCUITY,
-    add_region_arguments,
     disadvantaged_group,
     disadvantaged_students,
     dissimilarity_index,
@@ -46,8 +49,6 @@ from geo_model.utils import (
     district_index,
     expected_modes,
     local_intake,
-    region_dir,
-    regions,
     routes_t_test,
     sample_students,
     school_intake,

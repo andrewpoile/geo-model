@@ -1,14 +1,17 @@
 import pytest
 
 from geo_model import build_routes as br
-from geo_model import load_data as ld
 from geo_model.build_prefs import cohort_sizes
+from geo_model.data import areas as ar
+from geo_model.data import schools as sc
+from geo_model.data import sources, travel
 from geo_model.dissimilarity import student_samples
 
 # The data folder is gitignored, so the tests that read it skip where it is
-# absent, as in CI. The frames below are shared by every test of the session,
-# so a test must not change them in place.
-DATA = ld.POPULATION_DIR.parents[1]
+# absent, as in CI. It is told by a folder only it holds, since tests/data is a
+# data folder too to pytest run from tests/. The frames below are shared by
+# every test of the session, so a test must not change them in place.
+DATA = sources.POPULATION_DIR
 
 
 @pytest.fixture(scope="session")
@@ -21,13 +24,13 @@ def data():
 @pytest.fixture(scope="session")
 def areas(data):
     """The default region's districts, loaded once for the session."""
-    return ld.load_areas()
+    return ar.load_areas()
 
 
 @pytest.fixture(scope="session")
 def schools(data):
     """The default region's primary and secondary schools, loaded once."""
-    return ld.load_schools()
+    return sc.load_schools()
 
 
 @pytest.fixture(scope="session")
@@ -39,7 +42,7 @@ def secondary(schools):
 @pytest.fixture(scope="session")
 def shares(data):
     """The NTS mode shares, loaded once for the session."""
-    return ld.load_nts_mode_shares()
+    return travel.load_nts_mode_shares()
 
 
 @pytest.fixture(scope="session")

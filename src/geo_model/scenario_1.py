@@ -14,6 +14,10 @@ import numpy as np
 import pandas as pd
 
 from geo_model.build_routes import DISADVANTAGE, DISADVANTAGE_CHOICES, save_routes
+from geo_model.cli import add_region_arguments
+from geo_model.data.regions import regions
+from geo_model.data.schools import load_schools
+from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
 from geo_model.dissimilarity import (
     DEFAULTS,
     Sample,
@@ -22,7 +26,6 @@ from geo_model.dissimilarity import (
     student_samples,
     t_test_label,
 )
-from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
 from geo_model.optimise import (
     compare,
     local_acceptance,
@@ -30,16 +33,14 @@ from geo_model.optimise import (
     route_utilisation,
     utilisation_summary,
 )
+from geo_model.output import region_dir
 from geo_model.sweep import INTAKE_MEASURES
 from geo_model.utils import (
     CIRCUITY,
     MODES,
-    add_region_arguments,
     disadvantaged_group,
     district_groups,
     mode_change,
-    region_dir,
-    regions,
     routes_t_test,
 )
 

@@ -11,16 +11,16 @@ from geo_model.build_routes import (
     route_network,
     save_routes,
 )
-from geo_model.load_data import load_schools
+from geo_model.cli import add_region_arguments
+from geo_model.data.regions import regions
+from geo_model.data.schools import load_schools
+from geo_model.output import region_dir
 from geo_model.utils import (
-    add_region_arguments,
     cohort_capacity,
     disadvantaged_group,
     disadvantaged_students,
     district_index,
     rank_bundles,
-    region_dir,
-    regions,
     sample_students,
 )
 

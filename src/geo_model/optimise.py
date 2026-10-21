@@ -41,6 +41,10 @@ from geo_model.build_routes import (
     EmptyRouteSet,
 )
 from geo_model.car_displacement import plot as plot_modes
+from geo_model.cli import add_region_arguments
+from geo_model.data.regions import regions
+from geo_model.data.schools import load_schools
+from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
 from geo_model.dissimilarity import (
     DEFAULTS,
     Sample,
@@ -51,7 +55,7 @@ from geo_model.dissimilarity import (
 )
 from geo_model.dissimilarity import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.dissimilarity import plot as plot_dissimilarity
-from geo_model.load_data import NTS_YEARS, load_nts_mode_shares, load_schools
+from geo_model.output import region_dir
 from geo_model.sweep import (
     COLOURS,
     GRID,
@@ -69,10 +73,7 @@ from geo_model.sweep import (
 from geo_model.utils import (
     CIRCUITY,
     MODES,
-    add_region_arguments,
     mode_change,
-    region_dir,
-    regions,
     routes_t_test,
 )
 
