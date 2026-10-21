@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from geo_model.dissimilarity import DEFAULTS
+from geo_model.model.settings import DEFAULTS
 from geo_model.scenario_1 import run
 
 # The scenario's folder within each region's.

@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 from numba.core.dispatcher import Dispatcher
 
-from geo_model.matching import fast_DAT
-from geo_model.utils import rank_bundles
+from geo_model.model.matching import fast_DAT
+from geo_model.model.preferences import rank_bundles
 
 NO_ROUTES = np.empty(0, dtype=np.int32)
 

@@ -32,29 +32,25 @@ from pymoo.core.problem import Problem
 from pymoo.optimize import minimize
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 
-from geo_model.build_prefs import SEED
-from geo_model.build_routes import (
-    DISADVANTAGE,
-    DISADVANTAGE_CHOICES,
-    LINEAR_PROGRESSIVITY,
-    ROUND_UP_SEATS,
-    EmptyRouteSet,
-)
 from geo_model.car_displacement import plot as plot_modes
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.dissimilarity import (
-    DEFAULTS,
-    Sample,
-    Settings,
-    score_settings,
-    student_samples,
-    t_test_label,
-)
-from geo_model.dissimilarity import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.dissimilarity import plot as plot_dissimilarity
+from geo_model.dissimilarity import score_settings, t_test_label
+from geo_model.model.routes import EmptyRouteSet
+from geo_model.model.settings import (
+    DEFAULTS,
+    DISADVANTAGE,
+    DISADVANTAGE_CHOICES,
+    LINEAR_PROGRESSIVITY,
+    ROUND_UP_SEATS,
+    SEED,
+    Settings,
+)
+from geo_model.model.settings import N_SEEDS as HELD_OUT_SEEDS
+from geo_model.model.students import Sample, student_samples
 from geo_model.output import region_dir
 from geo_model.sweep import (
     COLOURS,
@@ -70,12 +66,7 @@ from geo_model.sweep import (
     swept,
     unassigned_rows,
 )
-from geo_model.utils import (
-    CIRCUITY,
-    MODES,
-    mode_change,
-    routes_t_test,
-)
+from geo_model.utils import CIRCUITY, MODES, mode_change, routes_t_test
 
 # The search's folder within each region's, and the files written to it.
 OUT_DIR = Path("optimise")

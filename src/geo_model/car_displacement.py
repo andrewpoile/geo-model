@@ -22,26 +22,17 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
 
-from geo_model.build_prefs import cohort_sizes
-from geo_model.build_routes import DISADVANTAGE, route_network
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.dissimilarity import (
-    DEFAULTS,
-    N_SEEDS,
-    score_sample,
-    student_samples,
-)
+from geo_model.dissimilarity import score_sample
+from geo_model.model.routes import route_network
+from geo_model.model.settings import DEFAULTS, DISADVANTAGE, N_SEEDS
+from geo_model.model.students import cohort_sizes, disadvantaged_group, student_samples
 from geo_model.output import region_dir
 from geo_model.sweep import COLOURS
-from geo_model.utils import (
-    CIRCUITY,
-    MODES,
-    disadvantaged_group,
-    mode_change,
-)
+from geo_model.utils import CIRCUITY, MODES, mode_change
 
 # Written to each region's folder.
 RESULTS_CSV = "car_displacement.csv"

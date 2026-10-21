@@ -11,9 +11,9 @@ from shapely import box
 from geo_model import sweep as sw
 from geo_model.data import sources
 from geo_model.dissimilarity import score_settings
+from geo_model.model.students import disadvantaged_group
 from geo_model.utils import (
     MODES,
-    disadvantaged_group,
     dissimilarity_index,
     gini,
     holm,

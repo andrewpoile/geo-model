@@ -13,19 +13,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from geo_model.build_routes import DISADVANTAGE, DISADVANTAGE_CHOICES, save_routes
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.dissimilarity import (
+from geo_model.dissimilarity import settings_routes, t_test_label
+from geo_model.model.settings import (
     DEFAULTS,
-    Sample,
+    DISADVANTAGE,
+    DISADVANTAGE_CHOICES,
     Settings,
-    settings_routes,
-    student_samples,
-    t_test_label,
 )
+from geo_model.model.students import Sample, disadvantaged_group, student_samples
 from geo_model.optimise import (
     compare,
     local_acceptance,
@@ -33,16 +32,9 @@ from geo_model.optimise import (
     route_utilisation,
     utilisation_summary,
 )
-from geo_model.output import region_dir
+from geo_model.output import region_dir, save_routes
 from geo_model.sweep import INTAKE_MEASURES
-from geo_model.utils import (
-    CIRCUITY,
-    MODES,
-    disadvantaged_group,
-    district_groups,
-    mode_change,
-    routes_t_test,
-)
+from geo_model.utils import CIRCUITY, MODES, district_groups, mode_change, routes_t_test
 
 # The scenario's folder within each region's, and the score rows written to it.
 OUT_DIR = Path("scenario_1")

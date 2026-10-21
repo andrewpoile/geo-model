@@ -1,11 +1,10 @@
 import pytest
 
-from geo_model import build_routes as br
-from geo_model.build_prefs import cohort_sizes
 from geo_model.data import areas as ar
 from geo_model.data import schools as sc
 from geo_model.data import sources, travel
-from geo_model.dissimilarity import student_samples
+from geo_model.model import routes as rt
+from geo_model.model.students import cohort_sizes, student_samples
 
 # The data folder is gitignored, so the tests that read it skip where it is
 # absent, as in CI. It is told by a folder only it holds, since tests/data is a
@@ -54,7 +53,7 @@ def samples(areas):
 @pytest.fixture(scope="session")
 def routes(areas, secondary):
     """The default region's route network at the module defaults."""
-    return br.route_network(
+    return rt.route_network(
         areas,
         secondary[["Easting", "Northing"]].to_numpy(),
         secondary["P8MEA"].to_numpy(),

@@ -1,11 +1,12 @@
 import numpy as np
 from scipy.spatial import distance as spdist
 
-from geo_model import build_routes as br
 from geo_model import scenario_1 as s1
 from geo_model import scenario_3 as s3
-from geo_model.build_prefs import cohort_sizes
 from geo_model.dissimilarity import settings_routes
+from geo_model.model import routes as rt
+from geo_model.model.settings import MIN_ROUTE_DISTANCE
+from geo_model.model.students import cohort_sizes, disadvantaged_cohort
 
 
 def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
@@ -13,7 +14,7 @@ def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
 ):
     places = secondary["PlacesOffered"].to_numpy()
     targets = (
-        areas.assign(n=br.disadvantaged_cohort(areas, cohort_sizes(areas, "secondary")))
+        areas.assign(n=disadvantaged_cohort(areas, cohort_sizes(areas, "secondary")))
         .sort_values(["n", "IDACI"], ascending=[False, True])
         .head(len(secondary))
     )
@@ -27,7 +28,7 @@ def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
     assert routes["district_idx"].is_unique
     assert set(routes["district_idx"]) == set(targets.index)
     distances = spdist.cdist(
-        br.centroid_xy(targets), secondary[["Easting", "Northing"]].to_numpy()
+        rt.centroid_xy(targets), secondary[["Easting", "Northing"]].to_numpy()
     )
     school_of = routes.set_index("district_idx")["school_idx"]
     # Each district, in turn from the most disadvantaged, took the school
@@ -36,7 +37,7 @@ def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
     taken = []
     for district, row in zip(targets.index, distances, strict=True):
         school = school_of[district]
-        assert row[school] > br.MIN_ROUTE_DISTANCE
-        free = np.setdiff1d(np.flatnonzero(row > br.MIN_ROUTE_DISTANCE), taken)
+        assert row[school] > MIN_ROUTE_DISTANCE
+        free = np.setdiff1d(np.flatnonzero(row > MIN_ROUTE_DISTANCE), taken)
         assert places[school] == places[free].max()
         taken.append(school)

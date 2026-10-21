@@ -3,9 +3,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from geo_model import build_routes as br
-
-CRS = "EPSG:27700"
+from geo_model.data.sources import CRS
+from geo_model.model import routes as rt
+from geo_model.model.settings import MIN_ROUTE_DISTANCE
+from geo_model.model.students import disadvantaged_cohort
+from geo_model.output import ROUTES_CSV, ROUTES_NPZ, save_routes
 
 # Three districts on a line, 10km apart, and two schools sitting on the first
 # and the middle one. Only the middle district is out of range of nothing.
@@ -48,7 +50,7 @@ def network(areas, school_xy=SCHOOL_XY, school_scores=SCHOOL_P8, **kwargs):
     district holding 10 students, unless a test passes its own."""
     school_places = kwargs.pop("school_places", np.full(len(school_xy), 100))
     district_cohort = kwargs.pop("district_cohort", np.full(len(areas), 10))
-    return br.route_network(
+    return rt.route_network(
         areas, school_xy, school_scores, school_places, district_cohort, **kwargs
     )
 
@@ -59,7 +61,7 @@ def network(areas, school_xy=SCHOOL_XY, school_scores=SCHOOL_P8, **kwargs):
 
 
 def test_centroid_xy_reads_the_population_centroid_of_every_district():
-    coordinates = br.centroid_xy(make_areas([1, 1, 1]))
+    coordinates = rt.centroid_xy(make_areas([1, 1, 1]))
 
     np.testing.assert_array_equal(
         coordinates, [[0.0, 0.0], [10_000.0, 0.0], [20_000.0, 0.0]]
@@ -75,7 +77,7 @@ def test_disadvantaged_cohort_rounds_each_share_to_the_nearest_student():
     # 0.134 * 19 = 2.5, 0.767 * 21 = 16.1 and 0 * 30 = 0.
     areas = make_areas([1, 1, 1], scores=[0.134, 0.767, 0.0])
 
-    cohort = br.disadvantaged_cohort(areas, np.array([19, 21, 30]))
+    cohort = disadvantaged_cohort(areas, np.array([19, 21, 30]))
 
     np.testing.assert_array_equal(cohort, [3, 16, 0])
 
@@ -91,7 +93,7 @@ def test_apportion_hands_the_seats_left_over_to_the_largest_remainders():
     # quotas tie at 3.33 and the first row takes the tenth.
     quotas = 10 * np.array([[1, 1], [2, 1], [3, 1]]) / np.array([6, 3])
 
-    seats = br.apportion(quotas, np.array([10, 10]))
+    seats = rt.apportion(quotas, np.array([10, 10]))
 
     np.testing.assert_array_equal(seats, [[2, 4], [3, 3], [5, 3]])
 
@@ -104,7 +106,7 @@ def test_apportion_hands_the_seats_left_over_to_the_largest_remainders():
 def test_bottleneck_pairs_makes_the_longest_pair_as_short_as_it_can_be():
     # The diagonal is the shorter in total, 11 against 12, but its longest
     # pair is 10 against the other pairing's 6.
-    pairs = br.bottleneck_pairs(np.array([[1.0, 6.0], [6.0, 10.0]]))
+    pairs = rt.bottleneck_pairs(np.array([[1.0, 6.0], [6.0, 10.0]]))
 
     np.testing.assert_array_equal(pairs, [[False, True], [True, False]])
 
@@ -114,7 +116,7 @@ def test_bottleneck_pairs_takes_the_least_total_of_the_pairings_within_the_longe
     # longest pair is 10. Within it, districts 1 and 2 cross over to schools
     # 2 and 1 for 4 in total rather than 6 straight.
     inf = np.inf
-    pairs = br.bottleneck_pairs(
+    pairs = rt.bottleneck_pairs(
         np.array([[10.0, inf, inf], [inf, 1.0, 2.0], [inf, 2.0, 5.0]])
     )
 
@@ -127,7 +129,7 @@ def test_bottleneck_pairs_rejects_schools_that_cannot_each_have_a_district():
     # Both schools are allowed district 0 alone.
     inf = np.inf
     with pytest.raises(ValueError, match="No pairing gives each of the 2 schools"):
-        br.bottleneck_pairs(np.array([[1.0, 2.0], [inf, inf]]))
+        rt.bottleneck_pairs(np.array([[1.0, 2.0], [inf, inf]]))
 
 
 # --------------------------------------------------------------------------
@@ -142,7 +144,7 @@ def test_first_districts_passes_over_a_district_that_cannot_have_a_school():
     allowed = np.array([[1, 0], [0, 0], [1, 0], [0, 1], [1, 1]], dtype=bool)
 
     np.testing.assert_array_equal(
-        br.first_districts(allowed), [True, False, False, True, False]
+        rt.first_districts(allowed), [True, False, False, True, False]
     )
 
 
@@ -150,8 +152,8 @@ def test_first_districts_rejects_schools_that_cannot_each_have_a_district():
     # Both districts may be routed to school 0 alone.
     allowed = np.array([[1, 0], [1, 0]], dtype=bool)
 
-    with pytest.raises(br.EmptyRouteSet, match="Only 1 of the 2 schools"):
-        br.first_districts(allowed)
+    with pytest.raises(rt.EmptyRouteSet, match="Only 1 of the 2 schools"):
+        rt.first_districts(allowed)
 
 
 # --------------------------------------------------------------------------
@@ -162,7 +164,7 @@ def test_first_districts_rejects_schools_that_cannot_each_have_a_district():
 def test_largest_first_pairs_gives_the_first_district_the_school_of_most_places():
     # District 0 is nearer school 0 but takes school 1, which offers more
     # places, leaving district 1 school 0.
-    pairs = br.largest_first_pairs(
+    pairs = rt.largest_first_pairs(
         np.array([[1.0, 9.0], [2.0, 3.0]]), np.array([100, 200])
     )
 
@@ -172,7 +174,7 @@ def test_largest_first_pairs_gives_the_first_district_the_school_of_most_places(
 def test_largest_first_pairs_skips_a_barred_school():
     # District 0 is barred from school 1, so takes school 0.
     inf = np.inf
-    pairs = br.largest_first_pairs(
+    pairs = rt.largest_first_pairs(
         np.array([[1.0, inf], [5.0, 5.0]]), np.array([100, 200])
     )
 
@@ -180,7 +182,7 @@ def test_largest_first_pairs_skips_a_barred_school():
 
 
 def test_largest_first_pairs_gives_a_tie_in_places_to_the_nearer_school():
-    pairs = br.largest_first_pairs(
+    pairs = rt.largest_first_pairs(
         np.array([[5.0, 2.0], [1.0, 1.0]]), np.array([100, 100])
     )
 
@@ -192,12 +194,12 @@ def test_largest_first_pairs_rejects_a_district_left_no_school():
     # though pairing district 0 with school 0 would have served both.
     inf = np.inf
     with pytest.raises(ValueError, match="turn 2 of 2 finds every school"):
-        br.largest_first_pairs(np.array([[1.0, 2.0], [inf, 2.0]]), np.array([100, 200]))
+        rt.largest_first_pairs(np.array([[1.0, 2.0], [inf, 2.0]]), np.array([100, 200]))
 
 
 def test_largest_first_pairs_rejects_fewer_districts_than_schools():
     with pytest.raises(ValueError, match="1 districts for 2 schools"):
-        br.largest_first_pairs(np.array([[1.0, 2.0]]), np.array([100, 200]))
+        rt.largest_first_pairs(np.array([[1.0, 2.0]]), np.array([100, 200]))
 
 
 # --------------------------------------------------------------------------
@@ -208,8 +210,8 @@ def test_largest_first_pairs_rejects_fewer_districts_than_schools():
 def test_build_routes_joins_every_district_to_the_schools_beyond_the_threshold():
     # Distances are district 0: [0, 10000] and district 1: [10000, 0].
     districts = make_areas([1, 1])
-    routes = br.build_routes(
-        districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
+    routes = rt.build_routes(
+        districts, SCHOOL_XY, MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
     )
 
     pd.testing.assert_frame_equal(
@@ -230,8 +232,8 @@ def test_build_routes_keeps_the_district_frame_index_as_district_idx():
     # The frame handed over is a disadvantaged subset, so its index labels are
     # positions in the full area frame and must survive unrenumbered.
     districts = make_areas([1, 1], index=[4, 7])
-    routes = br.build_routes(
-        districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
+    routes = rt.build_routes(
+        districts, SCHOOL_XY, MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [4, 7])
@@ -240,7 +242,7 @@ def test_build_routes_keeps_the_district_frame_index_as_district_idx():
 
 def test_build_routes_returns_nothing_when_every_school_is_within_reach():
     districts = make_areas([1, 1])
-    routes = br.build_routes(districts, SCHOOL_XY, 50_000, WEIGHT, SCHOOL_SEATS)
+    routes = rt.build_routes(districts, SCHOOL_XY, 50_000, WEIGHT, SCHOOL_SEATS)
     assert routes.empty
 
 
@@ -249,7 +251,7 @@ def test_build_routes_measures_from_the_population_centroid():
     # not, so the cut is made on the centroid distance and nothing else.
     districts = make_areas([1, 1], spacing=1.0)
     districts["Centroids"] = gpd.points_from_xy([3_000.0, 4_000.0], [0.0, 0.0])
-    routes = br.build_routes(
+    routes = rt.build_routes(
         districts, np.array([[0.0, 0.0]]), 3218, WEIGHT, SCHOOL_SEATS[:1]
     )
 
@@ -261,10 +263,10 @@ def test_build_routes_splits_a_schools_seats_between_the_routes_feeding_it():
     # the threshold, so the school's 30 seats go to the other two alone, by
     # their weights of 1 and 2.
     districts = make_areas([1, 1, 1])
-    routes = br.build_routes(
+    routes = rt.build_routes(
         districts,
         np.array([[0.0, 0.0]]),
-        br.MIN_ROUTE_DISTANCE,
+        MIN_ROUTE_DISTANCE,
         np.array([5.0, 1.0, 2.0]),
         np.array([30]),
     )
@@ -275,8 +277,8 @@ def test_build_routes_splits_a_schools_seats_between_the_routes_feeding_it():
 
 def test_build_routes_leaves_a_district_of_no_weight_unrouted():
     districts = make_areas([1, 1])
-    routes = br.build_routes(
-        districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, np.array([0.0, 1.0]), SCHOOL_SEATS
+    routes = rt.build_routes(
+        districts, SCHOOL_XY, MIN_ROUTE_DISTANCE, np.array([0.0, 1.0]), SCHOOL_SEATS
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [1])
@@ -288,8 +290,8 @@ def test_build_routes_leaves_a_route_apportioned_no_seat_unrouted(capsys):
     # so only the route into the first is built and route_id still runs
     # contiguously from 0.
     districts = make_areas([1, 1])
-    routes = br.build_routes(
-        districts, SCHOOL_XY, br.MIN_ROUTE_DISTANCE, WEIGHT, np.array([30, 0])
+    routes = rt.build_routes(
+        districts, SCHOOL_XY, MIN_ROUTE_DISTANCE, WEIGHT, np.array([30, 0])
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [1])
@@ -308,7 +310,7 @@ def test_build_routes_keeps_only_the_shortest_route_holding_a_seat_of_each_schoo
     districts = make_areas([1, 1, 1])
     school_xy = np.array([[0.0, 0.0], [10_000.0, 0.0], [50_000.0, 0.0]])
 
-    routes = br.build_routes(
+    routes = rt.build_routes(
         districts,
         school_xy,
         0.0,
@@ -328,10 +330,10 @@ def test_build_routes_gives_no_district_to_a_school_holding_no_seat(capsys):
     # 5km. School 1 holds no seat, so district 0, the first, takes school 0,
     # rather than school 1, where its route would be dropped for holding no
     # seat and district 1 would take school 0.
-    routes = br.build_routes(
+    routes = rt.build_routes(
         make_areas([1, 1]),
         np.array([[20_000.0, 0.0], [5_000.0, 0.0]]),
-        br.MIN_ROUTE_DISTANCE,
+        MIN_ROUTE_DISTANCE,
         WEIGHT,
         np.array([30, 0]),
         bottleneck=True,
@@ -347,13 +349,13 @@ def test_build_routes_gives_no_district_to_a_school_holding_no_seat(capsys):
     "ranks, seats, error, message",
     [
         ([2, 1], [30, 30], ValueError, "it must be IDACI rank order"),
-        ([1, 2], [0, 0], br.EmptyRouteSet, "No school holds a route seat"),
+        ([1, 2], [0, 0], rt.EmptyRouteSet, "No school holds a route seat"),
     ],
     ids=["frame out of rank order", "no school holding a seat"],
 )
 def test_build_routes_rejects_what_bottleneck_cannot_take(ranks, seats, error, message):
     with pytest.raises(error, match=message):
-        br.build_routes(
+        rt.build_routes(
             make_areas([1, 1], ranks=ranks),
             SCHOOL_XY,
             0.0,
@@ -441,7 +443,7 @@ def test_route_network_rejects_an_instance_with_no_district_at_or_below_the_deci
 
 
 def test_route_network_rejects_an_empty_route_set():
-    with pytest.raises(br.EmptyRouteSet, match="so the route set is"):
+    with pytest.raises(rt.EmptyRouteSet, match="so the route set is"):
         network(make_areas([1, 1]), min_distance=50_000)
 
 
@@ -474,7 +476,7 @@ def test_route_network_takes_a_school_on_the_radius_as_local():
 
 
 def test_route_network_rejects_an_instance_with_no_route_eligible_district():
-    with pytest.raises(br.EmptyRouteSet, match="no district is route-eligible"):
+    with pytest.raises(rt.EmptyRouteSet, match="no district is route-eligible"):
         network(
             make_areas([1, 1]), school_scores=np.array([1.0, 1.0]), local_radius=50_000
         )
@@ -527,7 +529,7 @@ def test_route_network_rounds_a_schools_seats_to_the_nearest_unless_rounding_up(
 
 
 def test_route_network_rejects_a_route_set_holding_no_seat():
-    with pytest.raises(br.EmptyRouteSet, match="so the route set is"):
+    with pytest.raises(rt.EmptyRouteSet, match="so the route set is"):
         network(
             make_areas([1, 1, 9], scores=[1.0, 1.0, 0.0]),
             district_cohort=np.array([1, 1, 1_000_000]),
@@ -607,13 +609,13 @@ def test_route_network_seats_the_disadvantaged_students(disadvantage, seats):
 
 
 def test_route_network_rejects_route_eligible_districts_holding_no_students():
-    with pytest.raises(br.EmptyRouteSet, match="hold no disadvantaged student"):
+    with pytest.raises(rt.EmptyRouteSet, match="hold no disadvantaged student"):
         network(make_areas([1, 1, 9]), district_cohort=np.array([0, 0, 100]))
 
 
 def test_route_network_rejects_route_eligible_districts_holding_no_disadvantaged():
     # Every student is there, but none of them is disadvantaged.
-    with pytest.raises(br.EmptyRouteSet, match="hold no disadvantaged student"):
+    with pytest.raises(rt.EmptyRouteSet, match="hold no disadvantaged student"):
         network(make_areas([1, 1, 9], scores=[0.0, 0.0, 1.0]))
 
 
@@ -770,16 +772,16 @@ def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(caps
 
 def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path):
     out_dir = tmp_path / "out"
-    routes = br.build_routes(
-        make_areas([1, 1]), SCHOOL_XY, br.MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
+    routes = rt.build_routes(
+        make_areas([1, 1]), SCHOOL_XY, MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
     )
 
-    br.save_routes(routes, out_dir)
+    save_routes(routes, out_dir)
 
     pd.testing.assert_frame_equal(
-        pd.read_csv(out_dir / br.ROUTES_CSV), routes, check_dtype=False
+        pd.read_csv(out_dir / ROUTES_CSV), routes, check_dtype=False
     )
-    with np.load(out_dir / br.ROUTES_NPZ) as axes:
+    with np.load(out_dir / ROUTES_NPZ) as axes:
         np.testing.assert_array_equal(axes["route_capacities"], routes["capacity"])
         np.testing.assert_array_equal(axes["route_school_idx"], routes["school_idx"])
         np.testing.assert_array_equal(

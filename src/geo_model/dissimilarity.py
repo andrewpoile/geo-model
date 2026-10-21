@@ -1,6 +1,5 @@
 import argparse
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 
 import geopandas as gpd
@@ -9,114 +8,45 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
 
-from geo_model.build_prefs import (
-    DISADVANTAGED_PERFORMANCE_WEIGHT,
-    DISADVANTAGED_ROUTE_DISCOUNT,
-    PERFORMANCE_WEIGHT,
-    ROUTE_DISCOUNT,
-    SEED,
-    cohort_sizes,
-    draw_cohort_sizes,
-    secondary_instance,
-)
-from geo_model.build_routes import (
-    BOTTLENECK_ROUTES,
-    DISADVANTAGE,
-    DISADVANTAGED_DECILE,
-    LARGEST_FIRST_ROUTES,
-    LINEAR_PROGRESSIVITY,
-    LOCAL_RADIUS,
-    MAX_LOCAL_P8,
-    MIN_ROUTE_DISTANCE,
-    ROUND_UP_SEATS,
-    ROUTE_CAPACITY_SCALE,
-    ROUTE_PROGRESSIVITY,
-    SHORTEST_ROUTE_ONLY,
-    route_network,
-)
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
-from geo_model.matching import fast_DAT
+from geo_model.model.matching import fast_DAT
+from geo_model.model.preferences import district_index, secondary_instance
+from geo_model.model.routes import route_network
+from geo_model.model.settings import (
+    DEFAULTS,
+    DISADVANTAGE,
+    DISADVANTAGED_PERFORMANCE_WEIGHT,
+    DISADVANTAGED_ROUTE_DISCOUNT,
+    LINEAR_PROGRESSIVITY,
+    N_SEEDS,
+    PERFORMANCE_WEIGHT,
+    ROUND_UP_SEATS,
+    ROUTE_DISCOUNT,
+    Settings,
+)
+from geo_model.model.students import (
+    Sample,
+    cohort_sizes,
+    disadvantaged_group,
+    student_samples,
+)
 from geo_model.output import region_dir
 from geo_model.utils import (
     CIRCUITY,
-    disadvantaged_group,
-    disadvantaged_students,
     dissimilarity_index,
     dissimilarity_terms,
-    district_index,
     expected_modes,
     local_intake,
     routes_t_test,
-    sample_students,
     school_intake,
 )
 
-N_SEEDS = 30
 # Written to each region's folder.
 RESULTS_CSV = "dissimilarity.csv"
 PLOT_PNG = "dissimilarity.png"
-
-# A student sample: the coordinates of every student, the positional index of
-# the district each was drawn in, whether each was drawn disadvantaged, and the
-# seed their tastes for the schools are drawn from.
-Sample = tuple[np.ndarray, np.ndarray, np.ndarray, np.random.SeedSequence]
-
-
-@dataclass(frozen=True)
-class Settings:
-    """The parameters a matching can be scored under, at the model's defaults."""
-
-    decile: int = DISADVANTAGED_DECILE
-    min_distance: float = MIN_ROUTE_DISTANCE
-    capacity_scale: float = ROUTE_CAPACITY_SCALE
-    progressivity: float = ROUTE_PROGRESSIVITY
-    max_local_p8: float = MAX_LOCAL_P8
-    local_radius: float = LOCAL_RADIUS
-    performance_weight: float = PERFORMANCE_WEIGHT
-    route_discount: float = ROUTE_DISCOUNT
-    disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT
-    disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT
-    shortest_only: bool = SHORTEST_ROUTE_ONLY
-    bottleneck: bool = BOTTLENECK_ROUTES
-    largest_first: bool = LARGEST_FIRST_ROUTES
-
-
-DEFAULTS = Settings()
-
-
-def student_samples(areas: pd.DataFrame, n_seeds: int) -> Iterator[Sample]:
-    """Draw one secondary student sample per seed, reproducibly from SEED.
-
-    Each seed draws every area's cohort, as `draw_cohort_sizes` does, then
-    where its students live, then which of them are disadvantaged, all from
-    the same stream, so the locations of a seed do not depend on the group.
-    The students' tastes are drawn from a seed spawned off the stream, so the
-    draws above are those of a stream without one.
-
-    Args:
-        areas (pd.DataFrame): Districts carrying "Borders", "Centroids",
-        "IDACI Score" and the columns `draw_cohort_sizes` reads.
-
-        n_seeds (int): Number of samples to draw.
-
-    Yields:
-        Sample: Coordinates and positional district index of each student, as
-        returned by `sample_students`, whether each is disadvantaged, as
-        drawn by `disadvantaged_students`, and the seed of their tastes.
-    """
-    for stream in np.random.SeedSequence(SEED).spawn(n_seeds):
-        rng = np.random.default_rng(stream)
-        student_xy, student_lsoa = sample_students(
-            areas["Borders"],
-            areas["Centroids"],
-            draw_cohort_sizes(areas, "secondary", rng),
-            rng,
-        )
-        drawn = disadvantaged_students(student_lsoa, areas, rng)
-        yield student_xy, student_lsoa, drawn, stream.spawn(1)[0]
 
 
 def match_sample(

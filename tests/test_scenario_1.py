@@ -1,15 +1,15 @@
 import numpy as np
 import pytest
 
-from geo_model import build_routes as br
 from geo_model import scenario_1 as s1
-from geo_model.dissimilarity import student_samples
+from geo_model.model.settings import DISADVANTAGE
+from geo_model.model.students import student_samples
 
 
 def test_district_rows_count_every_seeds_own_students_by_district(areas):
     samples = list(student_samples(areas, 2))
 
-    rows = s1.district_rows(samples, areas, s1.SCENARIO.decile, br.DISADVANTAGE)
+    rows = s1.district_rows(samples, areas, s1.SCENARIO.decile, DISADVANTAGE)
 
     assert list(rows.columns[:2]) == ["seed", "LSOA21CD"]
     for seed, (_, student_lsoa, drawn, _) in enumerate(samples):

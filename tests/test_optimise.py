@@ -10,8 +10,8 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
 from geo_model import optimise as op
-from geo_model.build_routes import DISADVANTAGE_CHOICES
-from geo_model.dissimilarity import DEFAULTS, Settings, score_settings
+from geo_model.dissimilarity import score_settings
+from geo_model.model.settings import DEFAULTS, DISADVANTAGE_CHOICES, Settings
 from geo_model.sweep import COLOURS, GROUP_COLOURS, INTAKE_MEASURES
 
 # A sample of no students, for the checks made before anything is scored.

@@ -4,7 +4,6 @@ from dataclasses import replace
 import pytest
 
 from geo_model import build_prefs as bp
-from geo_model import build_routes as br
 from geo_model import car_displacement as cd
 from geo_model import dissimilarity as ds
 from geo_model import optimise as op
@@ -12,6 +11,7 @@ from geo_model import output
 from geo_model import scenario_1 as s1
 from geo_model import sweep as sw
 from geo_model.data import regions as rg
+from geo_model.output import ROUTES_CSV, ROUTES_NPZ
 
 # The plots `compare` writes for the scenarios an entry point compares.
 COMPARE_PNGS = [
@@ -40,7 +40,7 @@ SMALL_GRID = {
 @pytest.mark.parametrize(
     ("module", "argv", "folder", "written"),
     [
-        (bp, [], "", [bp.OUTPUT_NPZ, br.ROUTES_CSV, br.ROUTES_NPZ]),
+        (bp, [], "", [bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ]),
         (cd, ["--seeds", "2"], "", [cd.RESULTS_CSV, cd.PLOT_PNG]),
         (ds, ["--seeds", "2"], "", [ds.RESULTS_CSV, ds.PLOT_PNG]),
         (
@@ -55,8 +55,8 @@ SMALL_GRID = {
             ["--seeds", "2"],
             s1.OUT_DIR,
             [
-                br.ROUTES_CSV,
-                br.ROUTES_NPZ,
+                ROUTES_CSV,
+                ROUTES_NPZ,
                 s1.RESULTS_CSV,
                 s1.SCHOOLS_CSV,
                 s1.MODES_CSV,

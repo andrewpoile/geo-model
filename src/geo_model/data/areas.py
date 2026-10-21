@@ -7,9 +7,10 @@ import pandas as pd
 
 from geo_model.data import sources
 
-# The ages whose cohorts are sampled: four-year-olds start primary school,
-# eleven-year-olds secondary.
-COHORT_AGES = [4, 11]
+# The age of each phase's cohort: the four-year-olds start primary school, the
+# eleven-year-olds secondary. Theirs are the cohorts read and sampled.
+PHASE_AGE = {"primary": 4, "secondary": 11}
+COHORT_AGES = list(PHASE_AGE.values())
 
 
 def load_population() -> pd.DataFrame:

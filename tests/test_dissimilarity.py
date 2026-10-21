@@ -2,65 +2,12 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from geo_model import build_prefs as bp
-from geo_model import build_routes as br
 from geo_model import dissimilarity as ds
-from geo_model.utils import MODES, sample_students
+from geo_model.utils import MODES
 
 # --------------------------------------------------------------------------
-# student_samples and score_sample: against the real data folder
+# score_sample: against the real data folder
 # --------------------------------------------------------------------------
-
-
-def test_student_samples_draws_one_reproducible_sample_per_seed(areas):
-    first = list(ds.student_samples(areas, 2))
-    second = list(ds.student_samples(areas, 2))
-
-    assert len(first) == 2
-    # Each seed draws its own cohort, from the head of its own stream.
-    streams = np.random.SeedSequence(ds.SEED).spawn(2)
-    cohorts = [
-        bp.draw_cohort_sizes(areas, "secondary", np.random.default_rng(stream))
-        for stream in streams
-    ]
-    for (_, student_lsoa, _, _), cohort in zip(first, cohorts):
-        np.testing.assert_array_equal(
-            np.bincount(student_lsoa, minlength=len(areas)), cohort
-        )
-    assert not np.array_equal(cohorts[0], cohorts[1])
-    # Different seeds draw different students and tastes, the same seed the
-    # same ones.
-    assert not np.array_equal(first[0][0][:100], first[1][0][:100])
-    tastes = [
-        [sample[3].generate_state(4) for sample in run] for run in (first, second)
-    ]
-    assert not np.array_equal(tastes[0][0], tastes[0][1])
-    for sample_a, sample_b, taste_a, taste_b in zip(first, second, *tastes):
-        for a, b in zip(sample_a[:3], sample_b[:3]):
-            np.testing.assert_array_equal(a, b)
-        np.testing.assert_array_equal(taste_a, taste_b)
-
-
-def test_student_samples_draw_each_district_its_idaci_share_after_the_locations(
-    areas,
-):
-    student_xy, student_lsoa, drawn, _ = next(ds.student_samples(areas, 1))
-
-    np.testing.assert_array_equal(
-        np.bincount(student_lsoa[drawn], minlength=len(areas)),
-        br.disadvantaged_cohort(areas, np.bincount(student_lsoa, minlength=len(areas))),
-    )
-    # The locations are the ones a draw of the cohort and locations alone
-    # takes from the seed's stream, so drawing the group after them leaves
-    # them as they were.
-    rng = np.random.default_rng(np.random.SeedSequence(ds.SEED).spawn(1)[0])
-    alone, _ = sample_students(
-        areas["Borders"],
-        areas["Centroids"],
-        bp.draw_cohort_sizes(areas, "secondary", rng),
-        rng,
-    )
-    np.testing.assert_array_equal(student_xy, alone)
 
 
 def test_score_sample_scores_both_scenarios_of_one_sample(

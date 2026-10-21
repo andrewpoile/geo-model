@@ -3,210 +3,34 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
-import pandas as pd
 
-from geo_model.build_routes import (
-    DISADVANTAGE,
-    DISADVANTAGED_DECILE,
-    route_network,
-    save_routes,
-)
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
-from geo_model.output import region_dir
-from geo_model.utils import (
+from geo_model.model.preferences import (
     cohort_capacity,
-    disadvantaged_group,
-    disadvantaged_students,
     district_index,
     rank_bundles,
+    secondary_instance,
+)
+from geo_model.model.routes import route_network
+from geo_model.model.settings import (
+    DISADVANTAGE,
+    DISADVANTAGED_DECILE,
+    PREFERENCE_NOISE,
+    SEED,
+)
+from geo_model.model.students import (
+    cohort_sizes,
+    disadvantaged_group,
+    disadvantaged_students,
+    draw_cohort_sizes,
     sample_students,
 )
+from geo_model.output import region_dir, save_routes
 
-SEED = 20260907
 # Written to each region's folder.
 OUTPUT_NPZ = "prefprio.npz"
-
-# Share of the secondary preference ranking driven by Progress 8 rather than
-# distance, for students who are not disadvantaged. Distances and scores are
-# each scaled by their own spread over the region, so the trade-off is the
-# region's: in Southampton, at 0.3, one Progress 8 point is worth roughly
-# 1.4km of extra travel.
-PERFORMANCE_WEIGHT = 0.3
-
-# Share of the travel a route takes out of the ranking of the school it serves,
-# for students who are not disadvantaged. At 0.5 a routed school ranks
-# as if it stood half as far away, so a route is worth taking but does not put
-# every distant school ahead of the local one.
-ROUTE_DISCOUNT = 0.5
-
-# The same two shares for disadvantaged students. They default
-# to the other students' own, so the population is homogeneous until a sweep
-# moves one group away from the other.
-DISADVANTAGED_PERFORMANCE_WEIGHT = PERFORMANCE_WEIGHT
-DISADVANTAGED_ROUTE_DISCOUNT = ROUTE_DISCOUNT
-
-# Standard deviation of every student's taste for each school, added to its
-# preference cost, in the cost's units: those of a standard deviation of
-# distance. Drawn from a seed of the sample's own, so a sample ranks with the
-# same tastes with routes and without, and at every setting.
-PREFERENCE_NOISE = 0.5
-
-
-# The age of each phase's cohort: the four-year-olds start primary school, the
-# eleven-year-olds secondary.
-PHASE_AGE = {"primary": 4, "secondary": 11}
-
-
-def cohort_sizes(areas: pd.DataFrame, phase: str) -> np.ndarray:
-    """Expected students in each area's cohort for a phase, the mean over the
-    years. Route seats are sized on it, so one route set serves every sample.
-
-    Args:
-        areas (pd.DataFrame): Districts carrying the "Age 4 Mean" and "Age 11
-        Mean" columns `load_areas` gives them.
-
-        phase (str): "primary" takes the four-year-olds, "secondary" the
-        eleven-year-olds.
-
-    Returns:
-        np.ndarray: One mean cohort per area, aligned with `areas`.
-    """
-    return areas[f"Age {PHASE_AGE[phase]} Mean"].to_numpy(dtype=float)
-
-
-def draw_cohort_sizes(
-    areas: pd.DataFrame, phase: str, rng: np.random.Generator
-) -> np.ndarray:
-    """Students to sample in each area for a phase, drawn from a normal of
-    its cohort's mean and standard deviation over the years.
-
-    Each draw is rounded to the nearest student, and a negative draw places
-    none.
-
-    Args:
-        areas (pd.DataFrame): Districts carrying the "Age 4 Mean", "Age 4 SD",
-        "Age 11 Mean" and "Age 11 SD" columns `load_areas` gives them.
-
-        phase (str): "primary" takes the four-year-olds, "secondary" the
-        eleven-year-olds.
-
-        rng (np.random.Generator): Source of randomness.
-
-    Returns:
-        np.ndarray: One count per area, aligned with `areas`.
-    """
-    age = PHASE_AGE[phase]
-    draw = rng.normal(
-        areas[f"Age {age} Mean"].to_numpy(), areas[f"Age {age} SD"].to_numpy()
-    )
-    return np.maximum(np.rint(draw), 0).astype(np.int64)
-
-
-def secondary_instance(
-    student_xy: np.ndarray,
-    student_lsoa: np.ndarray,
-    areas: pd.DataFrame,
-    secondary_schools: gpd.GeoDataFrame,
-    routes: pd.DataFrame | None,
-    disadvantaged: np.ndarray,
-    performance_weight: float = PERFORMANCE_WEIGHT,
-    route_discount: float = ROUTE_DISCOUNT,
-    disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
-    disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
-    disadvantage: str = DISADVANTAGE,
-    noise_scale: float = PREFERENCE_NOISE,
-    noise_seed: int | np.random.SeedSequence | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Rank one secondary student sample into an SCT instance.
-
-    Progress 8 weights the preferences, and routes are offered when a route
-    set is given. Without one the instance is a plain school choice problem
-    on the same students, the baseline the transport scheme is measured
-    against. Disadvantaged students rank with their own pair of weights and
-    the rest with theirs. The weights default to the model's constants, and
-    are taken as arguments so a sweep can vary them without rebinding the
-    module.
-
-    Args:
-        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
-
-        student_lsoa (np.ndarray): Positional index into `areas` of the
-        district each student was sampled in.
-
-        areas (pd.DataFrame): Districts carrying an "LSOA21CD" column, in the
-        order students were sampled from.
-
-        secondary_schools (gpd.GeoDataFrame): Schools carrying "LSOA21CD",
-        "EstablishmentName", "P8MEA", "Easting", "Northing" and the capacity
-        columns `cohort_capacity` reads.
-
-        routes (pd.DataFrame | None): The route set, as returned by
-        `route_network`, or None for an instance without routes.
-
-        disadvantaged (np.ndarray): Whether each student is disadvantaged,
-        as `disadvantaged_group` gives it.
-
-        performance_weight (float, optional): Share of the preference ranking
-        driven by Progress 8 rather than travel, in [0, 1], for students who
-        are not disadvantaged. Defaults to PERFORMANCE_WEIGHT.
-
-        route_discount (float, optional): Share of the travel a route takes
-        out of the ranking of the school it serves, in [0, 1], for students
-        who are not disadvantaged. Defaults to ROUTE_DISCOUNT.
-
-        disadvantaged_performance_weight (float, optional): As
-        `performance_weight`, for disadvantaged students. Defaults to
-        DISADVANTAGED_PERFORMANCE_WEIGHT.
-
-        disadvantaged_route_discount (float, optional): As `route_discount`,
-        for disadvantaged students. Defaults to DISADVANTAGED_ROUTE_DISCOUNT.
-
-        disadvantage (str, optional): One of DISADVANTAGE_CHOICES. Under
-        "score" only disadvantaged students may take a route, otherwise every
-        student of its district may. Defaults to DISADVANTAGE.
-
-        noise_scale (float, optional): Passed to `rank_bundles`. Defaults to
-        PREFERENCE_NOISE.
-
-        noise_seed (int | np.random.SeedSequence | None, optional): Seed the
-        tastes are drawn from, afresh on every call, so two instances of a
-        sample given the same seed rank with the same tastes. Required when
-        `noise_scale` > 0. Defaults to None.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: Student
-        preferences, the school's rank of every bundle on them, school
-        capacities and route capacities, in the form `fast_DAT` takes. Route capacities are empty
-        when there are no routes.
-    """
-    if routes is None:
-        route_district = route_school = route_capacities = np.empty(0, dtype=np.int32)
-    else:
-        route_district = routes["district_idx"].to_numpy()
-        route_school = routes["school_idx"].to_numpy()
-        route_capacities = routes["capacity"].to_numpy(dtype=np.int32)
-
-    preferences, ranks = rank_bundles(
-        student_xy,
-        student_lsoa,
-        secondary_schools[["Easting", "Northing"]].to_numpy(),
-        district_index(secondary_schools, areas),
-        route_district,
-        route_school,
-        school_scores=secondary_schools["P8MEA"].to_numpy(),
-        performance_weight=np.where(
-            disadvantaged, disadvantaged_performance_weight, performance_weight
-        ),
-        route_discount=np.where(
-            disadvantaged, disadvantaged_route_discount, route_discount
-        ),
-        route_eligible=disadvantaged if disadvantage == "score" else True,
-        noise_scale=noise_scale,
-        rng=None if noise_seed is None else np.random.default_rng(noise_seed),
-    )
-    return preferences, ranks, cohort_capacity(secondary_schools), route_capacities
 
 
 def build(

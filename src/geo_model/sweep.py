@@ -22,32 +22,26 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
-from geo_model.build_routes import (
-    DISADVANTAGE,
-    DISADVANTAGE_CHOICES,
-    LINEAR_PROGRESSIVITY,
-    ROUND_UP_SEATS,
-)
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.dissimilarity import (
+from geo_model.dissimilarity import match_sample, score_settings, settings_routes
+from geo_model.model.settings import (
     DEFAULTS,
+    DISADVANTAGE,
+    DISADVANTAGE_CHOICES,
+    LINEAR_PROGRESSIVITY,
     N_SEEDS,
-    Sample,
+    ROUND_UP_SEATS,
     Settings,
-    match_sample,
-    score_settings,
-    settings_routes,
-    student_samples,
 )
+from geo_model.model.students import Sample, disadvantaged_group, student_samples
 from geo_model.output import region_dir
 from geo_model.utils import (
     CIRCUITY,
     MILE,
     MODES,
-    disadvantaged_group,
     dissimilarity_terms,
     gini,
     holm,
