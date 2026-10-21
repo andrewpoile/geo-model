@@ -11,6 +11,7 @@ from geo_model import output
 from geo_model import scenario_1 as s1
 from geo_model import sweep as sw
 from geo_model.data import regions as rg
+from geo_model.model.settings import DEFAULTS
 from geo_model.output import ROUTES_CSV, ROUTES_NPZ
 
 # The plots `compare` writes for the scenarios an entry point compares.
@@ -27,8 +28,8 @@ COMPARE_PNGS = [
 
 # Two parameters of three cells in all, so the sweep scores and plots quickly.
 SMALL_GRID = {
-    "capacity_scale": [sw.DEFAULTS, replace(sw.DEFAULTS, capacity_scale=25.0)],
-    "decile": [sw.DEFAULTS],
+    "capacity_scale": [DEFAULTS, replace(DEFAULTS, capacity_scale=25.0)],
+    "decile": [DEFAULTS],
 }
 
 

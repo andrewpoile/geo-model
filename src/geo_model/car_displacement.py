@@ -19,20 +19,18 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
-import seaborn as sns
-from matplotlib.figure import Figure
 
 from geo_model.analysis.scoring import score_sample
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.measures.travel import CIRCUITY, MODES, mode_change
+from geo_model.measures.travel import CIRCUITY, MODES
 from geo_model.model.routes import route_network
 from geo_model.model.settings import DEFAULTS, DISADVANTAGE, N_SEEDS
 from geo_model.model.students import cohort_sizes, disadvantaged_group, student_samples
 from geo_model.output import region_dir
-from geo_model.sweep import COLOURS
+from geo_model.plots.comparison import plot_modes
 
 # Written to each region's folder.
 RESULTS_CSV = "car_displacement.csv"
@@ -106,58 +104,6 @@ def run(
     return results
 
 
-def plot(results: pd.DataFrame, path: Path) -> None:
-    """Plot the expected modes of both scenarios and the change per mode, to `path`.
-
-    Args:
-        results (pd.DataFrame): As returned by `run`, or the mode rows of one
-        setting as `score_settings` returns them.
-
-        path (Path): PNG to write.
-    """
-    change = mode_change(results)
-
-    # A bare Figure draws without a display backend, which pyplot would need.
-    fig = Figure(figsize=(10, 4.5), layout="constrained")
-    modes, shift = fig.subplots(1, 2)
-    sns.barplot(
-        results,
-        x="mode",
-        y="students",
-        hue="scenario",
-        hue_order=list(COLOURS),
-        palette=COLOURS,
-        errorbar=("pi", 100),
-        ax=modes,
-    )
-    modes.set_title("Expected mode")
-    modes.set_ylabel("Students")
-    modes.legend(frameon=False)
-    # Every seed is drawn as a point, so the box draws no outliers of its own.
-    sns.boxplot(
-        change,
-        x="mode",
-        y="change",
-        order=MODES,
-        color="#d9dde3",
-        width=0.5,
-        showfliers=False,
-        ax=shift,
-    )
-    sns.stripplot(change, x="mode", y="change", order=MODES, color="#1f2933", ax=shift)
-    shift.axhline(0, color="#898781", linewidth=1)
-    shift.set_title("Change with routes")
-    shift.set_ylabel("Students, with routes minus without")
-    for ax in (modes, shift):
-        ax.set_xlabel("")
-        ax.yaxis.grid(True, color="#e5e7eb")
-        ax.set_axisbelow(True)
-        sns.despine(ax=ax)
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=200)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Estimate the change in travel mode the routed secondary "
@@ -197,7 +143,7 @@ def main() -> None:
         )
         print(" + ".join(las) + ", mean over seeds:")
         print(summary.round(3))
-        plot(results, out_dir / PLOT_PNG)
+        plot_modes(results, out_dir / PLOT_PNG)
         print(f"Wrote {RESULTS_CSV} and {PLOT_PNG} in {out_dir}.")
 
 

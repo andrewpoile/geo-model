@@ -34,7 +34,7 @@ from geo_model.model.settings import (
 from geo_model.model.students import student_samples
 from geo_model.optimise import compare
 from geo_model.output import region_dir, save_routes
-from geo_model.sweep import INTAKE_MEASURES
+from geo_model.plots.style import INTAKE_MEASURES
 
 # The scenario's folder within each region's, and the score rows written to it.
 OUT_DIR = Path("scenario_1")

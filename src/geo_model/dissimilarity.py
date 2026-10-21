@@ -3,8 +3,6 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
-import seaborn as sns
-from matplotlib.figure import Figure
 
 from geo_model.analysis.scoring import score_sample, settings_routes
 from geo_model.cli import add_region_arguments
@@ -29,6 +27,7 @@ from geo_model.model.students import (
     student_samples,
 )
 from geo_model.output import region_dir
+from geo_model.plots.comparison import plot_dissimilarity
 
 # Written to each region's folder.
 RESULTS_CSV = "dissimilarity.csv"
@@ -179,44 +178,6 @@ def run(
     return results
 
 
-def plot(results: pd.DataFrame, path: Path) -> None:
-    """Box-plot the index per scenario, one point per seed, to `path`, titled
-    with the paired t-test of the index with routes against without.
-
-    The y-axis is fitted to the indices drawn, so it need not start at 0.
-
-    Args:
-        results (pd.DataFrame): As returned by `run`, or the scenario rows of
-        one setting as `score_settings` returns them.
-
-        path (Path): PNG to write.
-    """
-    # A bare Figure draws without a display backend, which pyplot would need.
-    fig = Figure(figsize=(5, 4))
-    ax = fig.subplots()
-    ax.set_title(t_test_label(routes_t_test(results)), fontsize="small")
-    # Every seed is drawn as a point, so the box draws no outliers of its own.
-    sns.boxplot(
-        results,
-        x="scenario",
-        y="dissimilarity",
-        color="#d9dde3",
-        width=0.5,
-        showfliers=False,
-        ax=ax,
-    )
-    sns.stripplot(results, x="scenario", y="dissimilarity", color="#1f2933", ax=ax)
-    ax.set_xlabel("")
-    ax.set_ylabel("Dissimilarity index")
-    ax.yaxis.grid(True, color="#e5e7eb")
-    ax.set_axisbelow(True)
-    sns.despine(ax=ax)
-    fig.tight_layout()
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=200)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Score the secondary matching with and without routes over fresh samples."
@@ -232,7 +193,7 @@ def main() -> None:
         print(" + ".join(las) + ":")
         print(results.groupby("scenario")["dissimilarity"].describe())
         print(t_test_label(routes_t_test(results)))
-        plot(results, out_dir / PLOT_PNG)
+        plot_dissimilarity(results, out_dir / PLOT_PNG)
         print(f"Wrote {RESULTS_CSV} and {PLOT_PNG} in {out_dir}.")
 
 

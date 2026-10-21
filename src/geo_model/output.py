@@ -1,7 +1,12 @@
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+# Read by the type checker alone, so writing routes needs no plotting library.
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 # Every region's outputs are written to a folder of its own in here, so runs
 # for different regions never write over each other.
@@ -42,3 +47,9 @@ def save_routes(routes: pd.DataFrame, out_dir: Path) -> None:
         route_school_idx=routes["school_idx"].to_numpy(dtype=np.int32),
         route_district_idx=routes["district_idx"].to_numpy(dtype=np.int32),
     )
+
+
+def save(fig: "Figure", path: Path) -> None:
+    """Write `fig` to `path`, at the resolution every plot is written at."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=200)

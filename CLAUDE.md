@@ -50,11 +50,12 @@ The pipeline, in dependency order:
 4. `model/matching.py` runs Deferred Acceptance with Transportation (numba `@njit`), the mechanism defined formally in agent_docs/matching.md.
 5. The `measures` subpackage holds the shared measures: `segregation.py` (dissimilarity index, Gini), `travel.py` (expected travel modes), `statistics.py` (t-tests with Holm correction) and `summaries.py` (tables of one setting's rows).
 6. The `analysis` subpackage holds what the analyses share: `scoring.py` matches and scores each sample with and without routes over the same students, `sweep.py` holds `GRID`, and `search.py` the NSGA-II problem. `dissimilarity.py`'s `score_settings` scores every sample at one setting.
+7. The `plots` subpackage draws every figure: `style.py` holds the palettes, `comparison.py` draws one setting with routes against without, `sweep.py` the sweep's columns, `maps.py` the map and `front.py` the Pareto front. Each figure is written through `save` in output.py.
 
 Analyses built on top of that pipeline:
 - `sweep.py`: one-at-a-time sweep of each parameter in `GRID` around `DEFAULTS`, with plots and maps; `__main__.py` only runs it.
 - `car_displacement.py`: the change in travel mode routes induce (National Travel Survey mode shares).
 - `optimise.py`: NSGA-II (pymoo) search over route parameters, trading off segregation against modal shift.
-- `scenario_1.py`, `scenario_2.py` and `scenario_3.py`: fixed hand-built route networks, scored and plotted with optimise's plots. Scenarios 2 and 3 reuse scenario 1's runner.
+- `scenario_1.py`, `scenario_2.py` and `scenario_3.py`: fixed hand-built route networks, scored and plotted with optimise's `compare`. Scenarios 2 and 3 reuse scenario 1's runner.
 
 Every comparison between "with routes" and "without routes" uses the same student samples and seeds, so differences come from the routes alone. Keep this when changing sampling or scoring.

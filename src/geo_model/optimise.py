@@ -20,12 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
-import numpy as np
 import pandas as pd
-import seaborn as sns
-from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from matplotlib.patches import Patch
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.optimize import minimize
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
@@ -44,21 +40,15 @@ from geo_model.analysis.search import (
     objective_values,
     searchable,
 )
-from geo_model.car_displacement import plot as plot_modes
 from geo_model.cli import add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.dissimilarity import plot as plot_dissimilarity
 from geo_model.dissimilarity import score_settings
 from geo_model.measures.segregation import fsm_share, fsm_term
 from geo_model.measures.statistics import routes_t_test, t_test_label
 from geo_model.measures.summaries import (
-    local_acceptance,
-    local_difference,
     local_summary,
-    route_utilisation,
-    unassigned_rows,
     utilisation_summary,
 )
 from geo_model.measures.travel import CIRCUITY, MODES, mode_change
@@ -74,15 +64,19 @@ from geo_model.model.settings import (
 )
 from geo_model.model.settings import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.model.students import Sample, student_samples
-from geo_model.output import region_dir
-from geo_model.sweep import (
-    COLOURS,
-    GROUP_COLOURS,
-    INK,
-    INTAKE_MEASURES,
+from geo_model.output import region_dir, save
+from geo_model.plots.comparison import (
+    draw_local_acceptance,
+    draw_route_utilisation,
+    draw_school_intake,
+    draw_unassigned,
+    plot_dissimilarity,
     plot_lorenz,
-    plot_map,
+    plot_modes,
 )
+from geo_model.plots.front import plot_front
+from geo_model.plots.maps import plot_map
+from geo_model.plots.style import INTAKE_MEASURES
 
 # The search's folder within each region's, and the files written to it.
 OUT_DIR = Path("optimise")
@@ -100,8 +94,6 @@ MAP_PNG = "map.png"
 ROUTES_PNG = "route_utilisation.png"
 LOCALS_PNG = "local_acceptance.png"
 
-# Past this many routes the utilisation bars go unlabelled, too narrow to name.
-MAX_LABELLED_ROUTES = 40
 
 # Several samples rather than the 30 `dissimilarity` draws, since every
 # candidate scores them all. The comparison is drawn on HELD_OUT_SEEDS more,
@@ -262,288 +254,6 @@ def optimise(
     return evaluations, front
 
 
-def save(fig: Figure, path: Path) -> None:
-    """Write `fig` to `path`, at the resolution every plot is written at."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=200)
-
-
-def draw_unassigned(ax: Axes, results: pd.DataFrame) -> None:
-    """Draw a bar per scenario of the students left without a place, the mean
-    over seeds, stacked by their group in the colours the sweep's unassigned
-    panel uses.
-
-    Args:
-        ax (Axes): Axis to draw on.
-
-        results (pd.DataFrame): The scenario rows of one setting, as
-        `score_settings` returns them.
-    """
-    stack = (
-        unassigned_rows(results)
-        .pivot_table(
-            index="scenario", columns="group", values="unassigned", aggfunc="mean"
-        )
-        .reindex(list(COLOURS))
-    )
-    bottom = np.zeros(len(stack))
-    for group in ("disadvantaged", "other"):
-        ax.bar(
-            stack.index,
-            stack[group],
-            0.5,
-            bottom=bottom,
-            color=[GROUP_COLOURS[f"{group}, {scenario}"] for scenario in stack.index],
-            edgecolor="white",
-            linewidth=0.5,
-        )
-        bottom += stack[group].to_numpy()
-    # Above the axis, where no bar reaches.
-    ax.legend(
-        handles=[
-            Patch(color=colour, label=label) for label, colour in GROUP_COLOURS.items()
-        ],
-        loc="lower center",
-        bbox_to_anchor=(0.5, 1),
-        ncol=2,
-        frameon=False,
-    )
-    ax.set_ylabel("Students left unassigned (mean over seeds)")
-    ax.yaxis.grid(True, color="#e1e0d9")
-    ax.set_axisbelow(True)
-    sns.despine(ax=ax)
-
-
-def draw_school_intake(
-    fig: Figure, schools: pd.DataFrame, fsm: pd.Series, measure: str
-) -> None:
-    """Fill `fig` with a heatmap of `measure` at every school, the mean over
-    seeds with routes and without, beside the register's own figure, as the
-    sweep's intake panels and FSM strip draw it.
-
-    Schools are ordered by their value without routes, highest first. The
-    scale is the sweep's: [0, 1] for the share, and for the term centred on 0
-    and reaching the largest term drawn, the register's included.
-
-    Args:
-        fig (Figure): Figure to draw on, using constrained layout.
-
-        schools (pd.DataFrame): The school rows of one setting, as
-        `score_settings` returns them.
-
-        fsm (pd.Series): As `fsm_term` or `fsm_share` returns it, whichever
-        `measure` is.
-
-        measure (str): A key of INTAKE_MEASURES.
-    """
-    intake = schools.assign(
-        share=schools["disadvantaged"] / (schools["disadvantaged"] + schools["other"])
-    ).pivot_table(
-        index="school",
-        columns="scenario",
-        values=INTAKE_MEASURES[measure]["column"],
-        aggfunc="mean",
-    )
-    table = (
-        intake[list(COLOURS)]
-        .assign(FSM=fsm.reindex(intake.index))
-        .sort_values("without routes", ascending=False)
-    )
-    if measure == "share":
-        vmin, vmax = 0.0, 1.0
-    else:
-        vmax = float(np.nanmax(np.abs(table.to_numpy())))
-        vmin = -vmax
-    ax = fig.subplots()
-    sns.heatmap(
-        table,
-        vmin=vmin,
-        vmax=vmax,
-        cmap=INTAKE_MEASURES[measure]["cmap"],
-        annot=True,
-        fmt=".2f",
-        cbar_kws={"label": INTAKE_MEASURES[measure]["label"]},
-        ax=ax,
-    )
-    # The register counts pupils by their own eligibility rather than as the
-    # model draws them, so its column stands apart from the model's two.
-    ax.axvline(len(COLOURS), color="white", linewidth=4)
-    # A word a line, so the scenario names fit their narrow columns.
-    ax.set_xticklabels([column.replace(" ", "\n") for column in table.columns])
-    ax.set_xlabel("")
-    ax.set_ylabel("")
-    ax.tick_params(axis="y", rotation=0)
-
-
-def draw_route_utilisation(fig: Figure, routes: pd.DataFrame) -> None:
-    """Fill `fig` with a bar per route: the seats its disadvantaged and its
-    other riders take, the mean over seeds, stacked below its unused seats,
-    so every bar stands at the seats the route provides.
-
-    The used seats carry the seeds' range. Routes are ordered as
-    `route_utilisation` orders them, and named by district and school up to
-    MAX_LABELLED_ROUTES of them.
-
-    Args:
-        fig (Figure): Figure to draw on, using constrained layout.
-
-        routes (pd.DataFrame): The route rows of one setting, as
-        `score_settings` returns them with `utilisation`.
-    """
-    per_route = route_utilisation(routes)
-    used = routes.assign(used=routes["disadvantaged"] + routes["other"]).groupby(
-        "route"
-    )["used"]
-    low = used.min().reindex(per_route["route"]).to_numpy()
-    high = used.max().reindex(per_route["route"]).to_numpy()
-    mean = per_route["used"].to_numpy()
-    labelled = len(per_route) <= MAX_LABELLED_ROUTES
-    x = np.arange(len(per_route))
-
-    ax = fig.subplots()
-    bottom = np.zeros(len(per_route))
-    for column, colour, label in (
-        (
-            "disadvantaged",
-            GROUP_COLOURS["disadvantaged, with routes"],
-            "disadvantaged riders",
-        ),
-        ("other", GROUP_COLOURS["other, with routes"], "other riders"),
-        ("unused", "#e1e0d9", "unused seats"),
-    ):
-        ax.bar(
-            x,
-            per_route[column],
-            0.8,
-            bottom=bottom,
-            color=colour,
-            # White edges would hide bars too narrow to label.
-            edgecolor="white",
-            linewidth=0.5 if labelled else 0,
-            label=label,
-        )
-        bottom += per_route[column].to_numpy()
-    ax.errorbar(
-        x,
-        mean,
-        yerr=[mean - low, high - mean],
-        fmt="none",
-        ecolor=INK,
-        elinewidth=1,
-        capsize=2 if labelled else 0,
-        label="seeds' range of seats used",
-    )
-    if labelled:
-        ax.set_xticks(
-            x,
-            per_route["LSOA21CD"] + " → " + per_route["school"],
-            rotation=90,
-            fontsize="small",
-        )
-    else:
-        ax.set_xticks([])
-        ax.set_xlabel("Routes, by seats provided")
-    ax.set_xlim(-0.5, len(per_route) - 0.5)
-    # Above the axis, where no bar reaches.
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1), ncol=2, frameon=False)
-    ax.set_ylabel("Seats on route (mean over seeds)")
-    ax.yaxis.grid(True, color="#e1e0d9")
-    ax.set_axisbelow(True)
-    sns.despine(ax=ax)
-
-
-def draw_local_acceptance(fig: Figure, schools: pd.DataFrame) -> None:
-    """Fill `fig` with a pair of bars per school, with routes and without:
-    the local students it accepts of each group, the mean over seeds,
-    stacked below the local applicants it rejects, so every bar stands at
-    the school's local applicants.
-
-    Below them, the local students each school accepts with routes less
-    those without, a box over the seeds and a point per seed, as
-    `car_displacement.plot` draws the change per mode. Schools are ordered
-    as `local_acceptance` orders them.
-
-    Args:
-        fig (Figure): Figure to draw on, using constrained layout.
-
-        schools (pd.DataFrame): The school rows of one setting, as
-        `score_settings` returns them.
-    """
-    per_school = local_acceptance(schools)
-    names = per_school["school"].unique()
-    # Each school's pair of bars sits either side of its tick, with routes on
-    # the left.
-    width = 0.4
-    x = np.arange(len(names)).repeat(2) + np.tile([-width / 2, width / 2], len(names))
-
-    ax, change = fig.subplots(2, 1, sharex=True, height_ratios=[2, 1])
-    bottom = np.zeros(len(per_school))
-    for column, colour in (
-        (
-            "local_disadvantaged",
-            [GROUP_COLOURS[f"disadvantaged, {s}"] for s in per_school["scenario"]],
-        ),
-        (
-            "local_other",
-            [GROUP_COLOURS[f"other, {s}"] for s in per_school["scenario"]],
-        ),
-        ("rejected", "#e1e0d9"),
-    ):
-        ax.bar(
-            x,
-            per_school[column],
-            width,
-            bottom=bottom,
-            color=colour,
-            edgecolor="white",
-            linewidth=0.5,
-        )
-        bottom += per_school[column].to_numpy()
-    # Above the axis, where no bar reaches.
-    ax.legend(
-        handles=[
-            *(
-                Patch(color=colour, label=label.replace(", ", " accepted, "))
-                for label, colour in GROUP_COLOURS.items()
-            ),
-            Patch(color="#e1e0d9", label="rejected"),
-        ],
-        loc="lower center",
-        bbox_to_anchor=(0.5, 1),
-        ncol=2,
-        frameon=False,
-    )
-    ax.set_ylabel("Local applicants (mean over seeds)")
-    # The rejected bars rest on the accepted, so where a school rejects
-    # nobody their foot would pin the axis to its tallest bar. Set to the
-    # default margin above it instead.
-    ax.set_ylim(0, 1.05 * per_school["local_applicants"].max())
-
-    difference = local_difference(schools)
-    # Every seed is drawn as a point, so the box draws no outliers of its own.
-    sns.boxplot(
-        difference,
-        x="school",
-        y="difference",
-        order=names,
-        color="#d9dde3",
-        showfliers=False,
-        ax=change,
-    )
-    sns.stripplot(
-        difference, x="school", y="difference", order=names, color=INK, ax=change
-    )
-    change.axhline(0, color="#898781", linewidth=1)
-    change.set_ylabel("Local students accepted,\nwith routes minus without")
-    change.set_xlabel("")
-    change.tick_params(axis="x", rotation=90, labelsize="small")
-    change.set_xlim(-0.5, len(names) - 0.5)
-    for panel in (ax, change):
-        panel.yaxis.grid(True, color="#e1e0d9")
-        panel.set_axisbelow(True)
-        sns.despine(ax=panel)
-
-
 def compare(
     settings: Settings,
     samples: list[Sample],
@@ -567,8 +277,8 @@ def compare(
     first sample's two matchings to MAP_PNG, the seats each route provides
     and its riders take to ROUTES_PNG, and the local students each school
     accepts of those who applied, with the change the routes make to them
-    per seed, to LOCALS_PNG. Each plot the scripts share
-    is drawn with the function its own script uses.
+    per seed, to LOCALS_PNG. Each plot is drawn
+    with its function in the plots subpackage.
 
     Args:
         settings (Settings): The parameter values to compare.
@@ -662,86 +372,6 @@ def compare(
     draw_local_acceptance(fig, schools)
     save(fig, out_dir / LOCALS_PNG)
     return results, schools, modes, routes
-
-
-def plot_front(
-    evaluations: pd.DataFrame,
-    front: pd.DataFrame,
-    chosen: pd.Series,
-    reference: dict[str, float],
-    objectives: list[str],
-    path: Path,
-) -> None:
-    """Plot every feasible setting scored against two objectives, the front
-    drawn over them, the compromise ringed and the defaults marked, to
-    `path`.
-
-    Args:
-        evaluations (pd.DataFrame): As returned by `optimise`.
-
-        front (pd.DataFrame): As returned by `optimise`, sorted by the first
-        objective, so its line runs along the front.
-
-        chosen (pd.Series): The row of `front` `compromise` chooses.
-
-        reference (dict[str, float]): The objectives at DEFAULTS, as
-        `objective_values` returns them.
-
-        objectives (list[str]): The two keys of OBJECTIVES to plot, along x
-        then y.
-
-        path (Path): PNG to write.
-    """
-    if len(objectives) != 2:
-        raise ValueError(f"The front is plotted in two objectives, got {objectives}.")
-    x, y = objectives
-    feasible = evaluations[evaluations["feasible"]]
-
-    # A bare Figure draws without a display backend, which pyplot would need.
-    fig = Figure(figsize=(7, 5.5), layout="constrained")
-    ax = fig.subplots()
-    ax.scatter(
-        feasible[x], feasible[y], s=16, color="#a5a49f", linewidths=0, label="scored"
-    )
-    ax.plot(
-        front[x],
-        front[y],
-        color=COLOURS["with routes"],
-        marker="o",
-        markersize=7,
-        markeredgecolor="white",
-        linewidth=1.5,
-        label="Pareto front",
-    )
-    ax.scatter(
-        chosen[x],
-        chosen[y],
-        s=260,
-        facecolors="none",
-        edgecolors=INK,
-        linewidths=1.5,
-        zorder=3,
-        label="compromise",
-    )
-    ax.scatter(
-        reference[x],
-        reference[y],
-        s=110,
-        marker="D",
-        color=INK,
-        edgecolors="white",
-        linewidths=1.5,
-        zorder=3,
-        label="defaults",
-    )
-    ax.set_xlabel(OBJECTIVES[x].label)
-    ax.set_ylabel(OBJECTIVES[y].label)
-    ax.grid(True, color="#e1e0d9")
-    ax.set_axisbelow(True)
-    ax.legend(frameon=False)
-    sns.despine(ax=ax)
-
-    save(fig, path)
 
 
 def search(
