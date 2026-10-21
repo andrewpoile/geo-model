@@ -21,7 +21,7 @@ import geopandas as gpd
 import pandas as pd
 
 from geo_model.analysis.scoring import score_sample
-from geo_model.cli import add_region_arguments
+from geo_model.cli import add_region_arguments, add_seeds_argument, add_travel_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
@@ -109,20 +109,8 @@ def main() -> None:
         description="Estimate the change in travel mode the routed secondary "
         "matching induces, from NTS mode shares by trip length."
     )
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
-    parser.add_argument(
-        "--years",
-        type=int,
-        nargs="+",
-        default=NTS_YEARS,
-        help="NTS years to take mode shares from, pooled when more than one",
-    )
-    parser.add_argument(
-        "--circuity",
-        type=float,
-        default=CIRCUITY,
-        help="road distance per straight-line metre, applied before banding",
-    )
+    add_seeds_argument(parser, N_SEEDS)
+    add_travel_arguments(parser)
     add_region_arguments(parser)
     args = parser.parse_args()
 

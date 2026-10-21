@@ -5,7 +5,7 @@ import geopandas as gpd
 import pandas as pd
 
 from geo_model.analysis.scoring import score_sample, settings_routes
-from geo_model.cli import add_region_arguments
+from geo_model.cli import add_region_arguments, add_seeds_argument
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
@@ -182,7 +182,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Score the secondary matching with and without routes over fresh samples."
     )
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    add_seeds_argument(parser, N_SEEDS)
     add_region_arguments(parser)
     args = parser.parse_args()
 

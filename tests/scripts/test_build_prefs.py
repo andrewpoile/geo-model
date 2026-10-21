@@ -1,7 +1,7 @@
 import numpy as np
 
-from geo_model import build_prefs as bp
 from geo_model.output import ROUTES_CSV, ROUTES_NPZ
+from geo_model.scripts import build_prefs as bp
 
 # --------------------------------------------------------------------------
 # build: the whole pipeline, against the real data folder

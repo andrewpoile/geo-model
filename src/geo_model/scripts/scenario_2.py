@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from geo_model.model.settings import DEFAULTS
-from geo_model.scenario_1 import run
+from geo_model.scripts.scenario_1 import run
 
 # The scenario's folder within each region's.
 OUT_DIR = Path("scenario_2")

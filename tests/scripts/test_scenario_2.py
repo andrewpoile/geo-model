@@ -1,12 +1,12 @@
 import numpy as np
 from scipy.spatial import distance as spdist
 
-from geo_model import scenario_1 as s1
-from geo_model import scenario_2 as s2
 from geo_model.analysis.scoring import settings_routes
 from geo_model.model import routes as rt
 from geo_model.model.settings import MIN_ROUTE_DISTANCE
 from geo_model.model.students import cohort_sizes, disadvantaged_cohort
+from geo_model.scripts import scenario_1 as s1
+from geo_model.scripts import scenario_2 as s2
 
 
 def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(

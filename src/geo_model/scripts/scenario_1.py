@@ -13,10 +13,17 @@ from pathlib import Path
 import numpy as np
 
 from geo_model.analysis.scoring import district_rows, settings_routes
-from geo_model.cli import add_region_arguments
+from geo_model.cli import (
+    add_disadvantage_argument,
+    add_intake_argument,
+    add_region_arguments,
+    add_seat_arguments,
+    add_seeds_argument,
+    add_travel_arguments,
+)
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
-from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
+from geo_model.data.travel import load_nts_mode_shares
 from geo_model.measures.statistics import routes_t_test, t_test_label
 from geo_model.measures.summaries import (
     local_acceptance,
@@ -24,17 +31,15 @@ from geo_model.measures.summaries import (
     route_utilisation,
     utilisation_summary,
 )
-from geo_model.measures.travel import CIRCUITY, MODES, mode_change
+from geo_model.measures.travel import MODES, mode_change
 from geo_model.model.settings import (
     DEFAULTS,
-    DISADVANTAGE,
-    DISADVANTAGE_CHOICES,
     Settings,
 )
 from geo_model.model.students import student_samples
-from geo_model.optimise import compare
 from geo_model.output import region_dir, save_routes
 from geo_model.plots.style import INTAKE_MEASURES
+from geo_model.scripts.optimise import compare
 
 # The scenario's folder within each region's, and the score rows written to it.
 OUT_DIR = Path("scenario_1")
@@ -75,7 +80,7 @@ def run(settings: Settings, scenario_dir: Path, description: str) -> None:
         description (str): The command line's description.
     """
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    add_seeds_argument(parser, N_SEEDS)
     parser.add_argument(
         "--capacity-scale",
         type=float,
@@ -83,43 +88,10 @@ def run(settings: Settings, scenario_dir: Path, description: str) -> None:
         help="seats on a school's route as a multiple of the disadvantaged "
         "students' fair share of the places it offers",
     )
-    parser.add_argument(
-        "--years",
-        type=int,
-        nargs="+",
-        default=NTS_YEARS,
-        help="NTS years to take mode shares from, pooled when more than one",
-    )
-    parser.add_argument(
-        "--circuity",
-        type=float,
-        default=CIRCUITY,
-        help="road distance per straight-line metre, applied before banding",
-    )
-    parser.add_argument(
-        "--round-up-seats",
-        action=argparse.BooleanOptionalAction,
-        default=ROUND_UP,
-        help="round each school's route seats up rather than to the nearest "
-        "seat, before they are split between its routes",
-    )
-    parser.add_argument(
-        "--disadvantage",
-        choices=DISADVANTAGE_CHOICES,
-        default=DISADVANTAGE,
-        help="score: each LSOA's students are drawn disadvantaged in proportion "
-        "to its IDACI score, and routes carry only them; score-open: drawn the "
-        "same way, but routes carry every student of their district; decile: "
-        "every student of an LSOA at or below the decile is disadvantaged and "
-        "rides, the model as it was before",
-    )
-    parser.add_argument(
-        "--intake",
-        choices=list(INTAKE_MEASURES),
-        default="dissimilarity",
-        help="what the intake heatmap shows of each school: its term of the "
-        "dissimilarity index, or the disadvantaged share of its intake",
-    )
+    add_travel_arguments(parser)
+    add_seat_arguments(parser, ROUND_UP)
+    add_disadvantage_argument(parser)
+    add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
     args = parser.parse_args()
 

@@ -1,7 +1,7 @@
 import pandas as pd
 
-from geo_model import car_displacement as cd
 from geo_model.measures.travel import MODES
+from geo_model.scripts import car_displacement as cd
 
 # --------------------------------------------------------------------------
 # run: against the real data folder

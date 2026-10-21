@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from geo_model import optimise as op
 from geo_model.analysis.search import DEFAULT_OBJECTIVES, bounds, objective_values
-from geo_model.dissimilarity import score_settings
 from geo_model.model.settings import DEFAULTS
+from geo_model.scripts import optimise as op
+from geo_model.scripts.dissimilarity import score_settings
 
 # A sample of no students, for the checks made before anything is scored.
 NO_STUDENTS = [

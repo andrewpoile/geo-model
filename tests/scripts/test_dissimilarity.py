@@ -1,11 +1,11 @@
 import pandas as pd
 import pytest
 
-from geo_model import dissimilarity as ds
 from geo_model.analysis.scoring import settings_matchings
 from geo_model.measures.segregation import dissimilarity_index
 from geo_model.model.settings import DEFAULTS, DISADVANTAGE_CHOICES
 from geo_model.model.students import disadvantaged_group
+from geo_model.scripts import dissimilarity as ds
 
 # --------------------------------------------------------------------------
 # run: against the real data folder

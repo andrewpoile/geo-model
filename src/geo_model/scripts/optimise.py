@@ -40,11 +40,19 @@ from geo_model.analysis.search import (
     objective_values,
     searchable,
 )
-from geo_model.cli import add_region_arguments
+from geo_model.cli import (
+    add_disadvantage_argument,
+    add_intake_argument,
+    add_progressivity_argument,
+    add_region_arguments,
+    add_seat_arguments,
+    add_seeds_argument,
+    add_travel_arguments,
+    add_workers_argument,
+)
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
-from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.dissimilarity import score_settings
+from geo_model.data.travel import load_nts_mode_shares
 from geo_model.measures.segregation import fsm_share, fsm_term
 from geo_model.measures.statistics import routes_t_test, t_test_label
 from geo_model.measures.summaries import (
@@ -56,7 +64,6 @@ from geo_model.model.routes import EmptyRouteSet
 from geo_model.model.settings import (
     DEFAULTS,
     DISADVANTAGE,
-    DISADVANTAGE_CHOICES,
     LINEAR_PROGRESSIVITY,
     ROUND_UP_SEATS,
     SEED,
@@ -77,6 +84,7 @@ from geo_model.plots.comparison import (
 from geo_model.plots.front import plot_front
 from geo_model.plots.maps import plot_map
 from geo_model.plots.style import INTAKE_MEASURES
+from geo_model.scripts.dissimilarity import score_settings
 
 # The search's folder within each region's, and the files written to it.
 OUT_DIR = Path("optimise")
@@ -518,7 +526,7 @@ def main() -> None:
         "samples, then plot and map the front's compromise setting against "
         "the same students without routes on held-out samples."
     )
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    add_seeds_argument(parser, N_SEEDS)
     parser.add_argument(
         "--held-out-seeds",
         type=int,
@@ -545,56 +553,12 @@ def main() -> None:
         help="candidate settings per generation",
     )
     parser.add_argument("--generations", type=int, default=GENERATIONS)
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=1,
-        help="processes to score candidates in, see `sweep`",
-    )
-    parser.add_argument(
-        "--years",
-        type=int,
-        nargs="+",
-        default=NTS_YEARS,
-        help="NTS years to take mode shares from, pooled when more than one",
-    )
-    parser.add_argument(
-        "--circuity",
-        type=float,
-        default=CIRCUITY,
-        help="road distance per straight-line metre, applied before banding",
-    )
-    parser.add_argument(
-        "--round-up-seats",
-        action=argparse.BooleanOptionalAction,
-        default=ROUND_UP_SEATS,
-        help="round each school's route seats up rather than to the nearest "
-        "seat, before they are split between its routes",
-    )
-    parser.add_argument(
-        "--linear-progressivity",
-        action=argparse.BooleanOptionalAction,
-        default=LINEAR_PROGRESSIVITY,
-        help="weight route seats by the linear profile (T + 1 - D) / T of "
-        "each district's IDACI decile D rather than by 1 / D",
-    )
-    parser.add_argument(
-        "--disadvantage",
-        choices=DISADVANTAGE_CHOICES,
-        default=DISADVANTAGE,
-        help="score: each LSOA's students are drawn disadvantaged in proportion "
-        "to its IDACI score, and routes carry only them; score-open: drawn the "
-        "same way, but routes carry every student of their district; decile: "
-        "every student of an LSOA at or below the decile is disadvantaged and "
-        "rides, the model as it was before",
-    )
-    parser.add_argument(
-        "--intake",
-        choices=list(INTAKE_MEASURES),
-        default="dissimilarity",
-        help="what the intake heatmap shows of each school: its term of the "
-        "dissimilarity index, or the disadvantaged share of its intake",
-    )
+    add_workers_argument(parser)
+    add_travel_arguments(parser)
+    add_seat_arguments(parser, ROUND_UP_SEATS)
+    add_progressivity_argument(parser)
+    add_disadvantage_argument(parser)
+    add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
     args = parser.parse_args()
 

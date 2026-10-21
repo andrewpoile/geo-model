@@ -14,11 +14,19 @@ import pandas as pd
 
 from geo_model.analysis.scoring import settings_matchings
 from geo_model.analysis.sweep import GRID, default_cell, sweep_tests, swept
-from geo_model.cli import add_region_arguments
+from geo_model.cli import (
+    add_disadvantage_argument,
+    add_intake_argument,
+    add_progressivity_argument,
+    add_region_arguments,
+    add_seat_arguments,
+    add_seeds_argument,
+    add_travel_arguments,
+    add_workers_argument,
+)
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
-from geo_model.data.travel import NTS_YEARS, load_nts_mode_shares
-from geo_model.dissimilarity import score_settings
+from geo_model.data.travel import load_nts_mode_shares
 from geo_model.measures.segregation import (
     fsm_share,
     fsm_term,
@@ -28,7 +36,6 @@ from geo_model.measures.travel import CIRCUITY, MODES, mode_change
 from geo_model.model.settings import (
     DEFAULTS,
     DISADVANTAGE,
-    DISADVANTAGE_CHOICES,
     LINEAR_PROGRESSIVITY,
     N_SEEDS,
     ROUND_UP_SEATS,
@@ -39,6 +46,7 @@ from geo_model.plots.comparison import plot_lorenz
 from geo_model.plots.maps import plot_map
 from geo_model.plots.style import INTAKE_MEASURES
 from geo_model.plots.sweep import plot_sweep
+from geo_model.scripts.dissimilarity import score_settings
 
 # The sweep's folder within each region's, and the files written to it.
 SWEEP_DIR = Path("sweep")
@@ -158,57 +166,13 @@ def main() -> None:
         description="Sweep each parameter of the secondary matching and score it "
         "with and without routes over the same fresh samples."
     )
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=1,
-        help="processes to score cells in, see `sweep`",
-    )
-    parser.add_argument(
-        "--years",
-        type=int,
-        nargs="+",
-        default=NTS_YEARS,
-        help="NTS years to take mode shares from, pooled when more than one",
-    )
-    parser.add_argument(
-        "--circuity",
-        type=float,
-        default=CIRCUITY,
-        help="road distance per straight-line metre, applied before banding",
-    )
-    parser.add_argument(
-        "--round-up-seats",
-        action=argparse.BooleanOptionalAction,
-        default=ROUND_UP_SEATS,
-        help="round each school's route seats up rather than to the nearest "
-        "seat, before they are split between its routes",
-    )
-    parser.add_argument(
-        "--linear-progressivity",
-        action=argparse.BooleanOptionalAction,
-        default=LINEAR_PROGRESSIVITY,
-        help="weight route seats by the linear profile (T + 1 - D) / T of "
-        "each district's IDACI decile D rather than by 1 / D",
-    )
-    parser.add_argument(
-        "--disadvantage",
-        choices=DISADVANTAGE_CHOICES,
-        default=DISADVANTAGE,
-        help="score: each LSOA's students are drawn disadvantaged in proportion "
-        "to its IDACI score, and routes carry only them; score-open: drawn the "
-        "same way, but routes carry every student of their district; decile: "
-        "every student of an LSOA at or below the decile is disadvantaged and "
-        "rides, the model as it was before",
-    )
-    parser.add_argument(
-        "--intake",
-        choices=list(INTAKE_MEASURES),
-        default="dissimilarity",
-        help="what the intake panels show of each school: its term of the "
-        "dissimilarity index, or the disadvantaged share of its intake",
-    )
+    add_seeds_argument(parser, N_SEEDS)
+    add_workers_argument(parser)
+    add_travel_arguments(parser)
+    add_seat_arguments(parser, ROUND_UP_SEATS)
+    add_progressivity_argument(parser)
+    add_disadvantage_argument(parser)
+    add_intake_argument(parser, list(INTAKE_MEASURES))
     parser.add_argument(
         "--map",
         action="store_true",

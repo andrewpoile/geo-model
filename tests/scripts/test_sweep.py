@@ -2,9 +2,9 @@ from dataclasses import replace
 
 import pandas as pd
 
-from geo_model import sweep as sw
 from geo_model.measures.travel import MODES
 from geo_model.model.settings import DEFAULTS
+from geo_model.scripts import sweep as sw
 
 # --------------------------------------------------------------------------
 # sweep: against the real data folder

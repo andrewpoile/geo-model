@@ -3,16 +3,16 @@ from dataclasses import replace
 
 import pytest
 
-from geo_model import build_prefs as bp
-from geo_model import car_displacement as cd
-from geo_model import dissimilarity as ds
-from geo_model import optimise as op
 from geo_model import output
-from geo_model import scenario_1 as s1
-from geo_model import sweep as sw
 from geo_model.data import regions as rg
 from geo_model.model.settings import DEFAULTS
 from geo_model.output import ROUTES_CSV, ROUTES_NPZ
+from geo_model.scripts import build_prefs as bp
+from geo_model.scripts import car_displacement as cd
+from geo_model.scripts import dissimilarity as ds
+from geo_model.scripts import optimise as op
+from geo_model.scripts import scenario_1 as s1
+from geo_model.scripts import sweep as sw
 
 # The plots `compare` writes for the scenarios an entry point compares.
 COMPARE_PNGS = [

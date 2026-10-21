@@ -34,7 +34,7 @@ uv run pytest --cov
 uv run pytest tests/model/test_matching.py::test_name
 ```
 
-Entry points are run as modules, e.g. `uv run python -m geo_model` (the parameter sweep in sweep.py, also `uv run geo-model`), `uv run python -m geo_model.optimise`, `uv run python -m geo_model.scenario_1`. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge` (see `add_region_arguments` in cli.py).
+Entry points are the modules of `src/geo_model/scripts/`, run as `uv run python -m geo_model.scripts.<name>`, e.g. `uv run python -m geo_model.scripts.optimise`; `uv run python -m geo_model` (also `uv run geo-model`) runs the parameter sweep. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge`; the options several scripts share are added by the `add_*` functions of cli.py.
 
 ## Data, outputs and tests
 
@@ -46,13 +46,13 @@ The pipeline, in dependency order:
 
 1. The `data` subpackage reads `data/` into GeoDataFrames of LSOAs (districts) and schools for the chosen LAs: `sources.py` holds every path, `areas.py`, `schools.py` and `travel.py` the readers, and `regions.py` the grouping of LAs into regions.
 2. The `model` subpackage simulates one instance. `settings.py` holds the seed, the default sample count, the route and preference defaults and `Settings`/`DEFAULTS`; `DISADVANTAGE` (`--disadvantage`) sets who is disadvantaged and who may ride.
-3. `model/students.py` samples students per seed, `model/preferences.py` builds their ranked preferences over schools and school-route bundles, and the schools' priorities, and `model/routes.py` builds the route network (which districts get routes to which schools, and the seats on each) from a `Settings` of route parameters. `build_prefs.py` writes one instance of both phases.
+3. `model/students.py` samples students per seed, `model/preferences.py` builds their ranked preferences over schools and school-route bundles, and the schools' priorities, and `model/routes.py` builds the route network (which districts get routes to which schools, and the seats on each) from a `Settings` of route parameters. `scripts/build_prefs.py` writes one instance of both phases.
 4. `model/matching.py` runs Deferred Acceptance with Transportation (numba `@njit`), the mechanism defined formally in agent_docs/matching.md.
 5. The `measures` subpackage holds the shared measures: `segregation.py` (dissimilarity index, Gini), `travel.py` (expected travel modes), `statistics.py` (t-tests with Holm correction) and `summaries.py` (tables of one setting's rows).
-6. The `analysis` subpackage holds what the analyses share: `scoring.py` matches and scores each sample with and without routes over the same students, `sweep.py` holds `GRID`, and `search.py` the NSGA-II problem. `dissimilarity.py`'s `score_settings` scores every sample at one setting.
+6. The `analysis` subpackage holds what the analyses share: `scoring.py` matches and scores each sample with and without routes over the same students, `sweep.py` holds `GRID`, and `search.py` the NSGA-II problem. `scripts/dissimilarity.py`'s `score_settings` scores every sample at one setting.
 7. The `plots` subpackage draws every figure: `style.py` holds the palettes, `comparison.py` draws one setting with routes against without, `sweep.py` the sweep's columns, `maps.py` the map and `front.py` the Pareto front. Each figure is written through `save` in output.py.
 
-Analyses built on top of that pipeline:
+Analyses built on top of that pipeline, in `scripts/`:
 - `sweep.py`: one-at-a-time sweep of each parameter in `GRID` around `DEFAULTS`, with plots and maps; `__main__.py` only runs it.
 - `car_displacement.py`: the change in travel mode routes induce (National Travel Survey mode shares).
 - `optimise.py`: NSGA-II (pymoo) search over route parameters, trading off segregation against modal shift.
