@@ -28,16 +28,17 @@ htmlcov/
 .DS_Store
 
 # Agent instructions
-agent_docs/
+/agent_docs/
 
-# Data
-data/
+# Data. This and the other folders of the repository root are anchored to it,
+# so src/geo_model/data, the package that reads it, is not ignored with it.
+/data/
 
 # Temporary files
-temp/
+/temp/
 
 # Simulation outputs, one folder per region
-output/
+/output/
 
 # Loose testing
 experiments.ipynb

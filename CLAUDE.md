@@ -31,29 +31,30 @@ uv run ruff format --check .
 uv run ruff check .
 uv run pyrefly check
 uv run pytest --cov
-uv run pytest tests/test_matching.py::test_name
+uv run pytest tests/model/test_matching.py::test_name
 ```
 
-Entry points are run as modules, e.g. `uv run python -m geo_model` (the parameter sweep in sweep.py, also `uv run geo-model`), `uv run python -m geo_model.optimise`, `uv run python -m geo_model.scenario_1`. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge` (see `add_region_arguments` in utils.py).
+Entry points are the modules of `src/geo_model/scripts/`, run as `uv run python -m geo_model.scripts.<name>`, e.g. `uv run python -m geo_model.scripts.run --min-distance 4828`; `uv run python -m geo_model` (also `uv run geo-model`) runs the parameter sweep. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge`; the options several scripts share are added by the `add_*` functions of cli.py.
 
 ## Data, outputs and tests
 
-`data/`, `output/`, `temp/` and `agent_docs/` are gitignored, so they exist only locally. Tests that need `data/` take the session fixtures in `tests/conftest.py`, which load it once and skip where it is absent, as in CI, so a green CI run does not cover them: run the suite locally. Each region writes to `output/<LA names joined by "+", alphabetical>/` (`region_dir` in utils.py). `temp/population_lsoa.pkl` caches the ONS population estimates (`load_data.POPULATION_CACHE`); delete it if those inputs change.
+`data/`, `output/`, `temp/` and `agent_docs/` are gitignored, so they exist only locally. Tests that need `data/` take the session fixtures in `tests/conftest.py`, which load it once and skip where it is absent, as in CI, so a green CI run does not cover them: run the suite locally. Tests mirror the package and run in pytest's importlib mode, so a test file cannot import another; builders several folders share live in `tests/shared/frames.py`, on pytest's `pythonpath`. Each region writes to `output/<LA names joined by "+", alphabetical>/` (`region_dir` in output.py). `temp/population_lsoa.pkl` caches the ONS population estimates (`POPULATION_CACHE` in data/sources.py); delete it if those inputs change.
 
 ## Architecture
 
-The pipeline, in dependency order:
+The package is layered, each layer importing only from those above it, and no library module imports a script:
 
-1. `load_data.py` reads `data/` into GeoDataFrames of LSOAs (districts) and schools for the chosen LAs.
-2. `build_routes.py` builds the route network (which districts get routes to which schools, and the seats on each) from a `Settings` of route parameters. `DISADVANTAGE` here (`--disadvantage`) sets who is disadvantaged and who may ride.
-3. `build_prefs.py` samples students per seed and builds their ranked preferences over schools and school-route bundles, and the schools' priorities.
-4. `matching.py` runs Deferred Acceptance with Transportation (numba `@njit`), the mechanism defined formally in agent_docs/matching.md.
-5. `dissimilarity.py` holds `Settings`/`DEFAULTS`, draws the samples, and matches and scores each one with and without routes over the same students. `utils.py` holds the shared measures (dissimilarity index, Gini, expected travel modes, t-tests with Holm correction) and region handling.
+1. `data`: reads `data/` into GeoDataFrames of LSOAs (districts) and schools for the chosen LAs. `sources.py` holds every path, `areas.py`, `schools.py` and `travel.py` the readers, `regions.py` the grouping of LAs into regions.
+2. `model`: simulates one instance. `settings.py` holds the seed, the default sample count, the route and preference defaults and `Settings`/`DEFAULTS`, and `DISADVANTAGE` (`--disadvantage`), who is disadvantaged and who may ride. `students.py` samples students per seed, `preferences.py` ranks school-route bundles for students and students for schools, `routes.py` builds the route network from a `Settings`, and `matching.py` runs Deferred Acceptance with Transportation (numba `@njit`, defined formally in agent_docs/matching.md).
+3. `measures`: `segregation.py` (dissimilarity index, Gini), `travel.py` (expected travel modes), `statistics.py` (t-tests with Holm correction) and `summaries.py` (tables of one setting's rows).
+4. `analysis`: `scoring.py` matches and scores a sample with and without routes, `sweep.py` holds `GRID`, `search.py` the NSGA-II problem.
+5. `plots`: every figure, each written through `save` in output.py.
+6. `scripts`: the entry points. `run.py` is the atom: it scores one setting (`score_settings`) and writes, plots and reports it (`run`), every `Settings` field an option. The rest build on it and import no other script:
+   - `scenario_1.py` to `scenario_3.py`: presets of `run.main`, fixed hand-built route networks.
+   - `sweep.py`: one-at-a-time sweep of each parameter in `GRID` around `DEFAULTS`, every cell scored with `score_settings`; `__main__.py` only runs it.
+   - `optimise.py`: NSGA-II search over route parameters, trading segregation off against modal shift, every candidate scored with `score_settings` and the compromise run with `run`.
+   - `build_prefs.py`: writes one instance of both phases.
 
-Analyses built on top of that pipeline:
-- `sweep.py`: one-at-a-time sweep of each parameter in `GRID` around `DEFAULTS`, with plots and maps; `__main__.py` only runs it.
-- `car_displacement.py`: the change in travel mode routes induce (National Travel Survey mode shares).
-- `optimise.py`: NSGA-II (pymoo) search over route parameters, trading off segregation against modal shift.
-- `scenario_1.py`, `scenario_2.py` and `scenario_3.py`: fixed hand-built route networks, scored and plotted with optimise's plots. Scenarios 2 and 3 reuse scenario 1's runner.
+`cli.py` adds the options several scripts share; `output.py` holds the output folders and writers.
 
 Every comparison between "with routes" and "without routes" uses the same student samples and seeds, so differences come from the routes alone. Keep this when changing sampling or scoring.

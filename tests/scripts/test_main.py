@@ -1,0 +1,116 @@
+import sys
+from dataclasses import replace
+
+import pytest
+
+from geo_model import output
+from geo_model.data import regions as rg
+from geo_model.model.settings import DEFAULTS
+from geo_model.output import ROUTES_CSV, ROUTES_NPZ
+from geo_model.scripts import build_prefs as bp
+from geo_model.scripts import optimise as op
+from geo_model.scripts import run as rn
+from geo_model.scripts import scenario_1 as s1
+from geo_model.scripts import scenario_2 as s2
+from geo_model.scripts import scenario_3 as s3
+from geo_model.scripts import sweep as sw
+
+# What `run` writes of the setting it runs, for every entry point that runs one.
+RUN_FILES = [
+    ROUTES_CSV,
+    ROUTES_NPZ,
+    rn.RESULTS_CSV,
+    rn.SCHOOLS_CSV,
+    rn.MODES_CSV,
+    rn.ROUTE_UTILISATION_CSV,
+    rn.DISTRICTS_CSV,
+    rn.DISSIMILARITY_PNG,
+    rn.UNASSIGNED_PNG,
+    rn.INTAKE_PNG,
+    rn.MODES_PNG,
+    rn.LORENZ_PNG,
+    rn.MAP_PNG,
+    rn.ROUTES_PNG,
+    rn.LOCALS_PNG,
+]
+
+# Two parameters of three cells in all, so the sweep scores and plots quickly.
+SMALL_GRID = {
+    "capacity_scale": [DEFAULTS, replace(DEFAULTS, capacity_scale=25.0)],
+    "decile": [DEFAULTS],
+}
+
+
+# --------------------------------------------------------------------------
+# main: every entry point, on minimal arguments against the real data folder
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("module", "argv", "folder", "written"),
+    [
+        (bp, [], "", [bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ]),
+        (
+            op,
+            ["--seeds", "1", "--held-out-seeds", "1"]
+            + ["--pop-size", "4", "--generations", "2"],
+            op.OUT_DIR,
+            [op.EVALUATIONS_CSV, op.FRONT_CSV, op.FRONT_PNG, *RUN_FILES],
+        ),
+        (rn, ["--seeds", "2"], rn.OUT_DIR, RUN_FILES),
+        (
+            s1,
+            ["--seeds", "2"],
+            s1.OUT_DIR,
+            RUN_FILES,
+        ),
+        (s2, ["--seeds", "2"], s2.OUT_DIR, RUN_FILES),
+        (s3, ["--seeds", "2"], s3.OUT_DIR, RUN_FILES),
+        (
+            sw,
+            ["--seeds", "2", "--map", "--lorenz"],
+            sw.SWEEP_DIR,
+            [
+                sw.RESULTS_CSV,
+                sw.SCHOOLS_CSV,
+                sw.MODES_CSV,
+                sw.TESTS_CSV,
+                *(f"{parameter}.png" for parameter in SMALL_GRID),
+                sw.PLOT_PNG,
+                sw.MAP_PNG,
+                sw.LORENZ_PNG,
+            ],
+        ),
+    ],
+    ids=[
+        "build_prefs",
+        "optimise",
+        "run",
+        "scenario_1",
+        "scenario_2",
+        "scenario_3",
+        "sweep",
+    ],
+)
+def test_main_writes_its_outputs_and_nothing_else(
+    module, argv, folder, written, areas, schools, tmp_path, monkeypatch
+):
+    # The real output folder holds the user's results, so the region is
+    # written to a temporary one, from the frames the session has loaded.
+    monkeypatch.setattr(output, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(rg, "load_areas", lambda las: areas)
+    # Every script that loads a region's schools, a preset loading them in run.
+    for loader in (bp, op, rn, sw):
+        monkeypatch.setattr(loader, "load_schools", lambda las: schools)
+    monkeypatch.setattr(sys, "argv", [module.__name__, *argv])
+    if module is sw:
+        # Optimise searches the parameters GRID sweeps, so only the sweep's
+        # own run takes the small grid.
+        monkeypatch.setattr(sw, "GRID", SMALL_GRID)
+
+    module.main()
+
+    out_dir = tmp_path / "Southampton" / folder
+    assert sorted(path.name for path in out_dir.iterdir() if path.is_file()) == sorted(
+        written
+    )
