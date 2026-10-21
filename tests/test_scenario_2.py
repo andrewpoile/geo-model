@@ -17,8 +17,10 @@ def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(
 
     routes = settings_routes(s2.SCENARIO, areas, secondary, s1.ROUND_UP)
 
-    # One route per school, each from a district of its own, the districts
-    # being the region's of lowest IDACI rank, as many as there are schools.
+    # One route per school, each from a district of its own. The districts are
+    # the most deprived that can each have a school of their own beyond the
+    # minimum distance, as many as there are schools. In the default region
+    # those of lowest IDACI rank can, so none is passed over for the next.
     assert sorted(routes["school_idx"]) == list(range(len(secondary)))
     assert routes["district_idx"].is_unique
     assert set(routes["district_idx"]) == set(targets.index)
