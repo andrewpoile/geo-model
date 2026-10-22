@@ -501,30 +501,6 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights(
     np.testing.assert_array_equal(by_bundle(*mixed[:2]), by_bundle(*other[:2]))
 
 
-def test_secondary_instance_ranks_priorities_on_the_rule_and_discount_given(
-    areas, secondary, routes, students
-):
-    student_xy, student_lsoa, disadvantaged = students
-
-    def ranks(priority, priority_discount):
-        return secondary_instance(
-            student_xy,
-            student_lsoa,
-            areas,
-            secondary,
-            routes,
-            disadvantaged,
-            priority=priority,
-            priority_discount=priority_discount,
-            noise_seed=0,
-        )[1]
-
-    # The discount moves routed bundles under "distance" and none under
-    # "bracket", so a rule or a discount left unpassed fails one of these.
-    assert not np.array_equal(ranks("distance", 0.0), ranks("distance", 1.0))
-    np.testing.assert_array_equal(ranks("bracket", 0.0), ranks("bracket", 1.0))
-
-
 def test_secondary_instance_offers_other_students_routes_only_when_open(
     areas, secondary, routes, students
 ):

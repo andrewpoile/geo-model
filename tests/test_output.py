@@ -16,3 +16,11 @@ def test_region_dir_names_a_region_for_its_authorities_in_order():
     assert region_dir(["Southampton"], anon=True) == Path(
         "output/Southampton/anonymised"
     )
+    # A rule but the default writes within that, so two rules never write
+    # over each other.
+    assert region_dir(["Southampton"], priority="bracket") == Path(
+        "output/Southampton/bracket"
+    )
+    assert region_dir(["Southampton"], anon=True, priority="bracket") == Path(
+        "output/Southampton/anonymised/bracket"
+    )

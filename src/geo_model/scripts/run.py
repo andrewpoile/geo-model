@@ -155,8 +155,8 @@ def score_settings(
         tuple[list[dict], list[dict], list[dict], list[dict]]: The scenario,
         school, mode and route rows `score_sample` returns for every sample,
         each tagged with "seed", the scenario rows with "n_routes" and
-        "priority" as well, so every score row written records the rule that
-        ranked it. The route rows are empty unless `utilisation`.
+        "priority" as well, so results.csv and sweep.csv record the rule that
+        ranked them. The route rows are empty unless `utilisation`.
     """
     print(f"Scoring {settings} under priority {priority!r}")
     if routes is None:
@@ -197,7 +197,7 @@ def score_settings(
 
 
 def load_region(
-    las: list[str], areas: gpd.GeoDataFrame, anon: bool
+    las: list[str], areas: gpd.GeoDataFrame, anon: bool, priority: str
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Path]:
     """A region's districts and secondary schools, and the folder its
     outputs are written to, anonymised together where `anon`, so an
@@ -213,6 +213,9 @@ def load_region(
         anon (bool): Pass both frames through `anonymise` and write to the
         region's ANON_DIR, as --anon asks.
 
+        priority (str): Passed to `region_dir`, so a run under each rule
+        writes to a folder of its own.
+
     Returns:
         tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Path]: The districts, the
         secondary schools as `load_schools` returns them, and the folder
@@ -221,7 +224,7 @@ def load_region(
     _, secondary_schools = load_schools(las)
     if anon:
         areas, secondary_schools = anonymise(areas, secondary_schools)
-    return areas, secondary_schools, region_dir(las, anon)
+    return areas, secondary_schools, region_dir(las, anon, priority)
 
 
 def run(
@@ -484,7 +487,9 @@ def main(
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")
-        areas, secondary_schools, folder = load_region(las, areas, args.anon)
+        areas, secondary_schools, folder = load_region(
+            las, areas, args.anon, args.priority
+        )
         samples = list(student_samples(areas, args.seeds))
         run(
             settings,

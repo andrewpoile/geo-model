@@ -146,7 +146,8 @@ def build(
     out_dir.mkdir(parents=True, exist_ok=True)
     # The district each student was drawn in and whether they are
     # disadvantaged are saved alongside, so a matching of this instance can be
-    # scored for segregation on its own.
+    # scored for segregation on its own, and the rule the priorities follow,
+    # so the instance says how it was ranked.
     np.savez_compressed(
         out_dir / OUTPUT_NPZ,
         primary_student_preferences=primary_student_preferences,
@@ -159,6 +160,7 @@ def build(
         secondary_student_district=secondary_student_lsoa,
         primary_student_disadvantaged=primary_student_disadvantaged,
         secondary_student_disadvantaged=secondary_student_disadvantaged,
+        priority=priority,
     )
 
 
@@ -177,7 +179,7 @@ def main() -> None:
             areas,
             primary_schools,
             secondary_schools,
-            region_dir(las),
+            region_dir(las, priority=args.priority),
             priority=args.priority,
         )
 

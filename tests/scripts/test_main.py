@@ -1,6 +1,8 @@
 import sys
 from dataclasses import replace
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from matplotlib.figure import Figure
@@ -8,7 +10,7 @@ from matplotlib.text import Text
 
 from geo_model import output
 from geo_model.data import regions as rg
-from geo_model.model.settings import DEFAULTS
+from geo_model.model.settings import DEFAULTS, PRIORITY
 from geo_model.output import ANON_DIR, ROUTES_CSV, ROUTES_NPZ
 from geo_model.scripts import build_prefs as bp
 from geo_model.scripts import optimise as op
@@ -42,10 +44,14 @@ SMALL_GRID = {
     "capacity_scale": [DEFAULTS, replace(DEFAULTS, capacity_scale=25.0)],
     "decile": [DEFAULTS],
 }
+# Run, the sweep, the search and build_prefs run under the bracket rule, so
+# each main is seen to hand it on, and the scenarios under the default.
+BRACKET = ["--priority", "bracket"]
 # Minimal arguments for the search, run both named and anonymised.
 OPTIMISE_ARGV = [
     *["--seeds", "1", "--held-out-seeds", "1"],
     *["--pop-size", "4", "--generations", "2"],
+    *BRACKET,
 ]
 # The columns naming a school, district or authority, the only ones an
 # anonymised run writes otherwise than a named one.
@@ -60,22 +66,28 @@ NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
 @pytest.mark.parametrize(
     ("module", "argv", "folder", "written", "anon_argv"),
     [
-        (bp, [], "", [bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ], None),
+        (bp, BRACKET, "bracket", [bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ], None),
         (
             op,
             OPTIMISE_ARGV,
-            op.OUT_DIR,
+            Path("bracket") / op.OUT_DIR,
             [op.EVALUATIONS_CSV, op.FRONT_CSV, op.FRONT_PNG, *RUN_FILES],
             [*OPTIMISE_ARGV, "--anon"],
         ),
-        (rn, ["--seeds", "2"], rn.OUT_DIR, RUN_FILES, ["--seeds", "2", "--anon"]),
+        (
+            rn,
+            ["--seeds", "2", *BRACKET],
+            Path("bracket") / rn.OUT_DIR,
+            RUN_FILES,
+            ["--seeds", "2", "--anon", *BRACKET],
+        ),
         (s1, ["--seeds", "2"], s1.OUT_DIR, RUN_FILES, None),
         (s2, ["--seeds", "2"], s2.OUT_DIR, RUN_FILES, None),
         (s3, ["--seeds", "2"], s3.OUT_DIR, RUN_FILES, None),
         (
             sw,
-            ["--seeds", "2", "--map", "--lorenz"],
-            sw.SWEEP_DIR,
+            ["--seeds", "2", "--map", "--lorenz", *BRACKET],
+            Path("bracket") / sw.SWEEP_DIR,
             [
                 sw.RESULTS_CSV,
                 sw.SCHOOLS_CSV,
@@ -86,7 +98,7 @@ NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
                 sw.MAP_PNG,
                 sw.LORENZ_PNG,
             ],
-            ["--seeds", "2", "--lorenz", "--anon"],
+            ["--seeds", "2", "--lorenz", "--anon", *BRACKET],
         ),
     ],
     ids=[
@@ -121,6 +133,19 @@ def test_main_writes_its_outputs_and_nothing_else(
     assert sorted(path.name for path in out_dir.iterdir() if path.is_file()) == sorted(
         written
     )
+    # Every row scored, and the instance built, records the rule it ran
+    # under.
+    rule = "bracket" if argv[-len(BRACKET) :] == BRACKET else PRIORITY
+    if module is bp:
+        with np.load(out_dir / bp.OUTPUT_NPZ) as built:
+            recorded = [{str(built["priority"])}]
+    else:
+        recorded = [
+            set(rows["priority"])
+            for rows in map(pd.read_csv, out_dir.glob("*.csv"))
+            if "priority" in rows
+        ]
+    assert recorded and all(rules == {rule} for rules in recorded)
     if anon_argv is None:
         return
 

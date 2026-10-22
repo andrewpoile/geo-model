@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from geo_model.model.settings import PRIORITY
+
 # Read by the type checker alone, so writing routes needs no plotting library.
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -20,7 +22,7 @@ ROUTES_CSV = "secondary_routes.csv"
 ROUTES_NPZ = "secondary_routes.npz"
 
 
-def region_dir(las: list[str], anon: bool = False) -> Path:
+def region_dir(las: list[str], anon: bool = False, priority: str = PRIORITY) -> Path:
     """The folder a region's outputs are written to: its local authorities'
     names, as the register spells them, joined by "+" in alphabetical order.
 
@@ -30,11 +32,17 @@ def region_dir(las: list[str], anon: bool = False) -> Path:
         anon (bool, optional): The region's ANON_DIR instead, for an
         anonymised run. Defaults to False.
 
+        priority (str, optional): One of PRIORITY_CHOICES. Any rule but
+        PRIORITY writes to a folder of its name within that, so runs under
+        two rules never write over each other. Defaults to PRIORITY.
+
     Returns:
         Path: A folder in OUTPUT_DIR.
     """
     folder = OUTPUT_DIR / "+".join(sorted(las))
-    return folder / ANON_DIR if anon else folder
+    if anon:
+        folder = folder / ANON_DIR
+    return folder if priority == PRIORITY else folder / priority
 
 
 def save_routes(routes: pd.DataFrame, out_dir: Path) -> None:

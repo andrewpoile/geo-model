@@ -210,7 +210,9 @@ def main() -> None:
     parameters = swept(GRID, args.disadvantage, args.priority)
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
     for las, areas in regions(args.la, args.merge):
-        areas, secondary_schools, folder = load_region(las, areas, args.anon)
+        areas, secondary_schools, folder = load_region(
+            las, areas, args.anon, args.priority
+        )
         out_dir = folder / SWEEP_DIR
         samples = list(student_samples(areas, args.seeds))
 

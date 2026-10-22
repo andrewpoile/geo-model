@@ -178,7 +178,8 @@ def optimise(
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]: Every setting scored, one row each
-        with its "generation", parameter values, objectives and "feasible";
+        with its "generation", parameter values, objectives, "feasible" and
+        "priority", the rule it was scored under;
         and the feasible settings on the front, sorted by the first
         objective. Also written to EVALUATIONS_CSV and FRONT_CSV in
         `out_dir`.
@@ -219,7 +220,7 @@ def optimise(
         )
         minimize(problem, NSGA2(pop_size=pop_size), ("n_gen", generations), seed=SEED)
 
-    evaluations = pd.DataFrame(problem.evaluations)
+    evaluations = pd.DataFrame(problem.evaluations).assign(priority=priority)
     feasible = evaluations[evaluations["feasible"]]
     if feasible.empty:
         raise ValueError(
@@ -316,8 +317,9 @@ def search(
         + ", ".join(f"{name} {value:.3f}" for name, value in reference.items())
     )
     chosen = compromise(front, args.objectives)
-    print("Compromise setting:")
-    print(chosen.round(3).to_string())
+    print(f"Compromise setting, under priority {chosen['priority']!r}:")
+    # The rule is text, which a row cannot be rounded with.
+    print(chosen.drop("priority").round(3).to_string())
 
     print(f"At the compromise, on {len(held_out)} held-out samples:")
     run(
@@ -401,7 +403,9 @@ def main() -> None:
 
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
-        areas, secondary_schools, folder = load_region(las, areas, args.anon)
+        areas, secondary_schools, folder = load_region(
+            las, areas, args.anon, args.priority
+        )
         search(args, las, areas, secondary_schools, shares, folder / OUT_DIR)
 
 

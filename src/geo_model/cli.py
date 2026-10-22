@@ -10,6 +10,7 @@ from geo_model.model.settings import (
     LINEAR_PROGRESSIVITY,
     PRIORITY,
     PRIORITY_CHOICES,
+    PRIORITY_DISCOUNT,
     Settings,
 )
 from geo_model.output import ANON_DIR, OUTPUT_DIR
@@ -164,9 +165,11 @@ def add_priority_argument(parser: argparse.ArgumentParser) -> None:
         choices=PRIORITY_CHOICES,
         default=PRIORITY,
         help="distance: each school ranks every student by distance, a routed "
-        "student's taken down by the priority discount; bracket: every routed "
-        "student and every student of the school's own district first, "
-        "everyone else after, each by distance, the model as it was before",
+        f"student's taken down by the priority discount, {PRIORITY_DISCOUNT} "
+        "unless --priority-discount, the sweep or the search sets it; bracket: "
+        "every routed student and every student of the school's own district "
+        "first, everyone else after, each by distance, the model as it was "
+        f"before, written to {OUTPUT_DIR}/<NAME>/bracket",
     )
 
 
