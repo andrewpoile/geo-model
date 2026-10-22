@@ -67,6 +67,33 @@ def test_build_writes_a_consistent_instance_for_both_phases(areas, schools, tmp_
         assert (built["secondary_student_preferences"][..., 1] > -1).any()
 
 
+def test_build_ranks_both_phases_under_the_rule_given(
+    areas, schools, tmp_path, monkeypatch
+):
+    rules = {}
+
+    def rank_primary(*args, priority, **kwargs):
+        rules["primary"] = priority
+        return np.empty((0, 0, 2), dtype=np.int32), np.empty((0, 0), dtype=np.int32)
+
+    def rank_secondary(*args, priority, **kwargs):
+        rules["secondary"] = priority
+        return (
+            np.empty((0, 0, 2), dtype=np.int32),
+            np.empty((0, 0), dtype=np.int32),
+            np.empty(0, dtype=np.int32),
+            np.empty(0, dtype=np.int32),
+        )
+
+    monkeypatch.setattr(bp, "rank_bundles", rank_primary)
+    monkeypatch.setattr(bp, "secondary_instance", rank_secondary)
+    primary, secondary = schools
+
+    bp.build(areas, primary, secondary, tmp_path, priority="bracket")
+
+    assert rules == {"primary": "bracket", "secondary": "bracket"}
+
+
 def test_build_is_reproducible_from_the_seed(areas, schools, tmp_path):
     with (
         np.load(build(areas, schools, tmp_path / "first") / bp.OUTPUT_NPZ) as first,

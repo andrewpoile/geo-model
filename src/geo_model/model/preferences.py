@@ -10,6 +10,9 @@ from geo_model.model.settings import (
     DISADVANTAGED_ROUTE_DISCOUNT,
     PERFORMANCE_WEIGHT,
     PREFERENCE_NOISE,
+    PRIORITY,
+    PRIORITY_CHOICES,
+    PRIORITY_DISCOUNT,
     ROUTE_DISCOUNT,
 )
 
@@ -37,6 +40,8 @@ def rank_bundles(
     performance_weight: ArrayLike = 0.0,
     route_discount: ArrayLike = 0.0,
     route_eligible: ArrayLike = True,
+    priority: str = PRIORITY,
+    priority_discount: float = PRIORITY_DISCOUNT,
     noise_scale: float = 0.0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -64,10 +69,14 @@ def rank_bundles(
     negative for a school scoring above average and would turn a route into a
     penalty. A bundle therefore never ranks below the same school without one.
 
-    School priorities carry the model's two brackets. The top bracket holds
-    every routed bundle to the school, those of eligible students alone, and
-    every student living in the school's own district, the bottom bracket
-    holds the routeless bundles of everyone else, and distance orders both.
+    School priorities follow `priority`. Under "distance" a school orders every
+    bundle by the student's distance, a routed bundle's taken down by
+    `priority_discount`, a tie going to the nearer on the true distance. Under
+    "bracket" they carry the model's two brackets: the top holds every routed
+    bundle to the school, those of eligible students alone, and every student
+    living in the school's own district, the bottom the routeless bundles of
+    everyone else, and distance orders both. A tie either rule leaves goes to
+    the routeless bundle, then to the lower route and student index.
     Every bundle takes its own rank, since the mechanism compares ranks across
     the whole route axis when it evicts. The mechanism only ever reads the
     rank of the bundle a student proposes, so each rank is returned beside
@@ -85,7 +94,7 @@ def rank_bundles(
 
         school_district (np.ndarray): Positional index of the district each
         school sits in, aligned with `school_xy` and indexed the same way as
-        `student_district`.
+        `student_district`. Read by the "bracket" priority alone.
 
         route_district (np.ndarray): District each route leaves, shape
         (n_routes,). A route is identified by its position in this array, the
@@ -113,6 +122,15 @@ def rank_bundles(
         route_eligible (ArrayLike, optional): Whether a student may take the
         routes leaving their district, one for every student or one per
         student. Defaults to True.
+
+        priority (str, optional): One of PRIORITY_CHOICES, the rule school
+        priorities follow. Defaults to PRIORITY.
+
+        priority_discount (float, optional): Share of a routed student's
+        distance a school's priority takes off under "distance", in [0, 1].
+        0 ranks a routed bundle on its true distance, 1 as if the student
+        lived at the school. Student preferences are unaffected. Defaults to
+        PRIORITY_DISCOUNT.
 
         noise_scale (float, optional): Standard deviation of Gaussian noise
         added to the combined preference cost, measured in units of that cost
@@ -157,6 +175,14 @@ def rank_bundles(
         raise ValueError(
             f"route_discount must lie in [0, 1], got values from "
             f"{route_discount.min()} to {route_discount.max()}."
+        )
+    if priority not in PRIORITY_CHOICES:
+        raise ValueError(
+            f"priority must be one of {PRIORITY_CHOICES}, got {priority!r}."
+        )
+    if not 0.0 <= priority_discount <= 1.0:
+        raise ValueError(
+            f"priority_discount must lie in [0, 1], got {priority_discount}."
         )
 
     student_district = np.asarray(student_district, dtype=np.int64)
@@ -223,13 +249,19 @@ def rank_bundles(
             for route in routes
         ]
         bundle_student = np.concatenate([np.arange(n_students), *riders])
-        bracket = np.concatenate(
-            [
-                np.where(student_district == school_district[school], 0, 1),
-                *(np.zeros(len(r), dtype=np.int64) for r in riders),
-            ]
-        )
-        order = np.lexsort((distances[bundle_student, school], bracket))
+        distance = distances[bundle_student, school]
+        routed = np.arange(len(bundle_student)) >= n_students
+        # Each rule sorts on a key of its own, the true distance breaking its
+        # ties.
+        if priority == "bracket":
+            key = np.where(
+                routed | (student_district[bundle_student] == school_district[school]),
+                0,
+                1,
+            )
+        else:
+            key = np.where(routed, 1 - priority_discount, 1.0) * distance
+        order = np.lexsort((distance, key))
         rank = np.empty(len(order), dtype=np.int32)
         rank[order] = np.arange(len(order), dtype=np.int32)
 
@@ -285,11 +317,11 @@ def district_index(schools: pd.DataFrame, areas: pd.DataFrame) -> np.ndarray:
 
     Students carry the positional index of the area they were sampled in, so a
     school's district has to be expressed the same way before the two can be
-    compared for the local priority bracket.
+    compared, to find the students local to a school.
 
     A school run by the authority can stand just over the boundary in a
     neighbouring one, in a district the model does not hold. Such a school takes
-    -1, an index no student carries, so nobody holds local priority there.
+    -1, an index no student carries, so no student is local to it.
 
     Args:
         schools (pd.DataFrame): Schools carrying "LSOA21CD" and
@@ -308,9 +340,8 @@ def district_index(schools: pd.DataFrame, areas: pd.DataFrame) -> np.ndarray:
     outside = index.isna().to_numpy()
     if outside.any():
         print(
-            "Sits in a district the model does not hold, so no student holds "
-            "local priority there: "
-            + ", ".join(schools.loc[outside, "EstablishmentName"])
+            "Sits in a district the model does not hold, so no student is local "
+            "to it: " + ", ".join(schools.loc[outside, "EstablishmentName"])
         )
     return index.fillna(-1).to_numpy(dtype=np.int64)
 
@@ -376,6 +407,8 @@ def secondary_instance(
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
     disadvantage: str = DISADVANTAGE,
+    priority: str = PRIORITY,
+    priority_discount: float = PRIORITY_DISCOUNT,
     noise_scale: float = PREFERENCE_NOISE,
     noise_seed: int | np.random.SeedSequence | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -427,6 +460,12 @@ def secondary_instance(
         "score" only disadvantaged students may take a route, otherwise every
         student of its district may. Defaults to DISADVANTAGE.
 
+        priority (str, optional): Passed to `rank_bundles`. Defaults to
+        PRIORITY.
+
+        priority_discount (float, optional): Passed to `rank_bundles`.
+        Defaults to PRIORITY_DISCOUNT.
+
         noise_scale (float, optional): Passed to `rank_bundles`. Defaults to
         PREFERENCE_NOISE.
 
@@ -463,6 +502,8 @@ def secondary_instance(
             disadvantaged, disadvantaged_route_discount, route_discount
         ),
         route_eligible=disadvantaged if disadvantage == "score" else True,
+        priority=priority,
+        priority_discount=priority_discount,
         noise_scale=noise_scale,
         rng=None if noise_seed is None else np.random.default_rng(noise_seed),
     )

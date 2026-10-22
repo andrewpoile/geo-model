@@ -60,16 +60,26 @@ GRID = {
     "disadvantaged_route_discount": [
         replace(DEFAULTS, disadvantaged_route_discount=d / 10) for d in range(11)
     ],
+    # Inert under PRIORITY "bracket", so swept only under "distance": see
+    # `swept`.
+    "priority_discount": [
+        replace(DEFAULTS, priority_discount=d / 10) for d in range(11)
+    ],
 }
 
 
-def swept(grid: dict[str, list[Settings]], disadvantage: str) -> list[str]:
-    """The parameters of `grid` the sweep runs under `disadvantage`.
+def swept(
+    grid: dict[str, list[Settings]], disadvantage: str, priority: str
+) -> list[str]:
+    """The parameters of `grid` the sweep runs under `disadvantage` and
+    `priority`.
 
     Only under "score-open" does a student who is not disadvantaged ride a
     route: under "score" the disadvantaged alone ride, and under "decile"
     every student of a route's district is disadvantaged. Elsewhere the other
     students' route discount is inert, so it is swept under "score-open" alone.
+    The priority discount is read under "distance" alone, so it is not swept
+    under "bracket".
 
     Args:
         grid (dict[str, list[Settings]]): The cells of every parameter, as
@@ -77,10 +87,17 @@ def swept(grid: dict[str, list[Settings]], disadvantage: str) -> list[str]:
 
         disadvantage (str): One of DISADVANTAGE_CHOICES.
 
+        priority (str): One of PRIORITY_CHOICES.
+
     Returns:
         list[str]: Keys of `grid`, in its order.
     """
-    return [p for p in grid if p != "route_discount" or disadvantage == "score-open"]
+    return [
+        p
+        for p in grid
+        if (p != "route_discount" or disadvantage == "score-open")
+        and (p != "priority_discount" or priority != "bracket")
+    ]
 
 
 def sweep_tests(results: pd.DataFrame) -> pd.DataFrame:

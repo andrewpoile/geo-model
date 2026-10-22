@@ -28,6 +28,7 @@ from geo_model.cli import (
     add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
+    add_priority_argument,
     add_progressivity_argument,
     add_region_arguments,
     add_seat_arguments,
@@ -53,6 +54,7 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     LINEAR_PROGRESSIVITY,
     N_SEEDS,
+    PRIORITY,
     ROUND_UP_SEATS,
     Settings,
 )
@@ -104,6 +106,7 @@ def score_settings(
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
+    priority: str = PRIORITY,
     utilisation: bool = False,
     routes: pd.DataFrame | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
@@ -136,6 +139,9 @@ def score_settings(
         `score_sample`, and sets each sample's disadvantaged group with
         `disadvantaged_group` at `settings.decile`. Defaults to DISADVANTAGE.
 
+        priority (str, optional): Passed to `score_sample`. Defaults to
+        PRIORITY.
+
         utilisation (bool, optional): Keep the route rows. A row per seed
         and route would run to tens of millions over a sweep of a merged
         region's whole network, so they are kept only where read. Defaults
@@ -148,10 +154,11 @@ def score_settings(
     Returns:
         tuple[list[dict], list[dict], list[dict], list[dict]]: The scenario,
         school, mode and route rows `score_sample` returns for every sample,
-        each tagged with "seed", the scenario rows with "n_routes" as well.
-        The route rows are empty unless `utilisation`.
+        each tagged with "seed", the scenario rows with "n_routes" and
+        "priority" as well, so results.csv and sweep.csv record the rule that
+        ranked them. The route rows are empty unless `utilisation`.
     """
-    print(f"Scoring {settings}")
+    print(f"Scoring {settings} under priority {priority!r}")
     if routes is None:
         routes = settings_routes(
             settings, areas, secondary_schools, round_up, linear, disadvantage
@@ -175,8 +182,13 @@ def score_settings(
             disadvantaged_route_discount=settings.disadvantaged_route_discount,
             circuity=circuity,
             disadvantage=disadvantage,
+            priority=priority,
+            priority_discount=settings.priority_discount,
         )
-        rows += [{"seed": seed, "n_routes": len(routes), **r} for r in scenario_rows]
+        rows += [
+            {"seed": seed, "n_routes": len(routes), "priority": priority, **r}
+            for r in scenario_rows
+        ]
         school_rows += [{"seed": seed, **r} for r in intake_rows]
         mode_rows += [{"seed": seed, **r} for r in travel_rows]
         if utilisation:
@@ -185,7 +197,7 @@ def score_settings(
 
 
 def load_region(
-    las: list[str], areas: gpd.GeoDataFrame, anon: bool
+    las: list[str], areas: gpd.GeoDataFrame, anon: bool, priority: str
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Path]:
     """A region's districts and secondary schools, and the folder its
     outputs are written to, anonymised together where `anon`, so an
@@ -201,6 +213,9 @@ def load_region(
         anon (bool): Pass both frames through `anonymise` and write to the
         region's ANON_DIR, as --anon asks.
 
+        priority (str): Passed to `region_dir`, so a run under each rule
+        writes to a folder of its own.
+
     Returns:
         tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Path]: The districts, the
         secondary schools as `load_schools` returns them, and the folder
@@ -209,7 +224,7 @@ def load_region(
     _, secondary_schools = load_schools(las)
     if anon:
         areas, secondary_schools = anonymise(areas, secondary_schools)
-    return areas, secondary_schools, region_dir(las, anon)
+    return areas, secondary_schools, region_dir(las, anon, priority)
 
 
 def run(
@@ -223,6 +238,7 @@ def run(
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
+    priority: str = PRIORITY,
     measure: str = "dissimilarity",
     mapped: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -272,6 +288,9 @@ def run(
         `score_settings`, `district_rows`, `plot_lorenz` and
         `settings_matchings`. Defaults to DISADVANTAGE.
 
+        priority (str, optional): Passed to `score_settings` and
+        `settings_matchings`. Defaults to PRIORITY.
+
         measure (str, optional): A key of INTAKE_MEASURES, what the intake
         heatmap shows. Defaults to "dissimilarity".
 
@@ -302,6 +321,7 @@ def run(
             round_up,
             linear,
             disadvantage,
+            priority=priority,
             utilisation=True,
             routes=network,
         )
@@ -332,7 +352,8 @@ def run(
                 round_up,
                 linear,
                 disadvantage,
-                network,
+                priority=priority,
+                routes=network,
             ),
             out_dir / MAP_PNG,
         )
@@ -439,23 +460,36 @@ def main(
     add_seat_arguments(parser, round_up)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
+    add_priority_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
     add_anon_argument(parser)
     args = parser.parse_args()
-    # Checked here as well as by route_network, so a run fails before its
-    # region is loaded and sampled rather than after.
+    # Checked here as well as by route_network and rank_bundles, so a run
+    # fails before its region is loaded and sampled rather than after.
     if sum((args.shortest_only, args.bottleneck, args.largest_first)) > 1:
         parser.error(
             "--shortest-only, --bottleneck and --largest-first each keep one route "
             "per school by a rule of their own, so only one may be set"
+        )
+    if not 0 <= args.priority_discount <= 1:
+        parser.error("--priority-discount must lie in [0, 1]")
+    if (
+        args.priority == "bracket"
+        and args.priority_discount != settings.priority_discount
+    ):
+        parser.error(
+            "--priority-discount is read under --priority distance alone, so it "
+            "cannot be set with --priority bracket"
         )
 
     settings = Settings(**{f.name: getattr(args, f.name) for f in fields(Settings)})
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")
-        areas, secondary_schools, folder = load_region(las, areas, args.anon)
+        areas, secondary_schools, folder = load_region(
+            las, areas, args.anon, args.priority
+        )
         samples = list(student_samples(areas, args.seeds))
         run(
             settings,
@@ -468,8 +502,9 @@ def main(
             args.round_up_seats,
             args.linear_progressivity,
             args.disadvantage,
-            args.intake,
-            not args.anon,
+            priority=args.priority,
+            measure=args.intake,
+            mapped=not args.anon,
         )
 
 

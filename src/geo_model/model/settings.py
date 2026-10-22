@@ -106,6 +106,21 @@ ROUTE_DISCOUNT = 0.5
 DISADVANTAGED_PERFORMANCE_WEIGHT = PERFORMANCE_WEIGHT
 DISADVANTAGED_ROUTE_DISCOUNT = ROUTE_DISCOUNT
 
+# How a school orders the bundles proposed to it:
+#   "distance"  By the student's distance alone, a routed bundle's discounted
+#               by PRIORITY_DISCOUNT, a tie going to the nearer on the true
+#               distance.
+#   "bracket"   Every routed bundle and every student of the school's own
+#               district first, everyone else after, each bracket by
+#               distance: the model as it was before.
+PRIORITY_CHOICES = ("distance", "bracket")
+PRIORITY = "distance"
+
+# Share of a routed student's distance a school's priority takes off under
+# PRIORITY "distance". At 0.5 a routed bundle ranks as if the student lived
+# half as far away.
+PRIORITY_DISCOUNT = 0.5
+
 # Standard deviation of every student's taste for each school, added to its
 # preference cost, in the cost's units: those of a standard deviation of
 # distance. Drawn from a seed of the sample's own, so a sample ranks with the
@@ -192,6 +207,15 @@ class Settings:
     disadvantaged_route_discount: float = field(
         default=DISADVANTAGED_ROUTE_DISCOUNT,
         metadata={"help": "as --route-discount, for disadvantaged students"},
+    )
+    priority_discount: float = field(
+        default=PRIORITY_DISCOUNT,
+        metadata={
+            "help": (
+                "share of a routed student's distance a school's priority takes off, "
+                "under --priority distance"
+            )
+        },
     )
     shortest_only: bool = field(
         default=SHORTEST_ROUTE_ONLY,

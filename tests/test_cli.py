@@ -8,6 +8,7 @@ from geo_model.cli import (
     add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
+    add_priority_argument,
     add_progressivity_argument,
     add_region_arguments,
     add_seat_arguments,
@@ -23,6 +24,7 @@ from geo_model.model.settings import (
     DEFAULTS,
     DISADVANTAGE,
     LINEAR_PROGRESSIVITY,
+    PRIORITY,
     Settings,
 )
 
@@ -36,6 +38,7 @@ def every_shared_option() -> argparse.ArgumentParser:
     add_seat_arguments(parser, True)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
+    add_priority_argument(parser)
     add_intake_argument(parser, ["share", "dissimilarity"])
     add_region_arguments(parser)
     add_anon_argument(parser)
@@ -54,6 +57,7 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
         "round_up_seats": True,
         "linear_progressivity": LINEAR_PROGRESSIVITY,
         "disadvantage": DISADVANTAGE,
+        "priority": PRIORITY,
         "intake": "share",
         "la": LAS,
         "merge": False,
@@ -63,7 +67,8 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
     args = parser.parse_args(
         ["--seeds", "3", "--workers", "4", "--years", "2024", "2025"]
         + ["--circuity", "1.3", "--no-round-up-seats", "--linear-progressivity"]
-        + ["--disadvantage", "decile", "--intake", "dissimilarity"]
+        + ["--disadvantage", "decile", "--priority", "bracket"]
+        + ["--intake", "dissimilarity"]
         + ["--la", "Hampshire", "Southampton", "--merge", "--anon"]
     )
     assert vars(args) == {
@@ -74,6 +79,7 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
         "round_up_seats": False,
         "linear_progressivity": True,
         "disadvantage": "decile",
+        "priority": "bracket",
         "intake": "dissimilarity",
         "la": ["Hampshire", "Southampton"],
         "merge": True,
@@ -82,7 +88,8 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
 
 
 @pytest.mark.parametrize(
-    "argv", [["--disadvantage", "nobody"], ["--intake", "nothing"]]
+    "argv",
+    [["--disadvantage", "nobody"], ["--priority", "nobody"], ["--intake", "nothing"]],
 )
 def test_a_choice_outside_those_offered_is_rejected(argv):
     with pytest.raises(SystemExit):

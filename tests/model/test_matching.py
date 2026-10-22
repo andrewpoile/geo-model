@@ -282,3 +282,12 @@ def test_a_performance_weighted_instance_is_still_valid():
     matching = run(preferences, ranks, school_capacities, route_capacities)
 
     assert_valid(preferences, ranks, school_capacities, route_capacities, matching)
+
+
+def test_a_bracket_priority_instance_is_still_valid():
+    preferences, ranks, school_capacities, route_capacities = instance(
+        6, priority="bracket"
+    )
+    matching = run(preferences, ranks, school_capacities, route_capacities)
+
+    assert_valid(preferences, ranks, school_capacities, route_capacities, matching)

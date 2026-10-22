@@ -40,11 +40,16 @@ def test_optimise_rejects_a_parameter_named_twice(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("parameter", "disadvantage"),
-    [("decile", "decile"), ("route_discount", "score"), ("route_discount", "decile")],
+    ("parameter", "disadvantage", "priority"),
+    [
+        ("decile", "decile", "distance"),
+        ("route_discount", "score", "distance"),
+        ("route_discount", "decile", "distance"),
+        ("priority_discount", "score", "bracket"),
+    ],
 )
-def test_optimise_rejects_a_parameter_the_choice_of_disadvantage_bars(
-    parameter, disadvantage, tmp_path
+def test_optimise_rejects_a_parameter_the_choices_bar(
+    parameter, disadvantage, priority, tmp_path
 ):
     with pytest.raises(ValueError, match=rf"\['{parameter}'\] cannot be searched"):
         op.optimise(
@@ -55,6 +60,7 @@ def test_optimise_rejects_a_parameter_the_choice_of_disadvantage_bars(
             tmp_path,
             parameters=[parameter],
             disadvantage=disadvantage,
+            priority=priority,
         )
 
 
@@ -73,6 +79,28 @@ def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(
             pop_size=4,
             generations=2,
         )
+
+
+def test_optimise_scores_every_candidate_under_the_rule_given(monkeypatch, tmp_path):
+    rules = []
+
+    def score(settings, **kwargs):
+        rules.append(kwargs["priority"])
+
+    monkeypatch.setattr(op, "score_feasible", score)
+
+    with pytest.raises(ValueError, match="None of the 4 settings scored"):
+        op.optimise(
+            NO_STUDENTS,
+            gpd.GeoDataFrame(),
+            gpd.GeoDataFrame(),
+            pd.DataFrame(),
+            tmp_path,
+            pop_size=4,
+            generations=1,
+            priority="bracket",
+        )
+    assert rules == ["bracket"] * 4
 
 
 # --------------------------------------------------------------------------

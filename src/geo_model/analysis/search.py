@@ -11,7 +11,7 @@ from geo_model.measures.travel import mode_change
 from geo_model.model.settings import DEFAULTS, Settings
 
 # Every swept parameter. Which of them a search may vary depends on the
-# choice of DISADVANTAGE, as `searchable` gives it.
+# choices of DISADVANTAGE and PRIORITY, as `searchable` gives it.
 OPTIMISABLE = list(GRID)
 # The settings a transport authority holds. The preference weights describe
 # the students, so they hold DEFAULTS unless named.
@@ -65,22 +65,25 @@ OBJECTIVES = {
 DEFAULT_OBJECTIVES = list(OBJECTIVES)
 
 
-def searchable(disadvantage: str) -> list[str]:
-    """The parameters of OPTIMISABLE a search may vary under `disadvantage`.
+def searchable(disadvantage: str, priority: str) -> list[str]:
+    """The parameters of OPTIMISABLE a search may vary under `disadvantage`
+    and `priority`.
 
-    Those `swept` runs under it, less the decile under "decile", where it sets
-    the group the index measures as well as the districts routes leave, so
-    searching it would move the measurement rather than the matching.
+    Those `swept` runs under them, less the decile under "decile", where it
+    sets the group the index measures as well as the districts routes leave,
+    so searching it would move the measurement rather than the matching.
 
     Args:
         disadvantage (str): One of DISADVANTAGE_CHOICES.
+
+        priority (str): One of PRIORITY_CHOICES.
 
     Returns:
         list[str]: Keys of OPTIMISABLE, in its order.
     """
     return [
         parameter
-        for parameter in swept(GRID, disadvantage)
+        for parameter in swept(GRID, disadvantage, priority)
         if not (parameter == "decile" and disadvantage == "decile")
     ]
 
