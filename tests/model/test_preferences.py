@@ -93,7 +93,7 @@ def test_rank_bundles_full_route_discount_puts_routed_bundles_first():
 
 
 def test_rank_bundles_ranks_bracket_local_and_routed_students_together():
-    preferences, ranks = rank_two_districts(route_discount=0.5)
+    preferences, ranks = rank_two_districts(route_discount=0.5, priority="bracket")
 
     # Each rank sits beside its bundle on the student's list, s0's being
     # (c0, -1), (c1, -1) and padding, s1's (c0, r0), (c0, -1) and (c1, -1).
@@ -106,7 +106,7 @@ def test_rank_bundles_ranks_bracket_local_and_routed_students_together():
 
 def test_rank_bundles_offers_no_route_to_a_student_not_eligible_for_one():
     preferences, ranks = rank_two_districts(
-        route_discount=0.5, route_eligible=[True, False]
+        route_discount=0.5, route_eligible=[True, False], priority="bracket"
     )
 
     # s1 is the only student r0 serves, and without eligibility it ranks the
@@ -126,7 +126,12 @@ def test_rank_bundles_eligibility_leaves_a_student_no_route_serves_as_it_is():
         np.testing.assert_array_equal(ranked, default)
 
 
-def test_rank_bundles_ranks_put_a_distant_local_above_a_near_outsider():
+@pytest.mark.parametrize(
+    "priority, expected", [("bracket", [0, 1]), ("distance", [1, 0])]
+)
+def test_rank_bundles_ranks_a_distant_local_above_a_near_outsider_by_bracket_alone(
+    priority, expected
+):
     _, ranks = rank_bundles(
         np.array([[100.0, 0.0], [1.0, 0.0]]),
         np.array([0, 1]),
@@ -134,8 +139,45 @@ def test_rank_bundles_ranks_put_a_distant_local_above_a_near_outsider():
         np.array([0]),
         np.empty(0, dtype=np.int64),
         np.empty(0, dtype=np.int64),
+        priority=priority,
     )
-    np.testing.assert_array_equal(ranks[:, 0], [0, 1])
+    np.testing.assert_array_equal(ranks[:, 0], expected)
+
+
+@pytest.mark.parametrize(
+    "priority, priority_discount, expected",
+    [
+        # Each routed bundle ties with its own school without one, which
+        # ranks first.
+        ("distance", 0.0, [[0, -1], [4, 3], [2, 1]]),
+        # s2's route, 6m taken down to 3m, outranks s0 at 4m, and s1's, 10m
+        # taken down to 5m, does not.
+        ("distance", 0.5, [[1, -1], [2, 4], [0, 3]]),
+        # Every routed bundle ties at 0m, the nearer rider ranking first.
+        ("distance", 1.0, [[2, -1], [1, 4], [0, 3]]),
+        # Local s0 and both routes share the top bracket, whatever the
+        # discount.
+        ("bracket", 0.0, [[0, -1], [2, 4], [1, 3]]),
+        ("bracket", 1.0, [[0, -1], [2, 4], [1, 3]]),
+    ],
+)
+def test_rank_bundles_discounts_routed_bundles_under_distance_priority_alone(
+    priority, priority_discount, expected
+):
+    # s0 lives 4m from the school, in its district, and riders s1 and s2 10m
+    # and 6m. A full route discount puts each rider's route first on its list.
+    _, ranks = rank_bundles(
+        np.array([[4.0, 0.0], [10.0, 0.0], [6.0, 0.0]]),
+        np.array([0, 1, 1]),
+        np.array([[0.0, 0.0]]),
+        np.array([0]),
+        np.array([1]),
+        np.array([0]),
+        route_discount=1.0,
+        priority=priority,
+        priority_discount=priority_discount,
+    )
+    np.testing.assert_array_equal(ranks, expected)
 
 
 def test_rank_bundles_without_routes_ranks_schools_by_distance_alone():
@@ -280,6 +322,9 @@ def test_rank_bundles_noise_gives_the_same_tastes_with_routes_and_without():
             {"performance_weight": 0.5, "school_scores": np.array([1.0, np.nan])},
             "non-finite",
         ),
+        ({"priority": "nothing"}, "priority must be one of"),
+        ({"priority_discount": 1.5}, "priority_discount must lie"),
+        ({"priority_discount": -0.1}, "priority_discount must lie"),
         ({"noise_scale": 0.5}, "noise_scale > 0 needs an rng"),
         ({"student_district": np.array([0, 1, 0])}, "one district per student"),
         ({"school_district": np.array([0])}, "one district per school"),
@@ -309,7 +354,7 @@ def test_district_index_maps_schools_onto_area_positions(capsys):
     index = district_index(schools, areas)
 
     # A school outside every area the model holds takes -1, an index no
-    # student carries, so nobody holds local priority there.
+    # student carries, so no student is local to it.
     np.testing.assert_array_equal(index, [2, 0, -1])
     assert index.dtype == np.int64
     assert "Over the border" in capsys.readouterr().out
@@ -454,6 +499,30 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights(
     # School priorities do not depend on how students weigh schools, so every
     # bundle keeps its rank wherever the weights move it on the list.
     np.testing.assert_array_equal(by_bundle(*mixed[:2]), by_bundle(*other[:2]))
+
+
+def test_secondary_instance_ranks_priorities_on_the_rule_and_discount_given(
+    areas, secondary, routes, students
+):
+    student_xy, student_lsoa, disadvantaged = students
+
+    def ranks(priority, priority_discount):
+        return secondary_instance(
+            student_xy,
+            student_lsoa,
+            areas,
+            secondary,
+            routes,
+            disadvantaged,
+            priority=priority,
+            priority_discount=priority_discount,
+            noise_seed=0,
+        )[1]
+
+    # The discount moves routed bundles under "distance" and none under
+    # "bracket", so a rule or a discount left unpassed fails one of these.
+    assert not np.array_equal(ranks("distance", 0.0), ranks("distance", 1.0))
+    np.testing.assert_array_equal(ranks("bracket", 0.0), ranks("bracket", 1.0))
 
 
 def test_secondary_instance_offers_other_students_routes_only_when_open(

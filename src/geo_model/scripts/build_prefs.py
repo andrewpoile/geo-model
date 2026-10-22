@@ -97,7 +97,7 @@ def build(
     # School priorities are the transpose of the same pairwise distances that rank
     # student preferences, so one distance matrix per phase serves both. Progress 8
     # is a KS4 measure with no primary analogue, so it shapes secondary preferences
-    # only, and priorities stay on distance and district alone in both phases.
+    # only, and priorities follow the same rule, PRIORITY, in both phases.
     primary_student_preferences, primary_preference_ranks = rank_bundles(
         primary_student_xy,
         primary_student_lsoa,

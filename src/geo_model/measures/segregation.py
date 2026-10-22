@@ -56,8 +56,7 @@ def local_intake(
     """Count each school's local applicants, and the disadvantaged and the
     other students among them it seats.
 
-    A student is local to a school sitting in their own district, the
-    students the top bracket of its priorities holds without a route. A
+    A student is local to a school sitting in their own district. A
     student applied to a school if they proposed any bundle of it, and
     Deferred Acceptance has every student propose down their list: to every
     bundle up to the one they hold, or to every bundle on it if they hold
