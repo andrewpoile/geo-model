@@ -11,23 +11,30 @@ if TYPE_CHECKING:
 # Every region's outputs are written to a folder of its own in here, so runs
 # for different regions never write over each other.
 OUTPUT_DIR = Path("output")
+# An anonymised run's folder within its region's, so it never writes over the
+# named outputs.
+ANON_DIR = Path("anonymised")
 
 # Written to each region's folder.
 ROUTES_CSV = "secondary_routes.csv"
 ROUTES_NPZ = "secondary_routes.npz"
 
 
-def region_dir(las: list[str]) -> Path:
+def region_dir(las: list[str], anon: bool = False) -> Path:
     """The folder a region's outputs are written to: its local authorities'
     names, as the register spells them, joined by "+" in alphabetical order.
 
     Args:
         las (list[str]): The region's local authorities.
 
+        anon (bool, optional): The region's ANON_DIR instead, for an
+        anonymised run. Defaults to False.
+
     Returns:
         Path: A folder in OUTPUT_DIR.
     """
-    return OUTPUT_DIR / "+".join(sorted(las))
+    folder = OUTPUT_DIR / "+".join(sorted(las))
+    return folder / ANON_DIR if anon else folder
 
 
 def save_routes(routes: pd.DataFrame, out_dir: Path) -> None:

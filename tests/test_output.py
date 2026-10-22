@@ -12,3 +12,7 @@ def test_region_dir_names_a_region_for_its_authorities_in_order():
     assert region_dir(["Southampton", "Hampshire"]) == Path(
         "output/Hampshire+Southampton"
     )
+    # An anonymised run writes within the region's folder, beside the named.
+    assert region_dir(["Southampton"], anon=True) == Path(
+        "output/Southampton/anonymised"
+    )

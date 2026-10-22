@@ -39,6 +39,7 @@ from geo_model.analysis.search import (
     searchable,
 )
 from geo_model.cli import (
+    add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
     add_progressivity_argument,
@@ -49,7 +50,6 @@ from geo_model.cli import (
     add_workers_argument,
 )
 from geo_model.data.regions import regions
-from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
 from geo_model.measures.travel import CIRCUITY
 from geo_model.model.routes import EmptyRouteSet
@@ -63,10 +63,9 @@ from geo_model.model.settings import (
 )
 from geo_model.model.settings import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.model.students import Sample, student_samples
-from geo_model.output import region_dir
 from geo_model.plots.front import plot_front
 from geo_model.plots.style import INTAKE_MEASURES
-from geo_model.scripts.run import run, score_settings
+from geo_model.scripts.run import load_region, run, score_settings
 
 # The search's folder within each region's, and the files written to it.
 OUT_DIR = Path("optimise")
@@ -323,6 +322,7 @@ def search(
         args.linear_progressivity,
         args.disadvantage,
         args.intake,
+        not args.anon,
     )
 
     written = [EVALUATIONS_CSV, FRONT_CSV]
@@ -383,13 +383,13 @@ def main() -> None:
     add_disadvantage_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
+    add_anon_argument(parser)
     args = parser.parse_args()
 
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
-        out_dir = region_dir(las) / OUT_DIR
-        _, secondary_schools = load_schools(las)
-        search(args, las, areas, secondary_schools, shares, out_dir)
+        areas, secondary_schools, folder = load_region(las, areas, args.anon)
+        search(args, las, areas, secondary_schools, shares, folder / OUT_DIR)
 
 
 if __name__ == "__main__":

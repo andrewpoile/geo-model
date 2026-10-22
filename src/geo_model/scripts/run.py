@@ -25,6 +25,7 @@ from geo_model.analysis.scoring import (
     settings_routes,
 )
 from geo_model.cli import (
+    add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
     add_progressivity_argument,
@@ -34,6 +35,7 @@ from geo_model.cli import (
     add_settings_arguments,
     add_travel_arguments,
 )
+from geo_model.data.anonymise import anonymise
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
@@ -182,6 +184,34 @@ def score_settings(
     return rows, school_rows, mode_rows, route_rows
 
 
+def load_region(
+    las: list[str], areas: gpd.GeoDataFrame, anon: bool
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Path]:
+    """A region's districts and secondary schools, and the folder its
+    outputs are written to, anonymised together where `anon`, so an
+    anonymised run neither names the region nor writes over its named
+    outputs.
+
+    Args:
+        las (list[str]): The region's local authorities.
+
+        areas (gpd.GeoDataFrame): The region's districts, as `regions` yields
+        them.
+
+        anon (bool): Pass both frames through `anonymise` and write to the
+        region's ANON_DIR, as --anon asks.
+
+    Returns:
+        tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Path]: The districts, the
+        secondary schools as `load_schools` returns them, and the folder
+        `region_dir` gives.
+    """
+    _, secondary_schools = load_schools(las)
+    if anon:
+        areas, secondary_schools = anonymise(areas, secondary_schools)
+    return areas, secondary_schools, region_dir(las, anon)
+
+
 def run(
     settings: Settings,
     samples: list[Sample],
@@ -194,6 +224,7 @@ def run(
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
     measure: str = "dissimilarity",
+    mapped: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and write,
     plot and report the two against each other in `out_dir`.
@@ -201,17 +232,17 @@ def run(
     Writes the route set, as `save_routes` does, the scenario, school, mode
     and route rows to RESULTS_CSV, SCHOOLS_CSV, MODES_CSV and
     ROUTE_UTILISATION_CSV, and each district's groups in every sample, as
-    `district_rows` gives them, to DISTRICTS_CSV. Draws every metric the
-    sweep draws: the index per scenario and its paired t-test to
-    DISSIMILARITY_PNG, who is left unassigned to UNASSIGNED_PNG, each
-    school's intake to INTAKE_PNG and the expected modes and their change to
-    MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map of the
-    first sample's two matchings to MAP_PNG, the seats each route provides
-    and its riders take to ROUTES_PNG, and the local students each school
-    accepts of those who applied, with the change the routes make to them
-    per seed, to LOCALS_PNG. Then prints the two scenarios' means and their
-    paired t-test, the change per mode, each route's seats and riders, and
-    each school's local applicants.
+    `district_rows` gives them in district order, to DISTRICTS_CSV. Draws
+    every metric the sweep draws: the index per scenario and its paired
+    t-test to DISSIMILARITY_PNG, who is left unassigned to UNASSIGNED_PNG,
+    each school's intake to INTAKE_PNG and the expected modes and their
+    change to MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map
+    of the first sample's two matchings to MAP_PNG where `mapped`, the seats
+    each route provides and its riders take to ROUTES_PNG, and the local
+    students each school accepts of those who applied, with the change the
+    routes make to them per seed, to LOCALS_PNG. Then prints the two
+    scenarios' means and their paired t-test, the change per mode, each
+    route's seats and riders, and each school's local applicants.
 
     Args:
         settings (Settings): The parameter values to build routes and rank
@@ -243,6 +274,10 @@ def run(
 
         measure (str, optional): A key of INTAKE_MEASURES, what the intake
         heatmap shows. Defaults to "dissimilarity".
+
+        mapped (bool, optional): Draw the map. An anonymised run draws none,
+        since any map of the districts' true shapes gives the region away.
+        Defaults to True.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]: The
@@ -284,22 +319,23 @@ def run(
     save(fig, out_dir / INTAKE_PNG)
     plot_modes(modes, out_dir / MODES_PNG)
     plot_lorenz(schools, out_dir / LORENZ_PNG, disadvantage)
-    plot_map(
-        areas,
-        secondary_schools,
-        samples[0][0],
-        settings_matchings(
-            settings,
-            samples[0],
+    if mapped:
+        plot_map(
             areas,
             secondary_schools,
-            round_up,
-            linear,
-            disadvantage,
-            network,
-        ),
-        out_dir / MAP_PNG,
-    )
+            samples[0][0],
+            settings_matchings(
+                settings,
+                samples[0],
+                areas,
+                secondary_schools,
+                round_up,
+                linear,
+                disadvantage,
+                network,
+            ),
+            out_dir / MAP_PNG,
+        )
     n_routes = routes["route"].nunique()
     fig = Figure(
         figsize=(min(max(8.0, 2 + 0.3 * n_routes), 30.0), 9), layout="constrained"
@@ -313,7 +349,11 @@ def run(
     draw_local_acceptance(fig, schools)
     save(fig, out_dir / LOCALS_PNG)
 
-    districts = district_rows(samples, areas, settings.decile, disadvantage)
+    # In district order, so an anonymised run's rows follow its labels, by
+    # deprivation, rather than the code order the districts are held in.
+    districts = district_rows(
+        samples, areas, settings.decile, disadvantage
+    ).sort_values(["seed", "LSOA21CD"], kind="stable", ignore_index=True)
     for frame, name in (
         (results, RESULTS_CSV),
         (schools, SCHOOLS_CSV),
@@ -401,6 +441,7 @@ def main(
     add_disadvantage_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
+    add_anon_argument(parser)
     args = parser.parse_args()
     # Checked here as well as by route_network, so a run fails before its
     # region is loaded and sampled rather than after.
@@ -414,7 +455,7 @@ def main(
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")
-        _, secondary_schools = load_schools(las)
+        areas, secondary_schools, folder = load_region(las, areas, args.anon)
         samples = list(student_samples(areas, args.seeds))
         run(
             settings,
@@ -422,12 +463,13 @@ def main(
             areas,
             secondary_schools,
             shares,
-            region_dir(las) / out_dir,
+            folder / out_dir,
             args.circuity,
             args.round_up_seats,
             args.linear_progressivity,
             args.disadvantage,
             args.intake,
+            not args.anon,
         )
 
 

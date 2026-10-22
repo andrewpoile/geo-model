@@ -1,6 +1,8 @@
+import sys
 from dataclasses import replace
 
 import pandas as pd
+import pytest
 
 from geo_model.measures.travel import MODES
 from geo_model.model.settings import DEFAULTS
@@ -67,3 +69,14 @@ def test_sweep_scores_every_cell_on_the_same_samples(
     routed = results[results["scenario"] == "with routes"]
     scales = routed.groupby("parameter")["dissimilarity"].nunique()
     assert scales["capacity_scale"] == 2
+
+
+def test_main_rejects_a_map_of_an_anonymised_sweep(monkeypatch):
+    def load(*args):
+        pytest.fail("loaded a region for a sweep it cannot run")
+
+    monkeypatch.setattr(sw, "regions", load)
+    monkeypatch.setattr(sys, "argv", ["sweep", "--anon", "--map"])
+
+    with pytest.raises(SystemExit):
+        sw.main()
