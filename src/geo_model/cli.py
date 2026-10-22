@@ -47,9 +47,10 @@ def add_anon_argument(parser: argparse.ArgumentParser) -> None:
         "--anon",
         action="store_true",
         help="number the schools, districts and authorities rather than name "
-        "them, and reflect every map in the line easting = northing, so no "
-        "plot or table names the region; the results are the named run's, "
-        f"written to {OUTPUT_DIR}/<NAME>/{ANON_DIR}",
+        "them, the districts by IDACI rank, and draw no map, since any map of "
+        "the districts' true shapes gives the region away, so no plot or table "
+        "names the region; the results are the named run's, written to "
+        f"{OUTPUT_DIR}/<NAME>/{ANON_DIR}",
     )
 
 

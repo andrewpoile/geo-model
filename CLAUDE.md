@@ -34,7 +34,7 @@ uv run pytest --cov
 uv run pytest tests/model/test_matching.py::test_name
 ```
 
-Entry points are the modules of `src/geo_model/scripts/`, run as `uv run python -m geo_model.scripts.<name>`, e.g. `uv run python -m geo_model.scripts.run --min-distance 4828`; `uv run python -m geo_model` (also `uv run geo-model`) runs the parameter sweep. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge`; run, the scenarios, sweep and optimise also take `--anon`, which numbers every school, district and authority and reflects the maps, writing to `output/<region>/anonymised/`. The options several scripts share are added by the `add_*` functions of cli.py.
+Entry points are the modules of `src/geo_model/scripts/`, run as `uv run python -m geo_model.scripts.<name>`, e.g. `uv run python -m geo_model.scripts.run --min-distance 4828`; `uv run python -m geo_model` (also `uv run geo-model`) runs the parameter sweep. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge`; run, the scenarios, sweep and optimise also take `--anon`, which numbers every school, district and authority and draws no map, writing to `output/<region>/anonymised/`. The options several scripts share are added by the `add_*` functions of cli.py.
 
 ## Data, outputs and tests
 

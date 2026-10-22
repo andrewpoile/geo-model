@@ -25,9 +25,7 @@ from geo_model.cli import (
     add_travel_arguments,
     add_workers_argument,
 )
-from geo_model.data.anonymise import anonymise
 from geo_model.data.regions import regions
-from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
 from geo_model.measures.segregation import (
     fsm_share,
@@ -43,12 +41,11 @@ from geo_model.model.settings import (
     ROUND_UP_SEATS,
 )
 from geo_model.model.students import Sample, student_samples
-from geo_model.output import region_dir
 from geo_model.plots.comparison import plot_lorenz
 from geo_model.plots.maps import plot_map
 from geo_model.plots.style import INTAKE_MEASURES
 from geo_model.plots.sweep import plot_sweep
-from geo_model.scripts.run import score_settings
+from geo_model.scripts.run import load_region, score_settings
 
 # The sweep's folder within each region's, and the files written to it.
 SWEEP_DIR = Path("sweep")
@@ -191,15 +188,18 @@ def main() -> None:
     add_region_arguments(parser)
     add_anon_argument(parser)
     args = parser.parse_args()
+    if args.anon and args.map:
+        parser.error(
+            "--map draws the districts' true shapes, which give the region away, "
+            "so it cannot be set with --anon"
+        )
 
     shares = load_nts_mode_shares(args.years)
     parameters = swept(GRID, args.disadvantage)
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
     for las, areas in regions(args.la, args.merge):
-        out_dir = region_dir(las, args.anon) / SWEEP_DIR
-        _, secondary_schools = load_schools(las)
-        if args.anon:
-            areas, secondary_schools = anonymise(areas, secondary_schools)
+        areas, secondary_schools, folder = load_region(las, areas, args.anon)
+        out_dir = folder / SWEEP_DIR
         samples = list(student_samples(areas, args.seeds))
 
         results, schools, modes = sweep(
@@ -277,7 +277,6 @@ def main() -> None:
                     args.disadvantage,
                 ),
                 out_dir / MAP_PNG,
-                args.anon,
             )
         if args.lorenz:
             plot_lorenz(
