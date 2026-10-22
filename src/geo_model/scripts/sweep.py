@@ -18,6 +18,7 @@ from geo_model.cli import (
     add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
+    add_priority_argument,
     add_progressivity_argument,
     add_region_arguments,
     add_seat_arguments,
@@ -38,6 +39,7 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     LINEAR_PROGRESSIVITY,
     N_SEEDS,
+    PRIORITY,
     ROUND_UP_SEATS,
 )
 from geo_model.model.students import Sample, student_samples
@@ -69,13 +71,14 @@ def sweep(
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
+    priority: str = PRIORITY,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score every cell of the parameters `swept` names on the same samples.
 
     Every cell matches the same student samples, so the scores of two cells
     differ by their parameter values alone, and the default cell of every
     parameter reproduces the scores `run` gives the defaults, on the same
-    samples at the same `disadvantage`.
+    samples at the same `disadvantage` and `priority`.
 
     Args:
         samples (list[Sample]): Student samples, as yielded by
@@ -112,6 +115,9 @@ def sweep(
         disadvantage (str, optional): Passed to `swept` and `score_settings`.
         Defaults to DISADVANTAGE.
 
+        priority (str, optional): Passed to `swept` and `score_settings`.
+        Defaults to PRIORITY.
+
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: The scenario rows,
         one per (parameter, value, seed, scenario), the school rows, one per
@@ -120,7 +126,11 @@ def sweep(
         and "value" ahead of the columns `score_settings` returns. Also
         written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV in `out_dir`.
     """
-    cells = [(p, settings) for p in swept(GRID, disadvantage) for settings in GRID[p]]
+    cells = [
+        (p, settings)
+        for p in swept(GRID, disadvantage, priority)
+        for settings in GRID[p]
+    ]
     score = functools.partial(
         score_settings,
         samples=samples,
@@ -131,6 +141,7 @@ def sweep(
         round_up=round_up,
         linear=linear,
         disadvantage=disadvantage,
+        priority=priority,
     )
     if workers == 1:
         scored = [score(settings) for _, settings in cells]
@@ -171,6 +182,7 @@ def main() -> None:
     add_seat_arguments(parser, ROUND_UP_SEATS)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
+    add_priority_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     parser.add_argument(
         "--map",
@@ -195,7 +207,7 @@ def main() -> None:
         )
 
     shares = load_nts_mode_shares(args.years)
-    parameters = swept(GRID, args.disadvantage)
+    parameters = swept(GRID, args.disadvantage, args.priority)
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
     for las, areas in regions(args.la, args.merge):
         areas, secondary_schools, folder = load_region(las, areas, args.anon)
@@ -213,6 +225,7 @@ def main() -> None:
             args.round_up_seats,
             args.linear_progressivity,
             args.disadvantage,
+            priority=args.priority,
         )
         print(" + ".join(las) + ":")
         tests = sweep_tests(results)
@@ -275,6 +288,7 @@ def main() -> None:
                     args.round_up_seats,
                     args.linear_progressivity,
                     args.disadvantage,
+                    priority=args.priority,
                 ),
                 out_dir / MAP_PNG,
             )

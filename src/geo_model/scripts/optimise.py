@@ -42,6 +42,7 @@ from geo_model.cli import (
     add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
+    add_priority_argument,
     add_progressivity_argument,
     add_region_arguments,
     add_seat_arguments,
@@ -57,6 +58,7 @@ from geo_model.model.settings import (
     DEFAULTS,
     DISADVANTAGE,
     LINEAR_PROGRESSIVITY,
+    PRIORITY,
     ROUND_UP_SEATS,
     SEED,
     Settings,
@@ -119,6 +121,7 @@ def optimise(
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
+    priority: str = PRIORITY,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Search `parameters` by NSGA-II for the Pareto front of `objectives`.
 
@@ -142,8 +145,8 @@ def optimise(
         to.
 
         parameters (list[str], optional): Keys of OPTIMISABLE to search, each
-        over its `bounds`, every one `searchable` under `disadvantage`.
-        Defaults to LEVERS.
+        over its `bounds`, every one `searchable` under `disadvantage` and
+        `priority`. Defaults to LEVERS.
 
         objectives (list[str], optional): Keys of OBJECTIVES to optimise.
         Defaults to DEFAULT_OBJECTIVES, every one.
@@ -167,8 +170,11 @@ def optimise(
         linear (bool, optional): Passed to `score_settings`. Defaults to
         LINEAR_PROGRESSIVITY.
 
-        disadvantage (str, optional): Passed to `score_settings`. Defaults to
-        DISADVANTAGE.
+        disadvantage (str, optional): Passed to `searchable` and
+        `score_settings`. Defaults to DISADVANTAGE.
+
+        priority (str, optional): Passed to `searchable` and
+        `score_settings`. Defaults to PRIORITY.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]: Every setting scored, one row each
@@ -182,13 +188,14 @@ def optimise(
     for named in (parameters, objectives):
         if len(set(named)) != len(named):
             raise ValueError(f"Each may be named once, got {named}.")
-    allowed = searchable(disadvantage)
+    allowed = searchable(disadvantage, priority)
     barred = [parameter for parameter in parameters if parameter not in allowed]
     if barred:
         raise ValueError(
-            f"Under disadvantage {disadvantage!r} {barred} cannot be searched: "
-            "the other students' route discount is inert unless they ride, and "
-            "under 'decile' the decile moves the group the index measures. "
+            f"Under disadvantage {disadvantage!r} and priority {priority!r} "
+            f"{barred} cannot be searched: the other students' route discount "
+            "is inert unless they ride, the priority discount under 'bracket', "
+            "and under 'decile' the decile moves the group the index measures. "
             f"Choose from {allowed}."
         )
 
@@ -202,6 +209,7 @@ def optimise(
         round_up=round_up,
         linear=linear,
         disadvantage=disadvantage,
+        priority=priority,
     )
     with (
         ProcessPoolExecutor(workers) if workers > 1 else contextlib.nullcontext()
@@ -277,6 +285,7 @@ def search(
             args.round_up_seats,
             args.linear_progressivity,
             args.disadvantage,
+            priority=args.priority,
         ),
         args.objectives,
     )
@@ -295,6 +304,7 @@ def search(
         args.round_up_seats,
         args.linear_progressivity,
         args.disadvantage,
+        priority=args.priority,
     )
     print(
         f"{len(front)} settings on the Pareto front, of the "
@@ -321,8 +331,9 @@ def search(
         args.round_up_seats,
         args.linear_progressivity,
         args.disadvantage,
-        args.intake,
-        not args.anon,
+        priority=args.priority,
+        measure=args.intake,
+        mapped=not args.anon,
     )
 
     written = [EVALUATIONS_CSV, FRONT_CSV]
@@ -364,7 +375,8 @@ def main() -> None:
         default=LEVERS,
         help="parameters to search, each over the span GRID sweeps; the rest "
         "hold DEFAULTS. route_discount is searchable only under "
-        "--disadvantage score-open, the decile under every choice but decile",
+        "--disadvantage score-open, priority_discount only under --priority "
+        "distance, the decile under every choice but decile",
     )
     parser.add_argument(
         "--objectives", nargs="+", choices=list(OBJECTIVES), default=DEFAULT_OBJECTIVES
@@ -381,6 +393,7 @@ def main() -> None:
     add_seat_arguments(parser, ROUND_UP_SEATS)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
+    add_priority_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
     add_anon_argument(parser)

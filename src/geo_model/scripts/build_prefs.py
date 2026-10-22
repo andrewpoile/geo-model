@@ -4,7 +4,7 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 
-from geo_model.cli import add_region_arguments
+from geo_model.cli import add_priority_argument, add_region_arguments
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.model.preferences import (
@@ -18,6 +18,7 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     DISADVANTAGED_DECILE,
     PREFERENCE_NOISE,
+    PRIORITY,
     SEED,
 )
 from geo_model.model.students import (
@@ -38,6 +39,7 @@ def build(
     primary_schools: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     out_dir: Path,
+    priority: str = PRIORITY,
 ) -> None:
     """Build one region's matching inputs for both phases and write them out,
     to OUTPUT_NPZ in `out_dir` and the route set beside it.
@@ -53,6 +55,9 @@ def build(
         as `load_schools` returns them.
 
         out_dir (Path): Folder the inputs are written to.
+
+        priority (str, optional): One of PRIORITY_CHOICES, the rule both
+        phases' school priorities follow. Defaults to PRIORITY.
     """
     rng = np.random.default_rng(SEED)
 
@@ -97,7 +102,7 @@ def build(
     # School priorities are the transpose of the same pairwise distances that rank
     # student preferences, so one distance matrix per phase serves both. Progress 8
     # is a KS4 measure with no primary analogue, so it shapes secondary preferences
-    # only, and priorities follow the same rule, PRIORITY, in both phases.
+    # only, and priorities follow the same rule, `priority`, in both phases.
     primary_student_preferences, primary_preference_ranks = rank_bundles(
         primary_student_xy,
         primary_student_lsoa,
@@ -105,6 +110,7 @@ def build(
         district_index(primary_schools, areas),
         np.empty(0, dtype=np.int32),
         np.empty(0, dtype=np.int32),
+        priority=priority,
         noise_scale=PREFERENCE_NOISE,
         rng=rng,
     )
@@ -120,6 +126,7 @@ def build(
         secondary_schools,
         secondary_routes,
         secondary_student_disadvantaged,
+        priority=priority,
         noise_seed=int(rng.integers(2**63)),
     )
 
@@ -160,12 +167,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build the matching inputs for both phases and write them out."
     )
+    add_priority_argument(parser)
     add_region_arguments(parser)
     args = parser.parse_args()
 
     for las, areas in regions(args.la, args.merge):
         primary_schools, secondary_schools = load_schools(las)
-        build(areas, primary_schools, secondary_schools, region_dir(las))
+        build(
+            areas,
+            primary_schools,
+            secondary_schools,
+            region_dir(las),
+            priority=args.priority,
+        )
 
 
 if __name__ == "__main__":

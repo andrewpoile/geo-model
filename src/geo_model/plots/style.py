@@ -15,6 +15,7 @@ AXIS_LABELS = {
     "disadvantaged_performance_weight": "Performance weight, disadvantaged students",
     "route_discount": "Route discount, other students",
     "disadvantaged_route_discount": "Route discount, disadvantaged students",
+    "priority_discount": "Priority discount, routed students",
 }
 
 COLOURS = {"with routes": "#2a78d6", "without routes": "#52514e"}

@@ -1,11 +1,13 @@
 import sys
 from dataclasses import replace
 
+import geopandas as gpd
 import pandas as pd
 import pytest
 
+from geo_model.analysis.sweep import GRID, swept
 from geo_model.measures.travel import MODES
-from geo_model.model.settings import DEFAULTS
+from geo_model.model.settings import DEFAULTS, DISADVANTAGE
 from geo_model.scripts import sweep as sw
 
 # --------------------------------------------------------------------------
@@ -69,6 +71,34 @@ def test_sweep_scores_every_cell_on_the_same_samples(
     routed = results[results["scenario"] == "with routes"]
     scales = routed.groupby("parameter")["dissimilarity"].nunique()
     assert scales["capacity_scale"] == 2
+
+
+def test_sweep_scores_every_cell_under_the_rule_given(monkeypatch, tmp_path):
+    scored = []
+
+    def score(settings, **kwargs):
+        scored.append((settings, kwargs["priority"]))
+        return [], [], [], []
+
+    monkeypatch.setattr(sw, "score_settings", score)
+
+    sw.sweep(
+        [],
+        gpd.GeoDataFrame(),
+        gpd.GeoDataFrame(),
+        pd.DataFrame(),
+        tmp_path,
+        priority="bracket",
+    )
+
+    # Every cell is scored under the rule, and none of the priority
+    # discount's, which the rule leaves inert.
+    assert [settings for settings, _ in scored] == [
+        cell
+        for parameter in swept(GRID, DISADVANTAGE, "bracket")
+        for cell in GRID[parameter]
+    ]
+    assert {priority for _, priority in scored} == {"bracket"}
 
 
 def test_main_rejects_a_map_of_an_anonymised_sweep(monkeypatch):

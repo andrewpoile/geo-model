@@ -106,6 +106,32 @@ def test_score_sample_scores_both_scenarios_of_one_sample(
     )
 
 
+def test_score_sample_ranks_priorities_on_the_rule_and_discount_given(
+    areas, secondary, routes, shares, samples
+):
+    ((student_xy, student_lsoa, disadvantaged, noise_seed),) = samples
+
+    def scored(priority, priority_discount):
+        return score_sample(
+            student_xy,
+            student_lsoa,
+            areas,
+            secondary,
+            routes,
+            disadvantaged,
+            shares,
+            noise_seed,
+            priority=priority,
+            priority_discount=priority_discount,
+        )
+
+    # The discount moves routed bundles under "distance" and none under
+    # "bracket", so a rule or a discount left behind on the way down to the
+    # ranking fails one of these.
+    assert scored("distance", 0.0) != scored("distance", 1.0)
+    assert scored("bracket", 0.0) == scored("bracket", 1.0)
+
+
 # --------------------------------------------------------------------------
 # district_rows: against the real data folder
 # --------------------------------------------------------------------------

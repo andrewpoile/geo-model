@@ -8,7 +8,11 @@ import pytest
 from geo_model.analysis.scoring import settings_matchings
 from geo_model.measures.segregation import dissimilarity_index
 from geo_model.measures.travel import MODES
-from geo_model.model.settings import DEFAULTS, DISADVANTAGE_CHOICES
+from geo_model.model.settings import (
+    DEFAULTS,
+    DISADVANTAGE_CHOICES,
+    PRIORITY_CHOICES,
+)
 from geo_model.model.students import disadvantaged_group
 from geo_model.output import ROUTES_CSV, ROUTES_NPZ
 from geo_model.scripts import run as rn
@@ -75,12 +79,20 @@ def test_run_rejects_no_samples(tmp_path):
         )
 
 
-def test_main_rejects_two_route_rules_before_loading_a_region(monkeypatch):
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--shortest-only", "--bottleneck"],
+        ["--priority-discount", "1.5"],
+        ["--priority", "bracket", "--priority-discount", "0.8"],
+    ],
+)
+def test_main_rejects_settings_it_cannot_run_before_loading_a_region(monkeypatch, argv):
     def load(*args):
         pytest.fail("loaded a region for settings it cannot run")
 
     monkeypatch.setattr(rn, "regions", load)
-    monkeypatch.setattr(sys, "argv", ["run", "--shortest-only", "--bottleneck"])
+    monkeypatch.setattr(sys, "argv", ["run", *argv])
 
     with pytest.raises(SystemExit):
         rn.main()
@@ -92,19 +104,30 @@ def test_main_rejects_two_route_rules_before_loading_a_region(monkeypatch):
 
 
 @pytest.mark.parametrize("disadvantage", DISADVANTAGE_CHOICES)
-def test_settings_matchings_are_the_ones_the_sweep_scores_at_the_defaults(
-    samples, areas, secondary, shares, disadvantage
+@pytest.mark.parametrize("priority", PRIORITY_CHOICES)
+def test_settings_matchings_are_the_ones_the_sweep_scores(
+    samples, areas, secondary, shares, disadvantage, priority
 ):
+    # Off the default discount, so a discount settings_matchings or
+    # score_settings leaves behind shows; below them, score_sample's own
+    # test covers the way down.
+    settings = replace(DEFAULTS, priority_discount=0.9)
     matchings = settings_matchings(
-        DEFAULTS, samples[0], areas, secondary, disadvantage=disadvantage
+        settings,
+        samples[0],
+        areas,
+        secondary,
+        disadvantage=disadvantage,
+        priority=priority,
     )
     rows, _, _, route_rows = rn.score_settings(
-        DEFAULTS,
+        settings,
         samples,
         areas,
         secondary,
         shares,
         disadvantage=disadvantage,
+        priority=priority,
     )
     # The route rows are kept only when asked for.
     assert route_rows == []

@@ -21,6 +21,8 @@ from geo_model.model.settings import (
     DISADVANTAGED_ROUTE_DISCOUNT,
     LINEAR_PROGRESSIVITY,
     PERFORMANCE_WEIGHT,
+    PRIORITY,
+    PRIORITY_DISCOUNT,
     ROUND_UP_SEATS,
     ROUTE_DISCOUNT,
     SCENARIOS,
@@ -46,6 +48,8 @@ def match_sample(
     disadvantaged_performance_weight: float = DISADVANTAGED_PERFORMANCE_WEIGHT,
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
     disadvantage: str = DISADVANTAGE,
+    priority: str = PRIORITY,
+    priority_discount: float = PRIORITY_DISCOUNT,
 ) -> Iterator[tuple[str, np.ndarray, np.ndarray]]:
     """Match one student sample with and without routes.
 
@@ -86,6 +90,12 @@ def match_sample(
         disadvantage (str, optional): Passed to `secondary_instance`. Defaults
         to DISADVANTAGE.
 
+        priority (str, optional): Passed to `secondary_instance`. Defaults to
+        PRIORITY.
+
+        priority_discount (float, optional): Passed to `secondary_instance`.
+        Defaults to PRIORITY_DISCOUNT.
+
     Yields:
         tuple[str, np.ndarray, np.ndarray]: The scenario, "with routes" then
         "without routes", the students' preferences in it, as
@@ -105,6 +115,8 @@ def match_sample(
             disadvantaged_performance_weight,
             disadvantaged_route_discount,
             disadvantage,
+            priority=priority,
+            priority_discount=priority_discount,
             noise_seed=noise_seed,
         )
         yield scenario, instance[0], fast_DAT(*instance)
@@ -126,6 +138,8 @@ def score_sample(
     disadvantaged_route_discount: float = DISADVANTAGED_ROUTE_DISCOUNT,
     circuity: float = CIRCUITY,
     disadvantage: str = DISADVANTAGE,
+    priority: str = PRIORITY,
+    priority_discount: float = PRIORITY_DISCOUNT,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Match one student sample with and without routes and score both.
 
@@ -178,6 +192,12 @@ def score_sample(
         disadvantage (str, optional): Passed to `secondary_instance`. Defaults
         to DISADVANTAGE.
 
+        priority (str, optional): Passed to `secondary_instance`. Defaults to
+        PRIORITY.
+
+        priority_discount (float, optional): Passed to `secondary_instance`.
+        Defaults to PRIORITY_DISCOUNT.
+
     Returns:
         tuple[list[dict], list[dict], list[dict], list[dict]]: One row per
         scenario, with keys "scenario", "dissimilarity", "n_matched",
@@ -212,6 +232,8 @@ def score_sample(
         disadvantaged_performance_weight,
         disadvantaged_route_discount,
         disadvantage,
+        priority=priority,
+        priority_discount=priority_discount,
     ):
         matched_school = matching[:, 0]
         rows.append(
@@ -346,6 +368,7 @@ def settings_matchings(
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
+    priority: str = PRIORITY,
     routes: pd.DataFrame | None = None,
 ) -> dict[str, np.ndarray]:
     """Match one student sample at `settings`, with routes and without.
@@ -374,6 +397,9 @@ def settings_matchings(
 
         disadvantage (str, optional): As `score_settings` takes it. Defaults
         to DISADVANTAGE.
+
+        priority (str, optional): Passed to `match_sample`. Defaults to
+        PRIORITY.
 
         routes (pd.DataFrame | None, optional): The route set at `settings`,
         as `settings_routes` builds it, where the caller has built it already.
@@ -405,6 +431,8 @@ def settings_matchings(
             settings.disadvantaged_performance_weight,
             settings.disadvantaged_route_discount,
             disadvantage,
+            priority=priority,
+            priority_discount=settings.priority_discount,
         )
     }
 

@@ -8,6 +8,8 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     DISADVANTAGE_CHOICES,
     LINEAR_PROGRESSIVITY,
+    PRIORITY,
+    PRIORITY_CHOICES,
     Settings,
 )
 from geo_model.output import ANON_DIR, OUTPUT_DIR
@@ -148,6 +150,23 @@ def add_disadvantage_argument(parser: argparse.ArgumentParser) -> None:
         "same way, but routes carry every student of their district; decile: "
         "every student of an LSOA at or below the decile is disadvantaged and "
         "rides, the model as it was before",
+    )
+
+
+def add_priority_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the option of the rule school priorities follow.
+
+    Args:
+        parser (argparse.ArgumentParser): The entry point's parser.
+    """
+    parser.add_argument(
+        "--priority",
+        choices=PRIORITY_CHOICES,
+        default=PRIORITY,
+        help="distance: each school ranks every student by distance, a routed "
+        "student's taken down by the priority discount; bracket: every routed "
+        "student and every student of the school's own district first, "
+        "everyone else after, each by distance, the model as it was before",
     )
 
 

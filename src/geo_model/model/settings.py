@@ -208,6 +208,15 @@ class Settings:
         default=DISADVANTAGED_ROUTE_DISCOUNT,
         metadata={"help": "as --route-discount, for disadvantaged students"},
     )
+    priority_discount: float = field(
+        default=PRIORITY_DISCOUNT,
+        metadata={
+            "help": (
+                "share of a routed student's distance a school's priority takes off, "
+                "under --priority distance"
+            )
+        },
+    )
     shortest_only: bool = field(
         default=SHORTEST_ROUTE_ONLY,
         metadata={

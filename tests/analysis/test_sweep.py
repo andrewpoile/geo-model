@@ -6,7 +6,7 @@ from frames import default_intake, synthetic_frames
 
 from geo_model.analysis.sweep import GRID, default_cell, sweep_tests, swept
 from geo_model.measures.statistics import holm, routes_t_test
-from geo_model.model.settings import DEFAULTS
+from geo_model.model.settings import DEFAULTS, PRIORITY
 
 # --------------------------------------------------------------------------
 # GRID
@@ -26,13 +26,19 @@ def test_every_grid_varies_its_own_parameter_alone_and_holds_the_default():
 def test_swept_leaves_the_other_students_route_discount_out_unless_they_ride(
     disadvantage,
 ):
-    assert swept(GRID, disadvantage) == [
+    assert swept(GRID, disadvantage, PRIORITY) == [
         parameter for parameter in GRID if parameter != "route_discount"
     ]
 
 
 def test_swept_runs_every_grid_when_routes_are_open_to_every_student():
-    assert swept(GRID, "score-open") == list(GRID)
+    assert swept(GRID, "score-open", "distance") == list(GRID)
+
+
+def test_swept_leaves_the_priority_discount_out_under_brackets():
+    assert swept(GRID, "score-open", "bracket") == [
+        parameter for parameter in GRID if parameter != "priority_discount"
+    ]
 
 
 # --------------------------------------------------------------------------

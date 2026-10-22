@@ -16,7 +16,12 @@ from geo_model.analysis.search import (
     routed_dissimilarity,
     searchable,
 )
-from geo_model.model.settings import DEFAULTS, DISADVANTAGE_CHOICES, Settings
+from geo_model.model.settings import (
+    DEFAULTS,
+    DISADVANTAGE_CHOICES,
+    PRIORITY,
+    Settings,
+)
 
 
 def scored_rows(dissimilarity: float, car: tuple[float, float]):
@@ -95,20 +100,25 @@ def test_bounds_rejects_a_parameter_that_is_not_swept():
 
 
 def test_searchable_leaves_the_decile_out_only_where_it_sets_the_group():
-    assert "decile" in searchable("score")
-    assert "decile" in searchable("score-open")
-    assert "decile" not in searchable("decile")
+    assert "decile" in searchable("score", PRIORITY)
+    assert "decile" in searchable("score-open", PRIORITY)
+    assert "decile" not in searchable("decile", PRIORITY)
 
 
 def test_searchable_leaves_the_other_students_route_discount_out_unless_they_ride():
-    assert "route_discount" in searchable("score-open")
-    assert "route_discount" not in searchable("score")
-    assert "route_discount" not in searchable("decile")
+    assert "route_discount" in searchable("score-open", PRIORITY)
+    assert "route_discount" not in searchable("score", PRIORITY)
+    assert "route_discount" not in searchable("decile", PRIORITY)
+
+
+def test_searchable_leaves_the_priority_discount_out_under_brackets():
+    assert "priority_discount" in searchable("score", "distance")
+    assert "priority_discount" not in searchable("score", "bracket")
 
 
 @pytest.mark.parametrize("disadvantage", DISADVANTAGE_CHOICES)
 def test_every_lever_is_searchable_under_every_choice(disadvantage):
-    assert set(LEVERS) <= set(searchable(disadvantage))
+    assert set(LEVERS) <= set(searchable(disadvantage, PRIORITY))
 
 
 # --------------------------------------------------------------------------
