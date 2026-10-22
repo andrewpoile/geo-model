@@ -10,7 +10,7 @@ from geo_model.model.settings import (
     LINEAR_PROGRESSIVITY,
     Settings,
 )
-from geo_model.output import OUTPUT_DIR
+from geo_model.output import ANON_DIR, OUTPUT_DIR
 
 
 def add_region_arguments(parser: argparse.ArgumentParser) -> None:
@@ -34,6 +34,22 @@ def add_region_arguments(parser: argparse.ArgumentParser) -> None:
         help="simulate the named authorities that border each other as one "
         f"region, into {OUTPUT_DIR}/<NAME>+<NAME>; one bordering none of the "
         "others is still simulated on its own",
+    )
+
+
+def add_anon_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the option of writing a region's outputs with nothing naming it.
+
+    Args:
+        parser (argparse.ArgumentParser): The entry point's parser.
+    """
+    parser.add_argument(
+        "--anon",
+        action="store_true",
+        help="number the schools, districts and authorities rather than name "
+        "them, and reflect every map in the line easting = northing, so no "
+        "plot or table names the region; the results are the named run's, "
+        f"written to {OUTPUT_DIR}/<NAME>/{ANON_DIR}",
     )
 
 

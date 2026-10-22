@@ -34,7 +34,7 @@ uv run pytest --cov
 uv run pytest tests/model/test_matching.py::test_name
 ```
 
-Entry points are the modules of `src/geo_model/scripts/`, run as `uv run python -m geo_model.scripts.<name>`, e.g. `uv run python -m geo_model.scripts.run --min-distance 4828`; `uv run python -m geo_model` (also `uv run geo-model`) runs the parameter sweep. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge`; the options several scripts share are added by the `add_*` functions of cli.py.
+Entry points are the modules of `src/geo_model/scripts/`, run as `uv run python -m geo_model.scripts.<name>`, e.g. `uv run python -m geo_model.scripts.run --min-distance 4828`; `uv run python -m geo_model` (also `uv run geo-model`) runs the parameter sweep. Each takes `--la NAME [NAME ...]` (school register spelling, Southampton by default) and `--merge`; run, the scenarios, sweep and optimise also take `--anon`, which numbers every school, district and authority and reflects the maps, writing to `output/<region>/anonymised/`. The options several scripts share are added by the `add_*` functions of cli.py.
 
 ## Data, outputs and tests
 
@@ -44,7 +44,7 @@ Entry points are the modules of `src/geo_model/scripts/`, run as `uv run python 
 
 The package is layered, each layer importing only from those above it, and no library module imports a script:
 
-1. `data`: reads `data/` into GeoDataFrames of LSOAs (districts) and schools for the chosen LAs. `sources.py` holds every path, `areas.py`, `schools.py` and `travel.py` the readers, `regions.py` the grouping of LAs into regions.
+1. `data`: reads `data/` into GeoDataFrames of LSOAs (districts) and schools for the chosen LAs. `sources.py` holds every path, `areas.py`, `schools.py` and `travel.py` the readers, `regions.py` the grouping of LAs into regions, `anonymise.py` the relabelling `--anon` applies right after loading.
 2. `model`: simulates one instance. `settings.py` holds the seed, the default sample count, the route and preference defaults and `Settings`/`DEFAULTS`, and `DISADVANTAGE` (`--disadvantage`), who is disadvantaged and who may ride. `students.py` samples students per seed, `preferences.py` ranks school-route bundles for students and students for schools, `routes.py` builds the route network from a `Settings`, and `matching.py` runs Deferred Acceptance with Transportation (numba `@njit`, defined formally in agent_docs/matching.md).
 3. `measures`: `segregation.py` (dissimilarity index, Gini), `travel.py` (expected travel modes), `statistics.py` (t-tests with Holm correction) and `summaries.py` (tables of one setting's rows).
 4. `analysis`: `scoring.py` matches and scores a sample with and without routes, `sweep.py` holds `GRID`, `search.py` the NSGA-II problem.

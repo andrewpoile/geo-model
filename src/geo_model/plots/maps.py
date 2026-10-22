@@ -164,12 +164,46 @@ def draw_scale(ax: Axes) -> None:
             )
 
 
+def reflect(
+    areas: gpd.GeoDataFrame, secondary_schools: pd.DataFrame, student_xy: np.ndarray
+) -> tuple[gpd.GeoDataFrame, pd.DataFrame, np.ndarray]:
+    """A map's districts, schools and students reflected in the line easting
+    = northing, so the outline the map draws is not the region's.
+
+    The reflection keeps every distance, so the scale bar drawn over it stays
+    true. It is for drawing alone: the model samples and matches on the
+    coordinates as they are.
+
+    Args:
+        areas (gpd.GeoDataFrame): Districts, their active geometry the one
+        drawn.
+
+        secondary_schools (pd.DataFrame): Schools carrying "Easting" and
+        "Northing".
+
+        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+
+    Returns:
+        tuple[gpd.GeoDataFrame, pd.DataFrame, np.ndarray]: The three with
+        every easting and northing swapped.
+    """
+    return (
+        areas.set_geometry(areas.geometry.affine_transform([0, 1, 1, 0, 0, 0])),
+        secondary_schools.assign(
+            Easting=secondary_schools["Northing"],
+            Northing=secondary_schools["Easting"],
+        ),
+        student_xy[:, ::-1],
+    )
+
+
 def plot_map(
     areas: gpd.GeoDataFrame,
     secondary_schools: pd.DataFrame,
     student_xy: np.ndarray,
     matchings: dict[str, np.ndarray],
     path: Path,
+    reflected: bool = False,
 ) -> None:
     """Map `matchings` with `draw_map`, to `path`.
 
@@ -183,7 +217,14 @@ def plot_map(
         matchings (dict[str, np.ndarray]): Passed to `draw_map`.
 
         path (Path): PNG to write.
+
+        reflected (bool, optional): Draw the map reflected, as `reflect`
+        gives it. Defaults to False.
     """
+    if reflected:
+        areas, secondary_schools, student_xy = reflect(
+            areas, secondary_schools, student_xy
+        )
     # A bare Figure draws without a display backend, which pyplot would need.
     fig = Figure(figsize=(16, 8), layout="constrained")
     draw_map(fig, areas, secondary_schools, student_xy, matchings)

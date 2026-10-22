@@ -15,6 +15,7 @@ import pandas as pd
 from geo_model.analysis.scoring import settings_matchings
 from geo_model.analysis.sweep import GRID, default_cell, sweep_tests, swept
 from geo_model.cli import (
+    add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
     add_progressivity_argument,
@@ -24,6 +25,7 @@ from geo_model.cli import (
     add_travel_arguments,
     add_workers_argument,
 )
+from geo_model.data.anonymise import anonymise
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
@@ -187,14 +189,17 @@ def main() -> None:
         "without, and its Gini coefficient",
     )
     add_region_arguments(parser)
+    add_anon_argument(parser)
     args = parser.parse_args()
 
     shares = load_nts_mode_shares(args.years)
     parameters = swept(GRID, args.disadvantage)
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
     for las, areas in regions(args.la, args.merge):
-        out_dir = region_dir(las) / SWEEP_DIR
+        out_dir = region_dir(las, args.anon) / SWEEP_DIR
         _, secondary_schools = load_schools(las)
+        if args.anon:
+            areas, secondary_schools = anonymise(areas, secondary_schools)
         samples = list(student_samples(areas, args.seeds))
 
         results, schools, modes = sweep(
@@ -272,6 +277,7 @@ def main() -> None:
                     args.disadvantage,
                 ),
                 out_dir / MAP_PNG,
+                args.anon,
             )
         if args.lorenz:
             plot_lorenz(

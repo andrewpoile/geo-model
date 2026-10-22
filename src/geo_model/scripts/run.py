@@ -25,6 +25,7 @@ from geo_model.analysis.scoring import (
     settings_routes,
 )
 from geo_model.cli import (
+    add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
     add_progressivity_argument,
@@ -34,6 +35,7 @@ from geo_model.cli import (
     add_settings_arguments,
     add_travel_arguments,
 )
+from geo_model.data.anonymise import anonymise
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
@@ -194,6 +196,7 @@ def run(
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
     measure: str = "dissimilarity",
+    reflected: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and write,
     plot and report the two against each other in `out_dir`.
@@ -243,6 +246,9 @@ def run(
 
         measure (str, optional): A key of INTAKE_MEASURES, what the intake
         heatmap shows. Defaults to "dissimilarity".
+
+        reflected (bool, optional): Passed to `plot_map`, for an anonymised
+        run. Defaults to False.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]: The
@@ -299,6 +305,7 @@ def run(
             network,
         ),
         out_dir / MAP_PNG,
+        reflected,
     )
     n_routes = routes["route"].nunique()
     fig = Figure(
@@ -401,6 +408,7 @@ def main(
     add_disadvantage_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
+    add_anon_argument(parser)
     args = parser.parse_args()
     # Checked here as well as by route_network, so a run fails before its
     # region is loaded and sampled rather than after.
@@ -415,6 +423,8 @@ def main(
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")
         _, secondary_schools = load_schools(las)
+        if args.anon:
+            areas, secondary_schools = anonymise(areas, secondary_schools)
         samples = list(student_samples(areas, args.seeds))
         run(
             settings,
@@ -422,12 +432,13 @@ def main(
             areas,
             secondary_schools,
             shares,
-            region_dir(las) / out_dir,
+            region_dir(las, args.anon) / out_dir,
             args.circuity,
             args.round_up_seats,
             args.linear_progressivity,
             args.disadvantage,
             args.intake,
+            args.anon,
         )
 
 

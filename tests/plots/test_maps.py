@@ -7,7 +7,8 @@ from matplotlib.figure import Figure
 from shapely import box
 
 from geo_model.data import sources
-from geo_model.plots.maps import draw_map, plot_map
+from geo_model.plots import maps
+from geo_model.plots.maps import draw_map, plot_map, reflect
 from geo_model.plots.style import SCALE_BAR
 
 # --------------------------------------------------------------------------
@@ -106,3 +107,41 @@ def test_plot_map_writes_a_png(tmp_path):
     plot_map(*synthetic_city(), png)
 
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_plot_map_draws_the_map_reflected_when_asked(tmp_path, monkeypatch):
+    areas, schools, student_xy, matchings = synthetic_city()
+    drawn = []
+    monkeypatch.setattr(maps, "save", lambda fig, path: drawn.append(fig))
+
+    plot_map(areas, schools, student_xy, matchings, tmp_path / "map.png", True)
+
+    (fig,) = drawn
+    seated = {c.get_label(): c for c in fig.axes[0].collections}["seated"]
+    np.testing.assert_array_equal(seated.get_offsets(), student_xy[:3, ::-1])
+
+
+# --------------------------------------------------------------------------
+# reflect
+# --------------------------------------------------------------------------
+
+
+def test_reflect_swaps_every_easting_and_northing():
+    areas, schools, student_xy, _ = synthetic_city()
+
+    reflected_areas, reflected_schools, reflected_xy = reflect(
+        areas, schools, student_xy
+    )
+
+    # The polygons stay the geometry drawn, on the same grid.
+    assert reflected_areas.geometry.name == areas.geometry.name
+    assert reflected_areas.crs == areas.crs
+    np.testing.assert_array_equal(
+        reflected_areas.bounds.to_numpy(), areas.bounds.to_numpy()[:, [1, 0, 3, 2]]
+    )
+    np.testing.assert_array_equal(
+        reflected_schools[["Easting", "Northing"]].to_numpy(),
+        schools[["Northing", "Easting"]].to_numpy(),
+    )
+    np.testing.assert_array_equal(reflected_schools["P8MEA"], schools["P8MEA"])
+    np.testing.assert_array_equal(reflected_xy, student_xy[:, ::-1])

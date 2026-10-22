@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from geo_model.cli import (
+    add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
     add_progressivity_argument,
@@ -37,6 +38,7 @@ def every_shared_option() -> argparse.ArgumentParser:
     add_disadvantage_argument(parser)
     add_intake_argument(parser, ["share", "dissimilarity"])
     add_region_arguments(parser)
+    add_anon_argument(parser)
     return parser
 
 
@@ -55,13 +57,14 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
         "intake": "share",
         "la": LAS,
         "merge": False,
+        "anon": False,
     }
     # Every flag, its type and the --no- form of the switches.
     args = parser.parse_args(
         ["--seeds", "3", "--workers", "4", "--years", "2024", "2025"]
         + ["--circuity", "1.3", "--no-round-up-seats", "--linear-progressivity"]
         + ["--disadvantage", "decile", "--intake", "dissimilarity"]
-        + ["--la", "Hampshire", "Southampton", "--merge"]
+        + ["--la", "Hampshire", "Southampton", "--merge", "--anon"]
     )
     assert vars(args) == {
         "seeds": 3,
@@ -74,6 +77,7 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
         "intake": "dissimilarity",
         "la": ["Hampshire", "Southampton"],
         "merge": True,
+        "anon": True,
     }
 
 

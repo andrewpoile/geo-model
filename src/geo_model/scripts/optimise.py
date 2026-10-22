@@ -39,6 +39,7 @@ from geo_model.analysis.search import (
     searchable,
 )
 from geo_model.cli import (
+    add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
     add_progressivity_argument,
@@ -48,6 +49,7 @@ from geo_model.cli import (
     add_travel_arguments,
     add_workers_argument,
 )
+from geo_model.data.anonymise import anonymise
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
@@ -323,6 +325,7 @@ def search(
         args.linear_progressivity,
         args.disadvantage,
         args.intake,
+        args.anon,
     )
 
     written = [EVALUATIONS_CSV, FRONT_CSV]
@@ -383,12 +386,15 @@ def main() -> None:
     add_disadvantage_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
+    add_anon_argument(parser)
     args = parser.parse_args()
 
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
-        out_dir = region_dir(las) / OUT_DIR
+        out_dir = region_dir(las, args.anon) / OUT_DIR
         _, secondary_schools = load_schools(las)
+        if args.anon:
+            areas, secondary_schools = anonymise(areas, secondary_schools)
         search(args, las, areas, secondary_schools, shares, out_dir)
 
 
