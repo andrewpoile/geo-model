@@ -36,7 +36,7 @@ from geo_model.model.students import (
 
 
 def match_sample(
-    student_xy: np.ndarray,
+    student_distance: np.ndarray,
     student_lsoa: np.ndarray,
     areas: pd.DataFrame,
     secondary_schools: gpd.GeoDataFrame,
@@ -58,7 +58,8 @@ def match_sample(
     whatever is measured on the two matchings differs by the routes alone.
 
     Args:
-        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+        student_distance (np.ndarray): Distance from every student to every
+        school, shape (n_students, n_schools).
 
         student_lsoa (np.ndarray): Positional index into `areas` of the
         district each student was sampled in.
@@ -104,7 +105,7 @@ def match_sample(
     """
     for scenario, route_set in zip(SCENARIOS, (routes, None)):
         instance = secondary_instance(
-            student_xy,
+            student_distance,
             student_lsoa,
             areas,
             secondary_schools,
@@ -123,7 +124,7 @@ def match_sample(
 
 
 def score_sample(
-    student_xy: np.ndarray,
+    student_distance: np.ndarray,
     student_lsoa: np.ndarray,
     areas: pd.DataFrame,
     secondary_schools: gpd.GeoDataFrame,
@@ -152,7 +153,8 @@ def score_sample(
     route's riders by group, so the use made of its seats can be seen.
 
     Args:
-        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+        student_distance (np.ndarray): Distance from every student to every
+        school, shape (n_students, n_schools).
 
         student_lsoa (np.ndarray): Positional index into `areas` of the
         district each student was sampled in.
@@ -216,11 +218,10 @@ def score_sample(
         "disadvantaged" and "other" (students riding it).
     """
     n_schools = len(secondary_schools)
-    school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
     school_district = district_index(secondary_schools, areas)
     rows, school_rows, mode_rows, route_rows = [], [], [], []
     for scenario, preferences, matching in match_sample(
-        student_xy,
+        student_distance,
         student_lsoa,
         areas,
         secondary_schools,
@@ -275,7 +276,7 @@ def score_sample(
                 local_b,
             )
         ]
-        modes = expected_modes(matching, student_xy, school_xy, shares, circuity)
+        modes = expected_modes(matching, student_distance, shares, circuity)
         mode_rows += [
             {"scenario": scenario, "mode": mode, "students": students}
             for mode, students in modes.items()
@@ -313,6 +314,7 @@ def settings_routes(
     settings: Settings,
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
+    district_distance: np.ndarray,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
@@ -324,8 +326,10 @@ def settings_routes(
 
         areas (gpd.GeoDataFrame): Districts, as `route_network` takes them.
 
-        secondary_schools (gpd.GeoDataFrame): Schools carrying "Easting",
-        "Northing", "P8MEA" and "PlacesOffered".
+        secondary_schools (gpd.GeoDataFrame): Schools carrying "P8MEA" and
+        "PlacesOffered".
+
+        district_distance (np.ndarray): Passed to `route_network`.
 
         round_up (bool, optional): Passed to `route_network`. Defaults to
         ROUND_UP_SEATS.
@@ -341,7 +345,7 @@ def settings_routes(
     """
     return route_network(
         areas,
-        secondary_schools[["Easting", "Northing"]].to_numpy(),
+        district_distance,
         secondary_schools["P8MEA"].to_numpy(),
         secondary_schools["PlacesOffered"].to_numpy(),
         cohort_sizes(areas, "secondary"),
@@ -365,6 +369,7 @@ def settings_matchings(
     sample: Sample,
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
+    district_distance: np.ndarray,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
@@ -389,6 +394,8 @@ def settings_matchings(
         secondary_schools (gpd.GeoDataFrame): Schools, as `score_settings`
         takes them.
 
+        district_distance (np.ndarray): Passed to `settings_routes`.
+
         round_up (bool, optional): Passed to `settings_routes`. Defaults to
         ROUND_UP_SEATS.
 
@@ -409,15 +416,21 @@ def settings_matchings(
         dict[str, np.ndarray]: The matching of each scenario, "with routes"
         then "without routes", as returned by `fast_DAT`.
     """
-    student_xy, student_lsoa, drawn, noise_seed = sample
+    _, student_lsoa, drawn, noise_seed, student_distance = sample
     if routes is None:
         routes = settings_routes(
-            settings, areas, secondary_schools, round_up, linear, disadvantage
+            settings,
+            areas,
+            secondary_schools,
+            district_distance,
+            round_up,
+            linear,
+            disadvantage,
         )
     return {
         scenario: matching
         for scenario, _, matching in match_sample(
-            student_xy,
+            student_distance,
             student_lsoa,
             areas,
             secondary_schools,
@@ -465,7 +478,7 @@ def district_rows(
                 student_lsoa,
                 disadvantaged_group(student_lsoa, drawn, areas, decile, disadvantage),
             ).assign(seed=seed)
-            for seed, (_, student_lsoa, drawn, _) in enumerate(samples)
+            for seed, (_, student_lsoa, drawn, _, _) in enumerate(samples)
         ],
         ignore_index=True,
     ).pipe(lambda rows: rows[["seed", *rows.columns.drop("seed")]])

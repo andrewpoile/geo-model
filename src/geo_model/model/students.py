@@ -6,12 +6,14 @@ import shapely
 from shapely.geometry.base import BaseGeometry
 
 from geo_model.data.areas import PHASE_AGE
+from geo_model.data.network import Distance
 from geo_model.model.settings import DISADVANTAGE_CHOICES, SEED
 
 # A student sample: the coordinates of every student, the positional index of
-# the district each was drawn in, whether each was drawn disadvantaged, and the
-# seed their tastes for the schools are drawn from.
-Sample = tuple[np.ndarray, np.ndarray, np.ndarray, np.random.SeedSequence]
+# the district each was drawn in, whether each was drawn disadvantaged, the
+# seed their tastes for the schools are drawn from, and the distance from every
+# student to every school.
+Sample = tuple[np.ndarray, np.ndarray, np.ndarray, np.random.SeedSequence, np.ndarray]
 
 
 def cohort_sizes(areas: pd.DataFrame, phase: str) -> np.ndarray:
@@ -246,7 +248,9 @@ def disadvantaged_group(
     return drawn
 
 
-def student_samples(areas: pd.DataFrame, n_seeds: int) -> Iterator[Sample]:
+def student_samples(
+    areas: pd.DataFrame, n_seeds: int, to_school: Distance
+) -> Iterator[Sample]:
     """Draw one secondary student sample per seed, reproducibly from SEED.
 
     Each seed draws every area's cohort, as `draw_cohort_sizes` does, then
@@ -261,10 +265,15 @@ def student_samples(areas: pd.DataFrame, n_seeds: int) -> Iterator[Sample]:
 
         n_seeds (int): Number of samples to draw.
 
+        to_school (Distance): Distance from any point to every school, as
+        `school_distance` measures it, taken once per sample so every
+        matching of the sample ranks on the same distances.
+
     Yields:
         Sample: Coordinates and positional district index of each student, as
         returned by `sample_students`, whether each is disadvantaged, as
-        drawn by `disadvantaged_students`, and the seed of their tastes.
+        drawn by `disadvantaged_students`, the seed of their tastes and their
+        distance to every school.
     """
     for stream in np.random.SeedSequence(SEED).spawn(n_seeds):
         rng = np.random.default_rng(stream)
@@ -275,4 +284,4 @@ def student_samples(areas: pd.DataFrame, n_seeds: int) -> Iterator[Sample]:
             rng,
         )
         drawn = disadvantaged_students(student_lsoa, areas, rng)
-        yield student_xy, student_lsoa, drawn, stream.spawn(1)[0]
+        yield student_xy, student_lsoa, drawn, stream.spawn(1)[0], to_school(student_xy)

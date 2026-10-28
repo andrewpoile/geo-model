@@ -59,9 +59,9 @@ def test_points_off_the_network_are_placed_on_its_largest_part():
 
 
 def test_network_is_never_shorter_than_the_straight_line(
-    areas, secondary, tmp_path, monkeypatch
+    areas, secondary, network_cache, monkeypatch
 ):
-    monkeypatch.setattr(sources, "NETWORK_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(sources, "NETWORK_CACHE_DIR", network_cache)
     region = "+".join(sorted(sources.LAS))
     school_xy = secondary[["Easting", "Northing"]].to_numpy()
     xy = np.column_stack([areas.centroid.x, areas.centroid.y])

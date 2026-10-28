@@ -54,16 +54,15 @@ SHARES = pd.DataFrame(
 
 
 def test_expected_modes_counts_routed_routeless_and_drops_unseated():
-    school_xy = np.array([[0.0, 0.0], [10_000.0, 0.0]])
     # Student 0 walks distance 0 to school 0, student 1 rides a route to
     # school 1, student 2 is 3 miles from school 1 without a route, student 3
     # holds no seat.
-    student_xy = np.array(
-        [[0.0, 0.0], [0.0, 0.0], [10_000 - 3 * MILE, 0.0], [5.0, 5.0]]
+    student_distance = np.array(
+        [[0.0, 10_000.0], [0.0, 10_000.0], [7_000.0, 3 * MILE], [7.0, 9_995.0]]
     )
     matching = np.array([[0, -1], [1, 0], [1, -1], [-1, -1]], dtype=np.int32)
 
-    modes = expected_modes(matching, student_xy, school_xy, SHARES)
+    modes = expected_modes(matching, student_distance, SHARES)
 
     expected = SHARES.loc[[NTS_BANDS[0], NTS_BANDS[2]]].sum()
     expected["route"] = 1

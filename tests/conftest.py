@@ -1,6 +1,7 @@
 import pytest
 
 from geo_model.data import areas as ar
+from geo_model.data import network as nw
 from geo_model.data import schools as sc
 from geo_model.data import sources, travel
 from geo_model.model import routes as rt
@@ -45,17 +46,37 @@ def shares(data):
 
 
 @pytest.fixture(scope="session")
-def samples(areas):
-    """One student sample of the default region."""
-    return list(student_samples(areas, 1))
+def network_cache(tmp_path_factory):
+    """A folder the walking network is cached in for the session, so the
+    tests read it from the GeoPackage once and never from the real cache."""
+    return tmp_path_factory.mktemp("network")
 
 
 @pytest.fixture(scope="session")
-def routes(areas, secondary):
+def to_school(secondary):
+    """Straight-line distance to the default region's secondary schools, the
+    model as it was before the walking network, which the tests read it on."""
+    return nw.Euclidean(secondary[["Easting", "Northing"]].to_numpy())
+
+
+@pytest.fixture(scope="session")
+def district_distance(areas, to_school):
+    """Distance from every district's population centroid to every school."""
+    return to_school(rt.centroid_xy(areas))
+
+
+@pytest.fixture(scope="session")
+def samples(areas, to_school):
+    """One student sample of the default region."""
+    return list(student_samples(areas, 1, to_school))
+
+
+@pytest.fixture(scope="session")
+def routes(areas, secondary, district_distance):
     """The default region's route network at the module defaults."""
     return rt.route_network(
         areas,
-        secondary[["Easting", "Northing"]].to_numpy(),
+        district_distance,
         secondary["P8MEA"].to_numpy(),
         secondary["PlacesOffered"].to_numpy(),
         cohort_sizes(areas, "secondary"),

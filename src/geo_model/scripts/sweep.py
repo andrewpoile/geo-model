@@ -6,17 +6,19 @@ travel mode against every parameter.
 
 import argparse
 import functools
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 
 from geo_model.analysis.scoring import settings_matchings
 from geo_model.analysis.sweep import GRID, default_cell, sweep_tests, swept
+from geo_model.analysis.workers import task_map
 from geo_model.cli import (
     add_anon_argument,
     add_disadvantage_argument,
+    add_distance_argument,
     add_intake_argument,
     add_priority_argument,
     add_progressivity_argument,
@@ -64,6 +66,7 @@ def sweep(
     samples: list[Sample],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
+    district_distance: np.ndarray,
     shares: pd.DataFrame,
     out_dir: Path,
     circuity: float = CIRCUITY,
@@ -72,6 +75,8 @@ def sweep(
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
     priority: str = PRIORITY,
+    *,
+    distance: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score every cell of the parameters `swept` names on the same samples.
 
@@ -88,6 +93,8 @@ def sweep(
 
         secondary_schools (gpd.GeoDataFrame): Schools, as `score_sample`
         takes them.
+
+        district_distance (np.ndarray): Passed to `score_settings`.
 
         shares (pd.DataFrame): Passed to `score_settings`.
 
@@ -118,6 +125,8 @@ def sweep(
         priority (str, optional): Passed to `swept` and `score_settings`.
         Defaults to PRIORITY.
 
+        distance (str): Passed to `score_settings`.
+
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: The scenario rows,
         one per (parameter, value, seed, scenario), the school rows, one per
@@ -136,18 +145,17 @@ def sweep(
         samples=samples,
         areas=areas,
         secondary_schools=secondary_schools,
+        district_distance=district_distance,
         shares=shares,
         circuity=circuity,
         round_up=round_up,
         linear=linear,
         disadvantage=disadvantage,
         priority=priority,
+        distance=distance,
     )
-    if workers == 1:
-        scored = [score(settings) for _, settings in cells]
-    else:
-        with ProcessPoolExecutor(workers) as pool:
-            scored = list(pool.map(score, [settings for _, settings in cells]))
+    with task_map(score, workers) as scores:
+        scored = list(scores(settings for _, settings in cells))
 
     rows, school_rows, mode_rows = [], [], []
     # The route rows are left empty, since `score_settings` keeps them only
@@ -183,6 +191,7 @@ def main() -> None:
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
+    add_distance_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     parser.add_argument(
         "--map",
@@ -210,16 +219,17 @@ def main() -> None:
     parameters = swept(GRID, args.disadvantage, args.priority)
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
     for las, areas in regions(args.la, args.merge):
-        areas, secondary_schools, folder = load_region(
-            las, areas, args.anon, args.priority
+        areas, secondary_schools, to_school, district_distance, folder = load_region(
+            las, areas, args.anon, args.priority, args.distance
         )
         out_dir = folder / SWEEP_DIR
-        samples = list(student_samples(areas, args.seeds))
+        samples = list(student_samples(areas, args.seeds, to_school))
 
         results, schools, modes = sweep(
             samples,
             areas,
             secondary_schools,
+            district_distance,
             shares,
             out_dir,
             args.circuity,
@@ -228,6 +238,7 @@ def main() -> None:
             args.linear_progressivity,
             args.disadvantage,
             priority=args.priority,
+            distance=to_school.rule,
         )
         print(" + ".join(las) + ":")
         tests = sweep_tests(results)
@@ -287,6 +298,7 @@ def main() -> None:
                     samples[0],
                     areas,
                     secondary_schools,
+                    district_distance,
                     args.round_up_seats,
                     args.linear_progressivity,
                     args.disadvantage,

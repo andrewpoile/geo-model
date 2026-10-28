@@ -2,7 +2,6 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
-from scipy.spatial import distance as spdist
 
 from geo_model.model.settings import (
     DISADVANTAGE,
@@ -30,9 +29,8 @@ def _spread(values: np.ndarray, name: str) -> float:
 
 
 def rank_bundles(
-    student_xy: np.ndarray,
+    distances: np.ndarray,
     student_district: np.ndarray,
-    school_xy: np.ndarray,
     school_district: np.ndarray,
     route_district: np.ndarray,
     route_school: np.ndarray,
@@ -84,28 +82,27 @@ def rank_bundles(
     school, route and student, which would grow with all three at once.
 
     Args:
-        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+        distances (np.ndarray): Distance from every student to every school,
+        shape (n_students, n_schools).
 
         student_district (np.ndarray): Positional index of the district each
         student lives in, shape (n_students,).
 
-        school_xy (np.ndarray): School coordinates, shape (n_schools, 2). Must
-        share a CRS with `student_xy`.
-
         school_district (np.ndarray): Positional index of the district each
-        school sits in, aligned with `school_xy` and indexed the same way as
-        `student_district`. Read by the "bracket" priority alone.
+        school sits in, aligned with the columns of `distances` and indexed
+        the same way as `student_district`. Read by the "bracket" priority
+        alone.
 
         route_district (np.ndarray): District each route leaves, shape
         (n_routes,). A route is identified by its position in this array, the
         route axis the matching mechanism indexes.
 
         route_school (np.ndarray): School each route arrives at, as a positional
-        index into `school_xy`, aligned with `route_district`.
+        index into the columns of `distances`, aligned with `route_district`.
 
         school_scores (np.ndarray | None, optional): Performance score per
-        school, aligned with `school_xy`, higher being better. Required when
-        `performance_weight` > 0. Defaults to None.
+        school, aligned with the columns of `distances`, higher being better.
+        Required when `performance_weight` > 0. Defaults to None.
 
         performance_weight (ArrayLike, optional): Share of the preference
         ranking driven by performance rather than travel, in [0, 1], one for
@@ -154,8 +151,7 @@ def rank_bundles(
         those bundles gives it, 0 being its strongest claim on a seat, padded
         with -1.
     """
-    n_students = len(student_xy)
-    n_schools = len(school_xy)
+    n_students, n_schools = distances.shape
     # A scalar is every student's value; an array must hold one per student.
     performance_weight = np.broadcast_to(
         np.asarray(performance_weight, dtype=float), (n_students,)
@@ -211,7 +207,6 @@ def rank_bundles(
             f"route_school holds indices outside the {n_schools} schools given."
         )
 
-    distances = spdist.cdist(student_xy, school_xy)
     travel = (
         (1 - performance_weight)[:, None] * distances / _spread(distances, "Distances")
     )
@@ -396,7 +391,7 @@ def cohort_capacity(schools: pd.DataFrame) -> np.ndarray:
 
 
 def secondary_instance(
-    student_xy: np.ndarray,
+    student_distance: np.ndarray,
     student_lsoa: np.ndarray,
     areas: pd.DataFrame,
     secondary_schools: gpd.GeoDataFrame,
@@ -423,7 +418,8 @@ def secondary_instance(
     module.
 
     Args:
-        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
+        student_distance (np.ndarray): Distance from every student to every
+        school, shape (n_students, n_schools).
 
         student_lsoa (np.ndarray): Positional index into `areas` of the
         district each student was sampled in.
@@ -432,8 +428,9 @@ def secondary_instance(
         order students were sampled from.
 
         secondary_schools (gpd.GeoDataFrame): Schools carrying "LSOA21CD",
-        "EstablishmentName", "P8MEA", "Easting", "Northing" and the capacity
-        columns `cohort_capacity` reads.
+        "EstablishmentName", "P8MEA" and the capacity columns
+        `cohort_capacity` reads, aligned with the columns of
+        `student_distance`.
 
         routes (pd.DataFrame | None): The route set, as returned by
         `route_network`, or None for an instance without routes.
@@ -488,9 +485,8 @@ def secondary_instance(
         route_capacities = routes["capacity"].to_numpy(dtype=np.int32)
 
     preferences, ranks = rank_bundles(
-        student_xy,
+        student_distance,
         student_lsoa,
-        secondary_schools[["Easting", "Northing"]].to_numpy(),
         district_index(secondary_schools, areas),
         route_district,
         route_school,

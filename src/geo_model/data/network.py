@@ -6,8 +6,11 @@ which sit at the two ends of its geometry; links meet only at shared end ids,
 so two links crossing at a bridge, sharing a point but not an id, never meet.
 """
 
+import functools
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 import geopandas as gpd
 import numpy as np
@@ -27,6 +30,23 @@ LINK_COLUMNS = ["nodes", "foot", "rail", "ferry"]
 # other value is one the model has no rule for, and raises.
 FOOT_OPEN = {"yes", "designated"}
 FOOT_CLOSED = {"no"}
+# How every distance is measured, one of DISTANCE_CHOICES, as
+# `school_distance` measures it:
+#   "network"    Along the walking network of the OS Multi-modal Routing
+#                Network.
+#   "euclidean"  In a straight line: the model as it was before.
+DISTANCE_CHOICES = ("network", "euclidean")
+DISTANCE = "network"
+
+
+class Distance(Protocol):
+    """Distance from each of a set of points, shape (n_points, 2), to every
+    school, shape (n_points, n_schools), and the rule of DISTANCE_CHOICES it
+    is measured by."""
+
+    rule: str
+
+    def __call__(self, xy: np.ndarray) -> np.ndarray: ...
 
 
 @dataclass(frozen=True)
@@ -196,6 +216,8 @@ class NetworkDistance:
     taken.
     """
 
+    rule = "network"
+
     def __init__(self, network: Network, school_xy: np.ndarray) -> None:
         """
         Args:
@@ -262,9 +284,37 @@ class NetworkDistance:
 class Euclidean:
     """Straight-line distance from any point to every school."""
 
+    rule = "euclidean"
+
     def __init__(self, school_xy: np.ndarray) -> None:
         self.school_xy = school_xy
 
     def __call__(self, xy: np.ndarray) -> np.ndarray:
         """Distance from each point to every school, shape (n_points, n_schools)."""
         return spdist.cdist(xy, self.school_xy)
+
+
+def school_distance(
+    rule: str, areas: gpd.GeoDataFrame, region: str
+) -> Callable[[np.ndarray], Distance]:
+    """Distance to a set of schools, measured by `rule`, the region's network
+    read once however many sets of schools are measured along it.
+
+    Args:
+        rule (str): One of DISTANCE_CHOICES: "network" along the region's
+        walking network, as `load_walk_network` gives it, "euclidean" in a
+        straight line.
+
+        areas (gpd.GeoDataFrame): The region's districts, in sources.CRS.
+
+        region (str): Passed to `load_walk_network`.
+
+    Returns:
+        Callable[[np.ndarray], Distance]: From school coordinates, shape
+        (n_schools, 2), the `NetworkDistance` or `Euclidean` to them.
+    """
+    if rule not in DISTANCE_CHOICES:
+        raise ValueError(f"rule must be one of {DISTANCE_CHOICES}, got {rule!r}.")
+    if rule == "euclidean":
+        return Euclidean
+    return functools.partial(NetworkDistance, load_walk_network(areas, region))

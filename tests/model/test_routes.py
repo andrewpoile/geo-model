@@ -2,6 +2,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.spatial.distance import cdist
 
 from geo_model.data.sources import CRS
 from geo_model.model import routes as rt
@@ -45,13 +46,23 @@ def make_areas(deciles, spacing=10_000.0, index=None, scores=None, ranks=None):
     return frame.rename_geometry("Centroids")
 
 
+def between(districts, school_xy=SCHOOL_XY):
+    """Straight-line distance from every district's centroid to every school."""
+    return cdist(rt.centroid_xy(districts), school_xy)
+
+
 def network(areas, school_xy=SCHOOL_XY, school_scores=SCHOOL_P8, **kwargs):
     """`route_network` with every school offering 100 places and every
     district holding 10 students, unless a test passes its own."""
     school_places = kwargs.pop("school_places", np.full(len(school_xy), 100))
     district_cohort = kwargs.pop("district_cohort", np.full(len(areas), 10))
     return rt.route_network(
-        areas, school_xy, school_scores, school_places, district_cohort, **kwargs
+        areas,
+        between(areas, school_xy),
+        school_scores,
+        school_places,
+        district_cohort,
+        **kwargs,
     )
 
 
@@ -211,7 +222,7 @@ def test_build_routes_joins_every_district_to_the_schools_beyond_the_threshold()
     # Distances are district 0: [0, 10000] and district 1: [10000, 0].
     districts = make_areas([1, 1])
     routes = rt.build_routes(
-        districts, SCHOOL_XY, MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
+        districts, between(districts), MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
     )
 
     pd.testing.assert_frame_equal(
@@ -233,7 +244,7 @@ def test_build_routes_keeps_the_district_frame_index_as_district_idx():
     # positions in the full area frame and must survive unrenumbered.
     districts = make_areas([1, 1], index=[4, 7])
     routes = rt.build_routes(
-        districts, SCHOOL_XY, MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
+        districts, between(districts), MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [4, 7])
@@ -242,7 +253,9 @@ def test_build_routes_keeps_the_district_frame_index_as_district_idx():
 
 def test_build_routes_returns_nothing_when_every_school_is_within_reach():
     districts = make_areas([1, 1])
-    routes = rt.build_routes(districts, SCHOOL_XY, 50_000, WEIGHT, SCHOOL_SEATS)
+    routes = rt.build_routes(
+        districts, between(districts), 50_000, WEIGHT, SCHOOL_SEATS
+    )
     assert routes.empty
 
 
@@ -252,7 +265,11 @@ def test_build_routes_measures_from_the_population_centroid():
     districts = make_areas([1, 1], spacing=1.0)
     districts["Centroids"] = gpd.points_from_xy([3_000.0, 4_000.0], [0.0, 0.0])
     routes = rt.build_routes(
-        districts, np.array([[0.0, 0.0]]), 3218, WEIGHT, SCHOOL_SEATS[:1]
+        districts,
+        between(districts, np.array([[0.0, 0.0]])),
+        3218,
+        WEIGHT,
+        SCHOOL_SEATS[:1],
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [1])
@@ -265,7 +282,7 @@ def test_build_routes_splits_a_schools_seats_between_the_routes_feeding_it():
     districts = make_areas([1, 1, 1])
     routes = rt.build_routes(
         districts,
-        np.array([[0.0, 0.0]]),
+        between(districts, np.array([[0.0, 0.0]])),
         MIN_ROUTE_DISTANCE,
         np.array([5.0, 1.0, 2.0]),
         np.array([30]),
@@ -278,7 +295,11 @@ def test_build_routes_splits_a_schools_seats_between_the_routes_feeding_it():
 def test_build_routes_leaves_a_district_of_no_weight_unrouted():
     districts = make_areas([1, 1])
     routes = rt.build_routes(
-        districts, SCHOOL_XY, MIN_ROUTE_DISTANCE, np.array([0.0, 1.0]), SCHOOL_SEATS
+        districts,
+        between(districts),
+        MIN_ROUTE_DISTANCE,
+        np.array([0.0, 1.0]),
+        SCHOOL_SEATS,
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [1])
@@ -291,7 +312,7 @@ def test_build_routes_leaves_a_route_apportioned_no_seat_unrouted(capsys):
     # contiguously from 0.
     districts = make_areas([1, 1])
     routes = rt.build_routes(
-        districts, SCHOOL_XY, MIN_ROUTE_DISTANCE, WEIGHT, np.array([30, 0])
+        districts, between(districts), MIN_ROUTE_DISTANCE, WEIGHT, np.array([30, 0])
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [1])
@@ -312,7 +333,7 @@ def test_build_routes_keeps_only_the_shortest_route_holding_a_seat_of_each_schoo
 
     routes = rt.build_routes(
         districts,
-        school_xy,
+        between(districts, school_xy),
         0.0,
         np.array([1.0, 0.0, 1.0]),
         np.array([30, 40, 0]),
@@ -332,7 +353,7 @@ def test_build_routes_gives_no_district_to_a_school_holding_no_seat(capsys):
     # seat and district 1 would take school 0.
     routes = rt.build_routes(
         make_areas([1, 1]),
-        np.array([[20_000.0, 0.0], [5_000.0, 0.0]]),
+        between(make_areas([1, 1]), np.array([[20_000.0, 0.0], [5_000.0, 0.0]])),
         MIN_ROUTE_DISTANCE,
         WEIGHT,
         np.array([30, 0]),
@@ -357,7 +378,7 @@ def test_build_routes_rejects_what_bottleneck_cannot_take(ranks, seats, error, m
     with pytest.raises(error, match=message):
         rt.build_routes(
             make_areas([1, 1], ranks=ranks),
-            SCHOOL_XY,
+            between(make_areas([1, 1])),
             0.0,
             WEIGHT,
             np.array(seats),
@@ -773,7 +794,11 @@ def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(caps
 def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path):
     out_dir = tmp_path / "out"
     routes = rt.build_routes(
-        make_areas([1, 1]), SCHOOL_XY, MIN_ROUTE_DISTANCE, WEIGHT, SCHOOL_SEATS
+        make_areas([1, 1]),
+        between(make_areas([1, 1])),
+        MIN_ROUTE_DISTANCE,
+        WEIGHT,
+        SCHOOL_SEATS,
     )
 
     save_routes(routes, out_dir)

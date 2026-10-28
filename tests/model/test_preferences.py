@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.spatial.distance import cdist
 
+from geo_model.data.network import Euclidean
 from geo_model.model.preferences import (
     _spread,
     cohort_capacity,
@@ -42,9 +44,8 @@ def test_spread_rejects_a_constant_array():
 #
 # Distances are s0: [0, 20] and s1: [10, 10].
 
-STUDENT_XY = np.array([[0.0, 0.0], [10.0, 0.0]])
+DISTANCES = np.array([[0.0, 20.0], [10.0, 10.0]])
 STUDENT_DISTRICT = np.array([0, 1])
-SCHOOL_XY = np.array([[0.0, 0.0], [20.0, 0.0]])
 SCHOOL_DISTRICT = np.array([0, 1])
 ROUTE_DISTRICT = np.array([1])
 ROUTE_SCHOOL = np.array([0])
@@ -58,9 +59,8 @@ def rank_two_districts(
     **kwargs,
 ):
     return rank_bundles(
-        STUDENT_XY,
+        DISTANCES,
         student_district,
-        SCHOOL_XY,
         school_district,
         route_district,
         route_school,
@@ -133,9 +133,8 @@ def test_rank_bundles_ranks_a_distant_local_above_a_near_outsider_by_bracket_alo
     priority, expected
 ):
     _, ranks = rank_bundles(
-        np.array([[100.0, 0.0], [1.0, 0.0]]),
+        np.array([[100.0], [1.0]]),
         np.array([0, 1]),
-        np.array([[0.0, 0.0]]),
         np.array([0]),
         np.empty(0, dtype=np.int64),
         np.empty(0, dtype=np.int64),
@@ -167,9 +166,8 @@ def test_rank_bundles_discounts_routed_bundles_under_distance_priority_alone(
     # s0 lives 4m from the school, in its district, and riders s1 and s2 10m
     # and 6m. A full route discount puts each rider's route first on its list.
     _, ranks = rank_bundles(
-        np.array([[4.0, 0.0], [10.0, 0.0], [6.0, 0.0]]),
+        np.array([[4.0], [10.0], [6.0]]),
         np.array([0, 1, 1]),
-        np.array([[0.0, 0.0]]),
         np.array([0]),
         np.array([1]),
         np.array([0]),
@@ -182,9 +180,8 @@ def test_rank_bundles_discounts_routed_bundles_under_distance_priority_alone(
 
 def test_rank_bundles_without_routes_ranks_schools_by_distance_alone():
     preferences, ranks = rank_bundles(
-        np.array([[0.0, 0.0], [10.0, 0.0]]),
+        np.array([[0.0, 5.0, 20.0], [10.0, 5.0, 10.0]]),
         np.array([0, 0]),
-        np.array([[0.0, 0.0], [5.0, 0.0], [20.0, 0.0]]),
         np.array([0, 0, 0]),
         np.empty(0, dtype=np.int64),
         np.empty(0, dtype=np.int64),
@@ -200,9 +197,8 @@ def test_rank_bundles_without_routes_ranks_schools_by_distance_alone():
 
 def test_rank_bundles_full_performance_weight_ranks_on_score_alone():
     preferences, _ = rank_bundles(
-        np.array([[0.0, 0.0], [10.0, 0.0]]),
+        np.array([[0.0, 5.0, 20.0], [10.0, 5.0, 10.0]]),
         np.array([0, 0]),
-        np.array([[0.0, 0.0], [5.0, 0.0], [20.0, 0.0]]),
         np.array([0, 0, 0]),
         np.empty(0, dtype=np.int64),
         np.empty(0, dtype=np.int64),
@@ -243,21 +239,19 @@ def test_rank_bundles_noise_perturbs_preferences_but_not_priorities():
     rng = np.random.default_rng(3)
     student_xy = rng.normal(size=(40, 2)) * 1000
     district = rng.integers(0, 3, size=40)
-    school_xy = rng.normal(size=(6, 2)) * 1000
+    distances = cdist(student_xy, rng.normal(size=(6, 2)) * 1000)
     school_district = np.arange(6) % 3
 
     quiet = rank_bundles(
-        student_xy,
+        distances,
         district,
-        school_xy,
         school_district,
         np.array([0, 1]),
         np.array([2, 4]),
     )
     noisy = rank_bundles(
-        student_xy,
+        distances,
         district,
-        school_xy,
         school_district,
         np.array([0, 1]),
         np.array([2, 4]),
@@ -275,14 +269,13 @@ def test_rank_bundles_noise_gives_the_same_tastes_with_routes_and_without():
     rng = np.random.default_rng(3)
     student_xy = rng.normal(size=(40, 2)) * 1000
     district = rng.integers(0, 3, size=40)
-    school_xy = rng.normal(size=(6, 2)) * 1000
+    distances = cdist(student_xy, rng.normal(size=(6, 2)) * 1000)
     school_district = np.arange(6) % 3
 
     def preferences(route_district, route_school):
         return rank_bundles(
-            student_xy,
+            distances,
             district,
-            school_xy,
             school_district,
             route_district,
             route_school,
@@ -297,7 +290,7 @@ def test_rank_bundles_noise_gives_the_same_tastes_with_routes_and_without():
     # Routes only add bundles, so the schools a student ranks without a route
     # keep the order they take with no routes at all.
     assert (routed[..., 1] >= 0).any()
-    for student in range(len(student_xy)):
+    for student in range(len(distances)):
         bundles = routed[student]
         schools = bundles[(bundles[:, 0] >= 0) & (bundles[:, 1] < 0), 0]
         np.testing.assert_array_equal(schools, plain[student, :, 0])
@@ -428,9 +421,9 @@ def test_cohort_capacity_rejects_a_cohort_of_less_than_one_seat():
 
 
 @pytest.fixture(scope="module")
-def students(areas):
-    """A cohort drawn in the default region: where each student lives, its
-    district and whether it is disadvantaged."""
+def students(areas, secondary):
+    """A cohort drawn in the default region: its straight-line distance to
+    every school, its district and whether it is disadvantaged."""
     rng = np.random.default_rng(0)
     student_xy, student_lsoa = sample_students(
         areas["Borders"],
@@ -442,16 +435,17 @@ def students(areas):
         student_lsoa, areas, np.random.default_rng(1)
     )
     assert disadvantaged.any() and not disadvantaged.all()
-    return student_xy, student_lsoa, disadvantaged
+    school_xy = secondary[["Easting", "Northing"]].to_numpy()
+    return Euclidean(school_xy)(student_xy), student_lsoa, disadvantaged
 
 
 def test_secondary_instance_ranks_nearest_first_without_performance_weight(
     areas, secondary, students
 ):
-    student_xy, student_lsoa, disadvantaged = students
+    student_distance, student_lsoa, disadvantaged = students
 
     preferences, _, _, _ = secondary_instance(
-        student_xy,
+        student_distance,
         student_lsoa,
         areas,
         secondary,
@@ -462,21 +456,17 @@ def test_secondary_instance_ranks_nearest_first_without_performance_weight(
         noise_scale=0.0,
     )
 
-    school_xy = secondary[["Easting", "Northing"]].to_numpy()
-    nearest = np.argmin(
-        np.linalg.norm(student_xy[:, None] - school_xy[None], axis=2), axis=1
-    )
-    np.testing.assert_array_equal(preferences[:, 0, 0], nearest)
+    np.testing.assert_array_equal(preferences[:, 0, 0], student_distance.argmin(axis=1))
 
 
 def test_secondary_instance_ranks_each_group_on_its_own_weights(
     areas, secondary, routes, students
 ):
-    student_xy, student_lsoa, disadvantaged = students
+    student_distance, student_lsoa, disadvantaged = students
 
     def instance(other, own):
         return secondary_instance(
-            student_xy,
+            student_distance,
             student_lsoa,
             areas,
             secondary,
@@ -504,11 +494,11 @@ def test_secondary_instance_ranks_each_group_on_its_own_weights(
 def test_secondary_instance_offers_other_students_routes_only_when_open(
     areas, secondary, routes, students
 ):
-    student_xy, student_lsoa, disadvantaged = students
+    student_distance, student_lsoa, disadvantaged = students
     offered = {}
     for disadvantage in ("score", "score-open"):
         preferences, _, _, _ = secondary_instance(
-            student_xy,
+            student_distance,
             student_lsoa,
             areas,
             secondary,
