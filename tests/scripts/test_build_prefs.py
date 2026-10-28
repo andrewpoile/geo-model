@@ -1,7 +1,10 @@
 import numpy as np
 
+from geo_model.data.sources import LAS
 from geo_model.output import ROUTES_CSV, ROUTES_NPZ
 from geo_model.scripts import build_prefs as bp
+
+REGION = "+".join(sorted(LAS))
 
 # --------------------------------------------------------------------------
 # build: the whole pipeline, against the real data folder
@@ -9,13 +12,14 @@ from geo_model.scripts import build_prefs as bp
 
 
 def build(areas, schools, out_dir):
-    """Build the default region's instance into `out_dir`, returned.
+    """Build the default region's instance into `out_dir`, returned, on
+    straight-line distances.
 
     The real output folder holds the artefacts the rest of the model is run
     from, so a test must not overwrite them.
     """
     primary, secondary = schools
-    bp.build(areas, primary, secondary, out_dir)
+    bp.build(areas, primary, secondary, out_dir, REGION, distance="euclidean")
     return out_dir
 
 
@@ -89,7 +93,9 @@ def test_build_ranks_both_phases_under_the_rule_given(
     monkeypatch.setattr(bp, "secondary_instance", rank_secondary)
     primary, secondary = schools
 
-    bp.build(areas, primary, secondary, tmp_path, priority="bracket")
+    bp.build(
+        areas, primary, secondary, tmp_path, REGION, "bracket", distance="euclidean"
+    )
 
     assert rules == {"primary": "bracket", "secondary": "bracket"}
 

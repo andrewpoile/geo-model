@@ -18,6 +18,7 @@ NO_STUDENTS = [
         np.empty(0, dtype=np.int64),
         np.empty(0, dtype=bool),
         np.random.SeedSequence(0),
+        np.empty((0, 0)),
     )
 ]
 
@@ -33,9 +34,12 @@ def test_optimise_rejects_a_parameter_named_twice(tmp_path):
             NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
+            np.empty((0, 0)),
+            np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
             parameters=["min_distance", "min_distance"],
+            distance="euclidean",
         )
 
 
@@ -56,11 +60,14 @@ def test_optimise_rejects_a_parameter_the_choices_bar(
             NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
+            np.empty((0, 0)),
+            np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
             parameters=[parameter],
             disadvantage=disadvantage,
             priority=priority,
+            distance="euclidean",
         )
 
 
@@ -74,10 +81,13 @@ def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(
             NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
+            np.empty((0, 0)),
+            np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
             pop_size=4,
             generations=2,
+            distance="euclidean",
         )
 
 
@@ -94,11 +104,14 @@ def test_optimise_scores_every_candidate_under_the_rule_given(monkeypatch, tmp_p
             NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
+            np.empty((0, 0)),
+            np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
             pop_size=4,
             generations=1,
             priority="bracket",
+            distance="euclidean",
         )
     assert rules == ["bracket"] * 4
 
@@ -109,7 +122,7 @@ def test_optimise_scores_every_candidate_under_the_rule_given(monkeypatch, tmp_p
 
 
 def test_score_feasible_names_a_setting_that_leaves_no_route(
-    samples, areas, secondary, shares, capsys
+    samples, areas, secondary, district_distance, district_minutes, shares, capsys
 ):
     # Every Southampton district lies within 9.9km of every school.
     settings = replace(DEFAULTS, min_distance=20_000)
@@ -119,7 +132,10 @@ def test_score_feasible_names_a_setting_that_leaves_no_route(
         samples=samples,
         areas=areas,
         secondary_schools=secondary,
+        district_distance=district_distance,
+        district_minutes=district_minutes,
         shares=shares,
+        distance="euclidean",
     )
 
     assert scored is None
@@ -129,7 +145,7 @@ def test_score_feasible_names_a_setting_that_leaves_no_route(
 
 
 def test_optimise_finds_the_front_of_every_setting_scored(
-    samples, areas, secondary, shares, tmp_path
+    samples, areas, secondary, district_distance, district_minutes, shares, tmp_path
 ):
     parameters = ["capacity_scale", "progressivity"]
 
@@ -137,11 +153,14 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         samples,
         areas,
         secondary,
+        district_distance,
+        district_minutes,
         shares,
         tmp_path,
         parameters,
         pop_size=4,
         generations=2,
+        distance="euclidean",
     )
 
     assert len(evaluations) == 4 * 2
@@ -178,7 +197,16 @@ def test_optimise_finds_the_front_of_every_setting_scored(
     changes: dict[str, Any] = {p: float(best[p]) for p in parameters}
     settings = replace(DEFAULTS, **changes)
     rescored = objective_values(
-        score_settings(settings, samples, areas, secondary, shares),
+        score_settings(
+            settings,
+            samples,
+            areas,
+            secondary,
+            district_distance,
+            district_minutes,
+            shares,
+            distance="euclidean",
+        ),
         DEFAULT_OBJECTIVES,
     )
     assert rescored == {name: best[name] for name in DEFAULT_OBJECTIVES}
@@ -188,11 +216,14 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         samples,
         areas,
         secondary,
+        district_distance,
+        district_minutes,
         shares,
         tmp_path / "pooled",
         parameters,
         pop_size=4,
         generations=2,
         workers=2,
+        distance="euclidean",
     )
     pd.testing.assert_frame_equal(pooled, evaluations)

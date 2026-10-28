@@ -1,6 +1,7 @@
 import argparse
 from dataclasses import fields
 
+from geo_model.data.network import DISTANCE, DISTANCE_CHOICES
 from geo_model.data.sources import LAS
 from geo_model.data.travel import NTS_YEARS
 from geo_model.measures.travel import CIRCUITY
@@ -99,7 +100,7 @@ def add_travel_arguments(parser: argparse.ArgumentParser) -> None:
         "--circuity",
         type=float,
         default=CIRCUITY,
-        help="road distance per straight-line metre, applied before banding",
+        help="road distance per metre of trip length, applied before banding",
     )
 
 
@@ -170,6 +171,22 @@ def add_priority_argument(parser: argparse.ArgumentParser) -> None:
         "every routed student and every student of the school's own district "
         "first, everyone else after, each by distance, the model as it was "
         f"before, written to {OUTPUT_DIR}/<NAME>/bracket",
+    )
+
+
+def add_distance_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the option of how every distance is measured.
+
+    Args:
+        parser (argparse.ArgumentParser): The entry point's parser.
+    """
+    parser.add_argument(
+        "--distance",
+        choices=DISTANCE_CHOICES,
+        default=DISTANCE,
+        help="network: along the walking network of the OS Multi-modal Routing "
+        "Network; euclidean: in a straight line, the model as it was before, "
+        f"written to {OUTPUT_DIR}/<NAME>/euclidean",
     )
 
 

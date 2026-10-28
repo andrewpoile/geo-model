@@ -1,3 +1,4 @@
+import functools
 from dataclasses import asdict
 
 import numpy as np
@@ -147,7 +148,9 @@ def test_pipeline_negates_maximised_objectives_and_marks_infeasible_settings():
         return scored_rows(settings.capacity_scale / 100, (100.0, 88.0))
 
     problem = Pipeline(
-        ["min_distance", "capacity_scale"], DEFAULT_OBJECTIVES, score, map
+        ["min_distance", "capacity_scale"],
+        DEFAULT_OBJECTIVES,
+        functools.partial(map, score),
     )
     x = np.array([[1000.0, 20.0], [6000.0, 5.0]])
 
@@ -176,7 +179,7 @@ def test_pipeline_scores_and_records_a_searched_decile_rounded():
         scored_deciles.append(settings.decile)
         return scored_rows(0.1, (100.0, 90.0))
 
-    problem = Pipeline(["decile"], DEFAULT_OBJECTIVES, score, map)
+    problem = Pipeline(["decile"], DEFAULT_OBJECTIVES, functools.partial(map, score))
     problem.evaluate(np.array([[2.4], [2.6]]))
 
     assert scored_deciles == [2, 3]

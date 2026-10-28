@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 
 SEED = 20260907
@@ -27,6 +28,11 @@ DISADVANTAGE = "score"
 # nearer schools need none. 3218m is two miles, the lower bound of the extended
 # rights to free home-to-school travel held by low-income 11-16 year olds.
 MIN_ROUTE_DISTANCE = 3218
+
+# Minutes. Districts are routed only to schools a bus reaches within this at
+# the weekday morning peak, along the OS Multi-modal Routing Network. No cap
+# by default, so the route set is the distance condition's alone.
+MAX_ROUTE_MINUTES = math.inf
 
 # Seats on the routes into a school, as a multiple of the disadvantaged
 # students' fair share of the Year 7 places it offers: k * places * D / N, with
@@ -144,6 +150,15 @@ class Settings:
         metadata={
             "help": (
                 "districts are routed only to schools further away than this, in metres"
+            )
+        },
+    )
+    max_route_minutes: float = field(
+        default=MAX_ROUTE_MINUTES,
+        metadata={
+            "help": (
+                "districts are routed only to schools a bus reaches within this many "
+                "minutes at the weekday morning peak"
             )
         },
     )

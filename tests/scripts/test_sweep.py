@@ -2,6 +2,7 @@ import sys
 from dataclasses import replace
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -16,7 +17,14 @@ from geo_model.scripts import sweep as sw
 
 
 def test_sweep_scores_every_cell_on_the_same_samples(
-    samples, areas, secondary, shares, tmp_path, monkeypatch
+    samples,
+    areas,
+    secondary,
+    district_distance,
+    district_minutes,
+    shares,
+    tmp_path,
+    monkeypatch,
 ):
     monkeypatch.setattr(
         sw,
@@ -29,7 +37,16 @@ def test_sweep_scores_every_cell_on_the_same_samples(
             "decile": [DEFAULTS],
         },
     )
-    results, intake, modes = sw.sweep(samples, areas, secondary, shares, tmp_path)
+    results, intake, modes = sw.sweep(
+        samples,
+        areas,
+        secondary,
+        district_distance,
+        district_minutes,
+        shares,
+        tmp_path,
+        distance="euclidean",
+    )
 
     assert len(results) == 3 * 1 * 2
     assert len(intake) == 3 * 1 * 2 * len(secondary)
@@ -60,7 +77,17 @@ def test_sweep_scores_every_cell_on_the_same_samples(
     )
 
     # Scoring the cells in worker processes changes nothing but the wall time.
-    pooled = sw.sweep(samples, areas, secondary, shares, tmp_path, workers=2)
+    pooled = sw.sweep(
+        samples,
+        areas,
+        secondary,
+        district_distance,
+        district_minutes,
+        shares,
+        tmp_path,
+        workers=2,
+        distance="euclidean",
+    )
     for pooled_frame, frame in zip(pooled, (results, intake, modes)):
         pd.testing.assert_frame_equal(pooled_frame, frame)
 
@@ -86,9 +113,12 @@ def test_sweep_scores_every_cell_under_the_rule_given(monkeypatch, tmp_path):
         [],
         gpd.GeoDataFrame(),
         gpd.GeoDataFrame(),
+        np.empty((0, 0)),
+        np.empty((0, 0)),
         pd.DataFrame(),
         tmp_path,
         priority="bracket",
+        distance="euclidean",
     )
 
     # Every cell is scored under the rule, and none of the priority

@@ -1,8 +1,10 @@
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from geo_model.analysis.scoring import district_rows, score_sample
+from geo_model.analysis.scoring import district_rows, score_sample, settings_routes
 from geo_model.measures.travel import MODES
 from geo_model.model.settings import DEFAULTS, DISADVANTAGE
 from geo_model.model.students import student_samples
@@ -15,10 +17,10 @@ from geo_model.model.students import student_samples
 def test_score_sample_scores_both_scenarios_of_one_sample(
     areas, secondary, routes, shares, samples
 ):
-    ((student_xy, student_lsoa, disadvantaged, noise_seed),) = samples
+    ((_, student_lsoa, disadvantaged, noise_seed, student_distance),) = samples
 
     rows, school_rows, mode_rows, route_rows = score_sample(
-        student_xy,
+        student_distance,
         student_lsoa,
         areas,
         secondary,
@@ -33,13 +35,13 @@ def test_score_sample_scores_both_scenarios_of_one_sample(
 
     assert list(rows["scenario"]) == ["with routes", "without routes"]
     assert rows["dissimilarity"].between(0, 1).all()
-    assert (rows["n_matched"] + rows["n_unmatched"] == len(student_xy)).all()
+    assert (rows["n_matched"] + rows["n_unmatched"] == len(student_distance)).all()
 
     # The disadvantaged group is the sample's, not the matching's, so it is
     # the same in both scenarios, and those of it without a place are a
     # subset of both the group and the unmatched.
     assert (rows["n_disadvantaged"] == disadvantaged.sum()).all()
-    assert 0 < rows["n_disadvantaged"].iloc[0] < len(student_xy)
+    assert 0 < rows["n_disadvantaged"].iloc[0] < len(student_distance)
     assert (rows["unassigned_disadvantaged"] <= rows["n_unmatched"]).all()
     assert (rows["unassigned_disadvantaged"] <= rows["n_disadvantaged"]).all()
 
@@ -109,11 +111,11 @@ def test_score_sample_scores_both_scenarios_of_one_sample(
 def test_score_sample_ranks_priorities_on_the_rule_and_discount_given(
     areas, secondary, routes, shares, samples
 ):
-    ((student_xy, student_lsoa, disadvantaged, noise_seed),) = samples
+    ((_, student_lsoa, disadvantaged, noise_seed, student_distance),) = samples
 
     def scored(priority, priority_discount):
         return score_sample(
-            student_xy,
+            student_distance,
             student_lsoa,
             areas,
             secondary,
@@ -137,13 +139,13 @@ def test_score_sample_ranks_priorities_on_the_rule_and_discount_given(
 # --------------------------------------------------------------------------
 
 
-def test_district_rows_count_every_seeds_own_students_by_district(areas):
-    samples = list(student_samples(areas, 2))
+def test_district_rows_count_every_seeds_own_students_by_district(areas, to_school):
+    samples = list(student_samples(areas, 2, to_school))
 
     rows = district_rows(samples, areas, DEFAULTS.decile, DISADVANTAGE)
 
     assert list(rows.columns[:2]) == ["seed", "LSOA21CD"]
-    for seed, (_, student_lsoa, drawn, _) in enumerate(samples):
+    for seed, (_, student_lsoa, drawn, _, _) in enumerate(samples):
         seed_rows = rows[rows["seed"] == seed]
         np.testing.assert_array_equal(seed_rows["LSOA21CD"], areas["LSOA21CD"])
         np.testing.assert_array_equal(
@@ -159,3 +161,14 @@ def test_district_rows_count_every_seeds_own_students_by_district(areas):
     assert not np.array_equal(
         rows.loc[rows["seed"] == 0, "cohort"], rows.loc[rows["seed"] == 1, "cohort"]
     )
+
+
+def test_settings_routes_hold_to_the_cap_on_minutes_by_bus(
+    areas, secondary, district_distance, district_minutes
+):
+    capped, uncapped = (
+        settings_routes(settings, areas, secondary, district_distance, district_minutes)
+        for settings in (replace(DEFAULTS, max_route_minutes=20.0), DEFAULTS)
+    )
+    assert (capped["minutes"] <= 20).all()
+    assert (uncapped["minutes"] > 20).any()

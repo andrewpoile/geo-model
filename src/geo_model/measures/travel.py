@@ -6,9 +6,9 @@ split for school trips of their length (NTS0614a, aged 11 to 16), so the
 count of every mode is an expected value and the only randomness is the
 student sample per seed. A student seated with a route takes it with
 certainty, counted as a mode of its own, so the change in each existing mode
-shows where routed students are drawn from. Trip length is the straight-line
-distance to the seated school, scaled by a circuity factor for the road
-distance the survey records, and an unseated student makes no trip. The
+shows where routed students are drawn from. Trip length is the distance to
+the seated school, as the sample measures it, scaled by a circuity factor for
+the road distance the survey records, and an unseated student makes no trip. The
 counting itself is `expected_modes`, which `analysis.scoring.score_sample`
 applies to every matching it scores, so every run, sweep cell and search
 candidate carries the same estimate.
@@ -23,8 +23,9 @@ from geo_model.data.travel import NTS_BANDS, NTS_MODES
 MILE = 1609.344  # metres
 # Miles, the lower edge of every NTS trip-length band but the first.
 BAND_EDGES = np.array([1.0, 2.0, 5.0])
-# Road distance per straight-line metre, applied before a trip is banded. 1 is
-# no uplift, so a trip is banded on its straight-line length.
+# Road distance per metre of trip length, applied before a trip is banded. 1 is
+# no uplift, so a trip is banded on its length as measured: along the walking
+# network, or in a straight line under --distance euclidean.
 CIRCUITY = 1.0
 # The NTS main modes and the route, which a routed student takes with certainty.
 MODES = [*NTS_MODES.values(), "route"]
@@ -34,9 +35,9 @@ def trip_band(distance_m: ArrayLike, circuity: float = CIRCUITY) -> np.ndarray:
     """The NTS trip-length band of each trip.
 
     Args:
-        distance_m (ArrayLike): Straight-line length of each trip, in metres.
+        distance_m (ArrayLike): Length of each trip, in metres.
 
-        circuity (float, optional): Road distance per straight-line metre.
+        circuity (float, optional): Road distance per metre of trip length.
         Defaults to CIRCUITY.
 
     Returns:
@@ -50,8 +51,7 @@ def trip_band(distance_m: ArrayLike, circuity: float = CIRCUITY) -> np.ndarray:
 
 def expected_modes(
     matching: np.ndarray,
-    student_xy: np.ndarray,
-    school_xy: np.ndarray,
+    student_distance: np.ndarray,
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
 ) -> pd.Series:
@@ -66,10 +66,8 @@ def expected_modes(
         matching (np.ndarray): (school, route) per student, -1 when absent, as
         returned by `fast_DAT`.
 
-        student_xy (np.ndarray): Student coordinates, shape (n_students, 2).
-
-        school_xy (np.ndarray): School coordinates, shape (n_schools, 2), in
-        the same CRS as `student_xy`.
+        student_distance (np.ndarray): Distance from every student to every
+        school, shape (n_students, n_schools), in metres.
 
         shares (pd.DataFrame): Mode share within each band, as returned by
         `load_nts_mode_shares`.
@@ -83,7 +81,7 @@ def expected_modes(
     """
     seated = matching[:, 0] >= 0
     school, route = matching[seated, 0], matching[seated, 1]
-    distance = np.linalg.norm(student_xy[seated] - school_xy[school], axis=1)
+    distance = student_distance[seated, school]
     band = trip_band(distance, circuity)
 
     modes = shares.loc[band[route < 0]].sum()

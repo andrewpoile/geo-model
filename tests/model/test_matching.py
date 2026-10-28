@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from numba.core.dispatcher import Dispatcher
+from scipy.spatial.distance import cdist
 
 from geo_model.model.matching import fast_DAT
 from geo_model.model.preferences import rank_bundles
@@ -143,10 +144,13 @@ def instance(seed, n_students=60, n_schools=5, n_districts=4, **kwargs):
     route_district = np.repeat([0, 1], 2)
     route_school = np.tile([0, n_schools - 1], 2)
 
+    # Drawn in the order the coordinates always were, so every seed keeps its
+    # geography.
+    student_xy = rng.normal(size=(n_students, 2)) * 5000
+    school_xy = rng.normal(size=(n_schools, 2)) * 5000
     preferences, ranks = rank_bundles(
-        rng.normal(size=(n_students, 2)) * 5000,
+        cdist(student_xy, school_xy),
         student_district,
-        rng.normal(size=(n_schools, 2)) * 5000,
         school_district,
         route_district,
         route_school,

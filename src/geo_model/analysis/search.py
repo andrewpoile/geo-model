@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from dataclasses import fields, replace
 from typing import Any, NamedTuple
 
@@ -163,19 +163,16 @@ class Pipeline(Problem):
 
         objectives (list[str]): Keys of OBJECTIVES, one per objective.
 
-        score (Callable[[Settings], Scored | None]): `score_feasible` with
-        every argument but the settings bound.
-
-        mapper (Callable[..., Iterator]): Maps `score` over the candidates of
-        a generation, in order: `map`, or a process pool's.
+        scores (Callable[[list[Settings]], Iterable[Scored | None]]):
+        `score_feasible`, every argument but the settings bound, mapped in
+        order over the candidates of a generation, as `task_map` maps it.
     """
 
     def __init__(
         self,
         parameters: list[str],
         objectives: list[str],
-        score: Callable[[Settings], Scored | None],
-        mapper: Callable[[Callable, Iterable], Iterator],
+        scores: Callable[[list[Settings]], Iterable[Scored | None]],
     ) -> None:
         low, high = zip(*(bounds(parameter) for parameter in parameters))
         super().__init__(
@@ -187,8 +184,7 @@ class Pipeline(Problem):
         )
         self.parameters = parameters
         self.objectives = objectives
-        self.score = score
-        self.mapper = mapper
+        self.scores = scores
         self.evaluations: list[dict] = []
         self.generation = 0
 
@@ -196,8 +192,8 @@ class Pipeline(Problem):
         self.generation += 1
         print(f"Generation {self.generation}: scoring {len(x)} settings.")
         candidates = [cast(dict(zip(self.parameters, row))) for row in x]
-        scored = self.mapper(
-            self.score, [replace(DEFAULTS, **candidate) for candidate in candidates]
+        scored = self.scores(
+            [replace(DEFAULTS, **candidate) for candidate in candidates]
         )
         rows = [
             {

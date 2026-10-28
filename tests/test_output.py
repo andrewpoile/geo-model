@@ -24,3 +24,6 @@ def test_region_dir_names_a_region_for_its_authorities_in_order():
     assert region_dir(["Southampton"], anon=True, priority="bracket") == Path(
         "output/Southampton/anonymised/bracket"
     )
+    assert region_dir(["Southampton"], priority="bracket", distance="euclidean") == (
+        Path("output/Southampton/bracket/euclidean")
+    )

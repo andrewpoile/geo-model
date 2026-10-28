@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from geo_model.data.network import DISTANCE
 from geo_model.model.settings import PRIORITY
 
 # Read by the type checker alone, so writing routes needs no plotting library.
@@ -22,7 +23,12 @@ ROUTES_CSV = "secondary_routes.csv"
 ROUTES_NPZ = "secondary_routes.npz"
 
 
-def region_dir(las: list[str], anon: bool = False, priority: str = PRIORITY) -> Path:
+def region_dir(
+    las: list[str],
+    anon: bool = False,
+    priority: str = PRIORITY,
+    distance: str = DISTANCE,
+) -> Path:
     """The folder a region's outputs are written to: its local authorities'
     names, as the register spells them, joined by "+" in alphabetical order.
 
@@ -36,13 +42,19 @@ def region_dir(las: list[str], anon: bool = False, priority: str = PRIORITY) -> 
         PRIORITY writes to a folder of its name within that, so runs under
         two rules never write over each other. Defaults to PRIORITY.
 
+        distance (str, optional): One of DISTANCE_CHOICES. Any rule but
+        DISTANCE writes to a folder of its name within that. Defaults to
+        DISTANCE.
+
     Returns:
         Path: A folder in OUTPUT_DIR.
     """
     folder = OUTPUT_DIR / "+".join(sorted(las))
     if anon:
         folder = folder / ANON_DIR
-    return folder if priority == PRIORITY else folder / priority
+    if priority != PRIORITY:
+        folder = folder / priority
+    return folder if distance == DISTANCE else folder / distance
 
 
 def save_routes(routes: pd.DataFrame, out_dir: Path) -> None:
@@ -61,6 +73,7 @@ def save_routes(routes: pd.DataFrame, out_dir: Path) -> None:
         route_capacities=routes["capacity"].to_numpy(dtype=np.int32),
         route_school_idx=routes["school_idx"].to_numpy(dtype=np.int32),
         route_district_idx=routes["district_idx"].to_numpy(dtype=np.int32),
+        route_minutes=routes["minutes"].to_numpy(dtype=float),
     )
 
 

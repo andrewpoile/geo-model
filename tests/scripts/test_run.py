@@ -1,20 +1,24 @@
+import math
 import sys
 from dataclasses import replace
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pytest
 
 from geo_model.analysis.scoring import settings_matchings
+from geo_model.data import sources
 from geo_model.measures.segregation import dissimilarity_index
 from geo_model.measures.travel import MODES
+from geo_model.model.routes import centroid_xy
 from geo_model.model.settings import (
     DEFAULTS,
     DISADVANTAGE_CHOICES,
     PRIORITY_CHOICES,
 )
 from geo_model.model.students import disadvantaged_group
-from geo_model.output import ROUTES_CSV, ROUTES_NPZ
+from geo_model.output import ROUTES_CSV, ROUTES_NPZ, region_dir
 from geo_model.scripts import run as rn
 
 # --------------------------------------------------------------------------
@@ -23,16 +27,32 @@ from geo_model.scripts import run as rn
 
 
 def test_run_scores_writes_and_plots_the_setting_against_no_routes(
-    samples, areas, secondary, shares, tmp_path
+    samples, areas, secondary, district_distance, district_minutes, shares, tmp_path
 ):
     settings = replace(DEFAULTS, capacity_scale=2.0, progressivity=0.5)
 
     results, intake, modes, routes = rn.run(
-        settings, samples, areas, secondary, shares, tmp_path
+        settings,
+        samples,
+        areas,
+        secondary,
+        district_distance,
+        district_minutes,
+        shares,
+        tmp_path,
+        distance="euclidean",
     )
 
     rows, school_rows, mode_rows, route_rows = rn.score_settings(
-        settings, samples, areas, secondary, shares, utilisation=True
+        settings,
+        samples,
+        areas,
+        secondary,
+        district_distance,
+        district_minutes,
+        shares,
+        utilisation=True,
+        distance="euclidean",
     )
     pd.testing.assert_frame_equal(results, pd.DataFrame(rows))
     pd.testing.assert_frame_equal(intake, pd.DataFrame(school_rows))
@@ -67,6 +87,36 @@ def test_run_scores_writes_and_plots_the_setting_against_no_routes(
         assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
+def test_load_region_measures_along_the_walking_network_by_default(
+    areas, to_school, route_data
+):
+    _, _, walk, district_distance, district_minutes, folder = rn.load_region(
+        sources.LAS, areas, False, "distance", "network", math.inf
+    )
+    straight = to_school(centroid_xy(areas))
+    assert walk.rule == "network"
+    assert district_distance.shape == straight.shape
+    assert (district_distance >= straight).all()
+    assert district_minutes is not None
+    assert district_minutes.shape == straight.shape
+    assert np.isfinite(district_minutes).all()
+    assert folder == region_dir(sources.LAS)
+
+
+def test_load_region_reads_no_network_in_a_straight_line_run_with_no_cap(
+    areas, monkeypatch
+):
+    def unread(*args):
+        raise AssertionError("read the network for a straight-line run")
+
+    monkeypatch.setattr(rn, "region_links", unread)
+    _, _, straight, _, district_minutes, _ = rn.load_region(
+        sources.LAS, areas, False, "distance", "euclidean", math.inf
+    )
+    assert straight.rule == "euclidean"
+    assert district_minutes is None
+
+
 def test_run_rejects_no_samples(tmp_path):
     with pytest.raises(ValueError, match="No student sample"):
         rn.run(
@@ -74,8 +124,11 @@ def test_run_rejects_no_samples(tmp_path):
             [],
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
+            np.empty((0, 0)),
+            np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
+            distance="euclidean",
         )
 
 
@@ -106,7 +159,14 @@ def test_main_rejects_settings_it_cannot_run_before_loading_a_region(monkeypatch
 @pytest.mark.parametrize("disadvantage", DISADVANTAGE_CHOICES)
 @pytest.mark.parametrize("priority", PRIORITY_CHOICES)
 def test_settings_matchings_are_the_ones_the_sweep_scores(
-    samples, areas, secondary, shares, disadvantage, priority
+    samples,
+    areas,
+    secondary,
+    district_distance,
+    district_minutes,
+    shares,
+    disadvantage,
+    priority,
 ):
     # Off the default discount, so a discount settings_matchings or
     # score_settings leaves behind shows; below them, score_sample's own
@@ -117,6 +177,8 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
         samples[0],
         areas,
         secondary,
+        district_distance,
+        district_minutes,
         disadvantage=disadvantage,
         priority=priority,
     )
@@ -125,14 +187,17 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
         samples,
         areas,
         secondary,
+        district_distance,
+        district_minutes,
         shares,
         disadvantage=disadvantage,
         priority=priority,
+        distance="euclidean",
     )
     # The route rows are kept only when asked for.
     assert route_rows == []
 
-    _, student_lsoa, drawn, _ = samples[0]
+    _, student_lsoa, drawn, _, _ = samples[0]
     disadvantaged = disadvantaged_group(
         student_lsoa, drawn, areas, DEFAULTS.decile, disadvantage
     )

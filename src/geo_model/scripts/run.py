@@ -11,10 +11,13 @@ runs its compromise through `run`.
 """
 
 import argparse
+import functools
+import math
 from dataclasses import fields
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
@@ -27,6 +30,7 @@ from geo_model.analysis.scoring import (
 from geo_model.cli import (
     add_anon_argument,
     add_disadvantage_argument,
+    add_distance_argument,
     add_intake_argument,
     add_priority_argument,
     add_progressivity_argument,
@@ -37,6 +41,12 @@ from geo_model.cli import (
     add_travel_arguments,
 )
 from geo_model.data.anonymise import anonymise
+from geo_model.data.network import (
+    Distance,
+    bus_minutes,
+    region_links,
+    school_distance,
+)
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
@@ -49,6 +59,7 @@ from geo_model.measures.summaries import (
     utilisation_summary,
 )
 from geo_model.measures.travel import CIRCUITY, MODES
+from geo_model.model.routes import centroid_xy
 from geo_model.model.settings import (
     DEFAULTS,
     DISADVANTAGE,
@@ -101,12 +112,16 @@ def score_settings(
     samples: list[Sample],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
+    district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
     priority: str = PRIORITY,
+    *,
+    distance: str,
     utilisation: bool = False,
     routes: pd.DataFrame | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
@@ -123,6 +138,10 @@ def score_settings(
 
         secondary_schools (gpd.GeoDataFrame): Schools, as `score_sample`
         takes them.
+
+        district_distance (np.ndarray): Passed to `settings_routes`.
+
+        district_minutes (np.ndarray): Passed to `settings_routes`.
 
         shares (pd.DataFrame): Passed to `score_sample`.
 
@@ -142,6 +161,9 @@ def score_settings(
         priority (str, optional): Passed to `score_sample`. Defaults to
         PRIORITY.
 
+        distance (str): The `rule` of the Distance the samples' distances and
+        `district_distance` were measured by, recorded on the scenario rows.
+
         utilisation (bool, optional): Keep the route rows. A row per seed
         and route would run to tens of millions over a sweep of a merged
         region's whole network, so they are kept only where read. Defaults
@@ -154,19 +176,29 @@ def score_settings(
     Returns:
         tuple[list[dict], list[dict], list[dict], list[dict]]: The scenario,
         school, mode and route rows `score_sample` returns for every sample,
-        each tagged with "seed", the scenario rows with "n_routes" and
-        "priority" as well, so results.csv and sweep.csv record the rule that
-        ranked them. The route rows are empty unless `utilisation`.
+        each tagged with "seed", the scenario rows with "n_routes",
+        "priority" and "distance" as well, so results.csv and sweep.csv
+        record the rules that ranked them. The route rows are empty unless
+        `utilisation`.
     """
-    print(f"Scoring {settings} under priority {priority!r}")
+    print(f"Scoring {settings} under priority {priority!r} and distance {distance!r}")
     if routes is None:
         routes = settings_routes(
-            settings, areas, secondary_schools, round_up, linear, disadvantage
+            settings,
+            areas,
+            secondary_schools,
+            district_distance,
+            district_minutes,
+            round_up,
+            linear,
+            disadvantage,
         )
     rows, school_rows, mode_rows, route_rows = [], [], [], []
-    for seed, (student_xy, student_lsoa, drawn, noise_seed) in enumerate(samples):
+    for seed, (_, student_lsoa, drawn, noise_seed, student_distance) in enumerate(
+        samples
+    ):
         scenario_rows, intake_rows, travel_rows, rider_rows = score_sample(
-            student_xy,
+            student_distance,
             student_lsoa,
             areas,
             secondary_schools,
@@ -186,7 +218,13 @@ def score_settings(
             priority_discount=settings.priority_discount,
         )
         rows += [
-            {"seed": seed, "n_routes": len(routes), "priority": priority, **r}
+            {
+                "seed": seed,
+                "n_routes": len(routes),
+                "priority": priority,
+                "distance": distance,
+                **r,
+            }
             for r in scenario_rows
         ]
         school_rows += [{"seed": seed, **r} for r in intake_rows]
@@ -197,10 +235,18 @@ def score_settings(
 
 
 def load_region(
-    las: list[str], areas: gpd.GeoDataFrame, anon: bool, priority: str
-) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Path]:
-    """A region's districts and secondary schools, and the folder its
-    outputs are written to, anonymised together where `anon`, so an
+    las: list[str],
+    areas: gpd.GeoDataFrame,
+    anon: bool,
+    priority: str,
+    distance: str,
+    max_minutes: float,
+) -> tuple[
+    gpd.GeoDataFrame, gpd.GeoDataFrame, Distance, np.ndarray, np.ndarray | None, Path
+]:
+    """A region's districts and secondary schools, the distance to its
+    schools from any point and from every district, the minutes by bus to
+    them from every district, and the folder its outputs are written to, anonymised together where `anon`, so an
     anonymised run neither names the region nor writes over its named
     outputs.
 
@@ -216,15 +262,38 @@ def load_region(
         priority (str): Passed to `region_dir`, so a run under each rule
         writes to a folder of its own.
 
+        distance (str): Passed to `school_distance` and `region_dir`.
+
+        max_minutes (float): The cap on a route's minutes by bus. The minutes
+        are measured under "network" distance or a finite cap alone, so a
+        straight-line run reads no network unless it caps them.
+
     Returns:
-        tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Path]: The districts, the
-        secondary schools as `load_schools` returns them, and the folder
-        `region_dir` gives.
+        tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Distance, np.ndarray,
+        np.ndarray | None, Path]: The districts, the secondary schools as
+        `load_schools` returns them, the distance from any point to every one
+        of them, as `school_distance` measures it, the distance and the
+        minutes by bus, as `bus_minutes` measures them or None where they are
+        not measured, from every district's
+        population centroid to every one of them, and the folder `region_dir`
+        gives.
     """
     _, secondary_schools = load_schools(las)
     if anon:
         areas, secondary_schools = anonymise(areas, secondary_schools)
-    return areas, secondary_schools, region_dir(las, anon, priority)
+    links = functools.cache(lambda: region_links(areas, "+".join(sorted(las))))
+    school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
+    to_school = school_distance(distance, links)(school_xy)
+    district_xy = centroid_xy(areas)
+    measured = distance == "network" or math.isfinite(max_minutes)
+    return (
+        areas,
+        secondary_schools,
+        to_school,
+        to_school(district_xy),
+        bus_minutes(links(), school_xy, district_xy) if measured else None,
+        region_dir(las, anon, priority, distance),
+    )
 
 
 def run(
@@ -232,6 +301,8 @@ def run(
     samples: list[Sample],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
+    district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     out_dir: Path,
     circuity: float = CIRCUITY,
@@ -239,6 +310,8 @@ def run(
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
     priority: str = PRIORITY,
+    *,
+    distance: str,
     measure: str = "dissimilarity",
     mapped: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -271,6 +344,12 @@ def run(
 
         secondary_schools (gpd.GeoDataFrame): Passed to `score_settings`.
 
+        district_distance (np.ndarray): Passed to `settings_routes`,
+        `score_settings` and `settings_matchings`.
+
+        district_minutes (np.ndarray): Passed to `settings_routes`,
+        `score_settings` and `settings_matchings`.
+
         shares (pd.DataFrame): Passed to `score_settings`.
 
         out_dir (Path): Folder everything is written to.
@@ -291,6 +370,8 @@ def run(
         priority (str, optional): Passed to `score_settings` and
         `settings_matchings`. Defaults to PRIORITY.
 
+        distance (str): Passed to `score_settings`.
+
         measure (str, optional): A key of INTAKE_MEASURES, what the intake
         heatmap shows. Defaults to "dissimilarity".
 
@@ -306,7 +387,14 @@ def run(
     if not samples:
         raise ValueError("No student sample to compare on.")
     network = settings_routes(
-        settings, areas, secondary_schools, round_up, linear, disadvantage
+        settings,
+        areas,
+        secondary_schools,
+        district_distance,
+        district_minutes,
+        round_up,
+        linear,
+        disadvantage,
     )
     save_routes(network, out_dir)
     results, schools, modes, routes = (
@@ -316,12 +404,15 @@ def run(
             samples,
             areas,
             secondary_schools,
+            district_distance,
+            district_minutes,
             shares,
             circuity,
             round_up,
             linear,
             disadvantage,
             priority=priority,
+            distance=distance,
             utilisation=True,
             routes=network,
         )
@@ -349,6 +440,8 @@ def run(
                 samples[0],
                 areas,
                 secondary_schools,
+                district_distance,
+                district_minutes,
                 round_up,
                 linear,
                 disadvantage,
@@ -461,6 +554,7 @@ def main(
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
+    add_distance_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
     add_anon_argument(parser)
@@ -487,15 +581,29 @@ def main(
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")
-        areas, secondary_schools, folder = load_region(
-            las, areas, args.anon, args.priority
+        (
+            areas,
+            secondary_schools,
+            to_school,
+            district_distance,
+            district_minutes,
+            folder,
+        ) = load_region(
+            las,
+            areas,
+            args.anon,
+            args.priority,
+            args.distance,
+            settings.max_route_minutes,
         )
-        samples = list(student_samples(areas, args.seeds))
+        samples = list(student_samples(areas, args.seeds, to_school))
         run(
             settings,
             samples,
             areas,
             secondary_schools,
+            district_distance,
+            district_minutes,
             shares,
             folder / out_dir,
             args.circuity,
@@ -503,6 +611,7 @@ def main(
             args.linear_progressivity,
             args.disadvantage,
             priority=args.priority,
+            distance=to_school.rule,
             measure=args.intake,
             mapped=not args.anon,
         )

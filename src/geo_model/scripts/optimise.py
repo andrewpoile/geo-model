@@ -12,14 +12,13 @@ never saw.
 """
 
 import argparse
-import contextlib
 import functools
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.optimize import minimize
@@ -38,9 +37,11 @@ from geo_model.analysis.search import (
     objective_values,
     searchable,
 )
+from geo_model.analysis.workers import task_map
 from geo_model.cli import (
     add_anon_argument,
     add_disadvantage_argument,
+    add_distance_argument,
     add_intake_argument,
     add_priority_argument,
     add_progressivity_argument,
@@ -50,6 +51,7 @@ from geo_model.cli import (
     add_travel_arguments,
     add_workers_argument,
 )
+from geo_model.data.network import Distance
 from geo_model.data.regions import regions
 from geo_model.data.travel import load_nts_mode_shares
 from geo_model.measures.travel import CIRCUITY
@@ -110,6 +112,8 @@ def optimise(
     samples: list[Sample],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
+    district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     out_dir: Path,
     parameters: list[str] = LEVERS,
@@ -122,6 +126,8 @@ def optimise(
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
     priority: str = PRIORITY,
+    *,
+    distance: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Search `parameters` by NSGA-II for the Pareto front of `objectives`.
 
@@ -138,6 +144,10 @@ def optimise(
         areas (gpd.GeoDataFrame): Passed to `score_settings`.
 
         secondary_schools (gpd.GeoDataFrame): Passed to `score_settings`.
+
+        district_distance (np.ndarray): Passed to `score_settings`.
+
+        district_minutes (np.ndarray): Passed to `score_settings`.
 
         shares (pd.DataFrame): Passed to `score_settings`.
 
@@ -176,10 +186,12 @@ def optimise(
         priority (str, optional): Passed to `searchable` and
         `score_settings`. Defaults to PRIORITY.
 
+        distance (str): Passed to `score_settings`.
+
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]: Every setting scored, one row each
-        with its "generation", parameter values, objectives, "feasible" and
-        "priority", the rule it was scored under;
+        with its "generation", parameter values, objectives, "feasible",
+        "priority" and "distance", the rules it was scored under;
         and the feasible settings on the front, sorted by the first
         objective. Also written to EVALUATIONS_CSV and FRONT_CSV in
         `out_dir`.
@@ -205,22 +217,23 @@ def optimise(
         samples=samples,
         areas=areas,
         secondary_schools=secondary_schools,
+        district_distance=district_distance,
+        district_minutes=district_minutes,
         shares=shares,
         circuity=circuity,
         round_up=round_up,
         linear=linear,
         disadvantage=disadvantage,
         priority=priority,
+        distance=distance,
     )
-    with (
-        ProcessPoolExecutor(workers) if workers > 1 else contextlib.nullcontext()
-    ) as pool:
-        problem = Pipeline(
-            parameters, objectives, score, map if pool is None else pool.map
-        )
+    with task_map(score, workers) as scores:
+        problem = Pipeline(parameters, objectives, scores)
         minimize(problem, NSGA2(pop_size=pop_size), ("n_gen", generations), seed=SEED)
 
-    evaluations = pd.DataFrame(problem.evaluations).assign(priority=priority)
+    evaluations = pd.DataFrame(problem.evaluations).assign(
+        priority=priority, distance=distance
+    )
     feasible = evaluations[evaluations["feasible"]]
     if feasible.empty:
         raise ValueError(
@@ -247,6 +260,9 @@ def search(
     las: list[str],
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
+    to_school: Distance,
+    district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     out_dir: Path,
 ) -> None:
@@ -264,6 +280,15 @@ def search(
         secondary_schools (gpd.GeoDataFrame): The region's schools, as
         `load_schools` returns them.
 
+        to_school (Distance): Distance from any point to every school, as
+        `load_region` gives it.
+
+        district_distance (np.ndarray): Distance from every district to every
+        school, as `load_region` gives it.
+
+        district_minutes (np.ndarray): Minutes by bus from every district to
+        every school, as `load_region` gives it.
+
         shares (pd.DataFrame): NTS mode shares, as `load_nts_mode_shares`
         returns them.
 
@@ -272,7 +297,7 @@ def search(
     print(" + ".join(las) + ":")
     # A seed's sample depends on its place in the stream alone, so the first
     # samples are the ones a search of as many seeds alone would draw.
-    samples = list(student_samples(areas, args.seeds + args.held_out_seeds))
+    samples = list(student_samples(areas, args.seeds + args.held_out_seeds, to_school))
     searched, held_out = samples[: args.seeds], samples[args.seeds :]
 
     reference = objective_values(
@@ -281,12 +306,15 @@ def search(
             searched,
             areas,
             secondary_schools,
+            district_distance,
+            district_minutes,
             shares,
             args.circuity,
             args.round_up_seats,
             args.linear_progressivity,
             args.disadvantage,
             priority=args.priority,
+            distance=to_school.rule,
         ),
         args.objectives,
     )
@@ -294,6 +322,8 @@ def search(
         searched,
         areas,
         secondary_schools,
+        district_distance,
+        district_minutes,
         shares,
         out_dir,
         args.parameters,
@@ -306,6 +336,7 @@ def search(
         args.linear_progressivity,
         args.disadvantage,
         priority=args.priority,
+        distance=to_school.rule,
     )
     print(
         f"{len(front)} settings on the Pareto front, of the "
@@ -317,9 +348,12 @@ def search(
         + ", ".join(f"{name} {value:.3f}" for name, value in reference.items())
     )
     chosen = compromise(front, args.objectives)
-    print(f"Compromise setting, under priority {chosen['priority']!r}:")
-    # The rule is text, which a row cannot be rounded with.
-    print(chosen.drop("priority").round(3).to_string())
+    print(
+        f"Compromise setting, under priority {chosen['priority']!r} and "
+        f"distance {chosen['distance']!r}:"
+    )
+    # The rules are text, which a row cannot be rounded with.
+    print(chosen.drop(["priority", "distance"]).round(3).to_string())
 
     print(f"At the compromise, on {len(held_out)} held-out samples:")
     run(
@@ -327,6 +361,8 @@ def search(
         held_out,
         areas,
         secondary_schools,
+        district_distance,
+        district_minutes,
         shares,
         out_dir,
         args.circuity,
@@ -334,6 +370,7 @@ def search(
         args.linear_progressivity,
         args.disadvantage,
         priority=args.priority,
+        distance=to_school.rule,
         measure=args.intake,
         mapped=not args.anon,
     )
@@ -396,6 +433,7 @@ def main() -> None:
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
+    add_distance_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
     add_anon_argument(parser)
@@ -403,10 +441,32 @@ def main() -> None:
 
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
-        areas, secondary_schools, folder = load_region(
-            las, areas, args.anon, args.priority
+        (
+            areas,
+            secondary_schools,
+            to_school,
+            district_distance,
+            district_minutes,
+            folder,
+        ) = load_region(
+            las,
+            areas,
+            args.anon,
+            args.priority,
+            args.distance,
+            DEFAULTS.max_route_minutes,
         )
-        search(args, las, areas, secondary_schools, shares, folder / OUT_DIR)
+        search(
+            args,
+            las,
+            areas,
+            secondary_schools,
+            to_school,
+            district_distance,
+            district_minutes,
+            shares,
+            folder / OUT_DIR,
+        )
 
 
 if __name__ == "__main__":

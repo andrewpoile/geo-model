@@ -216,9 +216,9 @@ def test_disadvantaged_group_rejects_an_unknown_choice():
 # --------------------------------------------------------------------------
 
 
-def test_student_samples_draws_one_reproducible_sample_per_seed(areas):
-    first = list(student_samples(areas, 2))
-    second = list(student_samples(areas, 2))
+def test_student_samples_draws_one_reproducible_sample_per_seed(areas, to_school):
+    first = list(student_samples(areas, 2, to_school))
+    second = list(student_samples(areas, 2, to_school))
 
     assert len(first) == 2
     # Each seed draws its own cohort, from the head of its own stream.
@@ -227,7 +227,7 @@ def test_student_samples_draws_one_reproducible_sample_per_seed(areas):
         draw_cohort_sizes(areas, "secondary", np.random.default_rng(stream))
         for stream in streams
     ]
-    for (_, student_lsoa, _, _), cohort in zip(first, cohorts):
+    for (_, student_lsoa, _, _, _), cohort in zip(first, cohorts):
         np.testing.assert_array_equal(
             np.bincount(student_lsoa, minlength=len(areas)), cohort
         )
@@ -243,12 +243,18 @@ def test_student_samples_draws_one_reproducible_sample_per_seed(areas):
         for a, b in zip(sample_a[:3], sample_b[:3]):
             np.testing.assert_array_equal(a, b)
         np.testing.assert_array_equal(taste_a, taste_b)
+        # Each carries its students' distance to every school, at single
+        # precision.
+        assert sample_a[4].dtype == np.float32
+        np.testing.assert_array_equal(
+            sample_a[4], to_school(sample_a[0]).astype(np.float32)
+        )
 
 
 def test_student_samples_draw_each_district_its_idaci_share_after_the_locations(
-    areas,
+    areas, to_school
 ):
-    student_xy, student_lsoa, drawn, _ = next(student_samples(areas, 1))
+    student_xy, student_lsoa, drawn, _, _ = next(student_samples(areas, 1, to_school))
 
     np.testing.assert_array_equal(
         np.bincount(student_lsoa[drawn], minlength=len(areas)),

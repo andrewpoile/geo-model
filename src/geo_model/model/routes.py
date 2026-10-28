@@ -7,7 +7,6 @@ import shapely
 from scipy.optimize import linear_sum_assignment
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import maximum_bipartite_matching
-from scipy.spatial import distance as spdist
 
 from geo_model.model.settings import (
     BOTTLENECK_ROUTES,
@@ -18,6 +17,7 @@ from geo_model.model.settings import (
     LINEAR_PROGRESSIVITY,
     LOCAL_RADIUS,
     MAX_LOCAL_P8,
+    MAX_ROUTE_MINUTES,
     MIN_ROUTE_DISTANCE,
     ROUND_UP_SEATS,
     ROUTE_CAPACITY_SCALE,
@@ -216,8 +216,10 @@ def largest_first_pairs(distances: np.ndarray, places: np.ndarray) -> np.ndarray
 
 def build_routes(
     districts: gpd.GeoDataFrame,
-    school_xy: np.ndarray,
+    distances: np.ndarray,
+    minutes: np.ndarray,
     min_distance: float,
+    max_minutes: float,
     weight: np.ndarray,
     school_seats: np.ndarray,
     shortest_only: bool = False,
@@ -227,12 +229,14 @@ def build_routes(
     """Build the routes connecting route-eligible districts to schools.
 
     A route joins one district to one school, so the route set is the subset of
-    (district, school) pairs lying more than `min_distance` apart, the district
-    carrying some weight, and holding at least one seat. Distance is measured
+    (district, school) pairs lying more than `min_distance` apart and within
+    `max_minutes` by bus, the district carrying some weight, and holding at
+    least one seat. Distance and minutes are measured
     from the population centroid of the district, the point its students are
-    sampled around, to the school. With `shortest_only` each school keeps only
-    the shortest of its routes, the first district winning a tie. With
-    `bottleneck` the districts are taken in the frame's order, which must be
+    sampled around, to the school, as `distances` gives it. With
+    `shortest_only` each school keeps only the shortest of its routes, the
+    first district winning a tie. With `bottleneck` the districts are taken
+    in the frame's order, which must be
     IDACI rank order, as `first_districts` takes them for the schools holding a
     seat, and each such school keeps only its route to one of those kept, as
     `bottleneck_pairs` pairs them. Given `school_places`, the
@@ -244,15 +248,24 @@ def build_routes(
 
     Args:
         districts (gpd.GeoDataFrame): Route-eligible districts, carrying an
-        "LSOA21CD" column and a "Centroids" geometry, and "IDACI" (the rank)
-        under `bottleneck`. The index of the frame is kept as `district_idx`,
-        so it must be positional into the frame students were sampled from.
+        "LSOA21CD" column, and "IDACI" (the rank) under `bottleneck`. The
+        index of the frame is kept as `district_idx`, so it must be
+        positional into the frame students were sampled from.
 
-        school_xy (np.ndarray): School coordinates, shape (n_schools, 2), in the
-        same CRS as the centroids. `school_idx` is positional into this array.
+        distances (np.ndarray): Distance from every district's population
+        centroid to every school, shape (n_districts, n_schools), in metres,
+        its rows aligned with `districts`. `school_idx` is positional into its
+        columns.
+
+        minutes (np.ndarray): Minutes by bus at the weekday morning peak from
+        every district's population centroid to every school, aligned with
+        `distances`, NaN where not measured.
 
         min_distance (float): Districts are routed only to schools further away
-        than this, in the units of the CRS.
+        than this, in metres.
+
+        max_minutes (float): Districts are routed only to schools within this
+        many minutes by bus.
 
         weight (np.ndarray): Each district's claim on the seats of the schools
         it is routed to, shape (n_districts,). A district of no weight is not
@@ -277,10 +290,14 @@ def build_routes(
     Returns:
         pd.DataFrame: One row per route, with columns "route_id" (contiguous
         from 0, the route axis `fast_DAT` indexes), "district_idx", "LSOA21CD",
-        "school_idx" and "capacity".
+        "school_idx", "capacity" and "minutes".
     """
-    distances = spdist.cdist(centroid_xy(districts), school_xy)
-    routed = (distances > min_distance) & (np.asarray(weight) > 0)[:, None]
+    # A pair whose minutes were not measured, NaN, is over no cap.
+    routed = (
+        (distances > min_distance)
+        & ~(minutes > max_minutes)
+        & (np.asarray(weight) > 0)[:, None]
+    )
     if shortest_only:
         # A school with no route has every distance masked, and stays unrouted.
         nearest = np.where(routed, distances, np.inf).argmin(axis=0)
@@ -343,18 +360,21 @@ def build_routes(
             "LSOA21CD": districts["LSOA21CD"].to_numpy()[district_pos],
             "school_idx": school_idx.astype(np.int32),
             "capacity": capacity[district_pos, school_idx].astype(np.int32),
+            "minutes": minutes[district_pos, school_idx],
         }
     )
 
 
 def route_network(
     areas: gpd.GeoDataFrame,
-    school_xy: np.ndarray,
+    district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     school_scores: np.ndarray,
     school_places: np.ndarray,
     district_cohort: np.ndarray,
     decile: int = DISADVANTAGED_DECILE,
     min_distance: float = MIN_ROUTE_DISTANCE,
+    max_minutes: float = MAX_ROUTE_MINUTES,
     capacity_scale: float = ROUTE_CAPACITY_SCALE,
     max_local_p8: float = MAX_LOCAL_P8,
     local_radius: float = LOCAL_RADIUS,
@@ -400,21 +420,28 @@ def route_network(
 
     Args:
         areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IDACI
-        Decile", "IDACI Score" and "Centroids" columns, and "IDACI" (the rank)
-        under `bottleneck` and `largest_first`, positionally indexed in the
-        order students were sampled from.
+        Decile" and "IDACI Score" columns, and "IDACI" (the rank) under
+        `bottleneck` and `largest_first`, positionally indexed in the order
+        students were sampled from.
 
-        school_xy (np.ndarray): School coordinates, shape (n_schools, 2), in the
-        same CRS as the centroids.
+        district_distance (np.ndarray): Distance from every district's
+        population centroid to every school, shape (n_districts, n_schools),
+        in metres, its rows aligned with `areas`. Every distance condition
+        reads it.
+
+        district_minutes (np.ndarray | None): Minutes by bus at the weekday
+        morning peak from every district's population centroid to every
+        school, aligned with `district_distance`, or None where they were not
+        measured, under no cap.
 
         school_scores (np.ndarray): Progress 8 per school, shape (n_schools,),
-        aligned with `school_xy`. `load_schools` drops a secondary school
-        without a published score, so such a school is absent from both arrays
-        and takes no part in this condition.
+        aligned with the columns of `district_distance`. `load_schools` drops
+        a secondary school without a published score, so such a school is
+        absent from both arrays and takes no part in this condition.
 
         school_places (np.ndarray): Year 7 places each school offers, as
         `load_places_offered` reads them, shape (n_schools,), aligned with
-        `school_xy`.
+        the columns of `district_distance`.
 
         district_cohort (np.ndarray): Expected students in the cohort of every
         district, positionally aligned with `areas`: the mean cohort
@@ -425,6 +452,9 @@ def route_network(
 
         min_distance (float, optional): Districts are routed only to schools
         further away than this, in metres. Defaults to MIN_ROUTE_DISTANCE.
+
+        max_minutes (float, optional): Districts are routed only to schools
+        within this many minutes by bus. Defaults to MAX_ROUTE_MINUTES.
 
         capacity_scale (float, optional): k, the seats on the routes into a
         school as a multiple of the disadvantaged students' fair share of its
@@ -497,21 +527,40 @@ def route_network(
         )
 
     # Misaligned scores would gate on the wrong schools, plausibly and silently.
-    if len(school_scores) != len(school_xy):
+    n_schools = district_distance.shape[1]
+    if len(district_distance) != len(areas):
         raise ValueError(
-            f"school_scores must align with school_xy: got {len(school_scores)} "
-            f"scores for {len(school_xy)} schools."
+            f"district_distance must align with areas: got {len(district_distance)} "
+            f"rows for {len(areas)} districts."
         )
-    if len(school_places) != len(school_xy):
+    if district_minutes is None:
+        if np.isfinite(max_minutes):
+            raise ValueError(
+                f"A cap of {max_minutes} minutes needs the minutes by bus measured."
+            )
+        district_minutes = np.full(district_distance.shape, np.nan)
+    if district_minutes.shape != district_distance.shape:
         raise ValueError(
-            f"school_places must align with school_xy: got {len(school_places)} "
-            f"places for {len(school_xy)} schools."
+            f"district_minutes must align with district_distance: got shape "
+            f"{district_minutes.shape} for {district_distance.shape}."
+        )
+    if len(school_scores) != n_schools:
+        raise ValueError(
+            f"school_scores must align with district_distance: got "
+            f"{len(school_scores)} scores for {n_schools} schools."
+        )
+    if len(school_places) != n_schools:
+        raise ValueError(
+            f"school_places must align with district_distance: got "
+            f"{len(school_places)} places for {n_schools} schools."
         )
     if len(district_cohort) != len(areas):
         raise ValueError(
             f"district_cohort must align with areas: got {len(district_cohort)} "
             f"cohorts for {len(areas)} districts."
         )
+    if max_minutes <= 0:
+        raise ValueError(f"max_minutes must be positive, got {max_minutes}.")
     if capacity_scale <= 0:
         raise ValueError(f"capacity_scale must be positive, got {capacity_scale}.")
     if progressivity < 0:
@@ -533,7 +582,7 @@ def route_network(
         # Most disadvantaged students first, a tie going to the lower IDACI
         # rank: the order the districts take their turns in.
         most = np.lexsort((areas["IDACI"].to_numpy(), -disadvantaged))
-        deprived = areas.iloc[most[: len(school_xy)]]
+        deprived = areas.iloc[most[:n_schools]]
         selected = f"{len(deprived)} districts holding the most disadvantaged students"
     else:
         deprived = areas[areas["IDACI Decile"] <= decile]
@@ -547,7 +596,7 @@ def route_network(
     # A school above the threshold inside the radius serves the district
     # already, so no route is built from it. Carried on the district index, so
     # the eligible subset keeps the positions district_idx is read from.
-    local = spdist.cdist(centroid_xy(deprived), school_xy) <= local_radius
+    local = district_distance[deprived.index] <= local_radius
     served = pd.DataFrame(
         local & (np.asarray(school_scores) > max_local_p8), index=deprived.index
     ).any(axis=1)
@@ -580,8 +629,10 @@ def route_network(
     )
     routes = build_routes(
         eligible,
-        school_xy,
+        district_distance[eligible.index],
+        district_minutes[eligible.index],
         min_distance,
+        max_minutes,
         weight,
         (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int64),
         shortest_only,
@@ -590,8 +641,14 @@ def route_network(
     )
     if routes.empty:
         raise EmptyRouteSet(
-            f"No school lies more than {min_distance}m from any of the "
-            f"{len(eligible)} route-eligible districts on a route holding a seat "
+            f"No school lies more than {min_distance}m"
+            + (
+                f" and within {max_minutes} minutes by bus"
+                if np.isfinite(max_minutes)
+                else ""
+            )
+            + f" from any of the {len(eligible)} route-eligible districts on a "
+            "route holding a seat "
             f"at capacity scale {capacity_scale}, so the route set is empty."
         )
 
@@ -616,11 +673,7 @@ def route_network(
     if shortest_only:
         rule = ", each school keeping only its route to the nearest district."
     elif bottleneck:
-        longest = np.linalg.norm(
-            centroid_xy(areas.iloc[routes["district_idx"]])
-            - school_xy[routes["school_idx"]],
-            axis=1,
-        ).max()
+        longest = district_distance[routes["district_idx"], routes["school_idx"]].max()
         deepest = areas["IDACI"].iloc[routes["district_idx"]].max()
         rule = (
             ", each school paired with a district of its own, the districts "
@@ -642,6 +695,6 @@ def route_network(
     print(
         f"{selected}, {len(eligible)} of them with no school above Progress 8 "
         f"{max_local_p8} within {local_radius}m, {len(routes)} routes to "
-        f"{len(school_xy)} secondary schools" + per_district + rule
+        f"{n_schools} secondary schools" + per_district + rule
     )
     return routes

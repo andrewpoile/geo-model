@@ -1,10 +1,21 @@
 import argparse
+import functools
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 
-from geo_model.cli import add_priority_argument, add_region_arguments
+from geo_model.cli import (
+    add_distance_argument,
+    add_priority_argument,
+    add_region_arguments,
+)
+from geo_model.data.network import (
+    DISTANCE,
+    bus_minutes,
+    region_links,
+    school_distance,
+)
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.model.preferences import (
@@ -13,7 +24,7 @@ from geo_model.model.preferences import (
     rank_bundles,
     secondary_instance,
 )
-from geo_model.model.routes import route_network
+from geo_model.model.routes import centroid_xy, route_network
 from geo_model.model.settings import (
     DISADVANTAGE,
     DISADVANTAGED_DECILE,
@@ -39,7 +50,9 @@ def build(
     primary_schools: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     out_dir: Path,
+    region: str,
     priority: str = PRIORITY,
+    distance: str = DISTANCE,
 ) -> None:
     """Build one region's matching inputs for both phases and write them out,
     to OUTPUT_NPZ in `out_dir` and the route set beside it.
@@ -56,9 +69,21 @@ def build(
 
         out_dir (Path): Folder the inputs are written to.
 
+        region (str): The region's name, passed to `region_links`.
+
         priority (str, optional): One of PRIORITY_CHOICES, the rule both
         phases' school priorities follow. Defaults to PRIORITY.
+
+        distance (str, optional): One of DISTANCE_CHOICES, how both phases'
+        distances are measured, as `school_distance` measures them. Defaults
+        to DISTANCE.
     """
+    links = functools.cache(lambda: region_links(areas, region))
+    measured = school_distance(distance, links)
+    primary_distance, secondary_distance = (
+        measured(schools[["Easting", "Northing"]].to_numpy())
+        for schools in (primary_schools, secondary_schools)
+    )
     rng = np.random.default_rng(SEED)
 
     # Draw each LSOA's cohort, then simulate its students' locations, clustered
@@ -90,9 +115,21 @@ def build(
 
     # Routes connect the most deprived districts to the secondary schools they
     # cannot reach unaided, so they exist for the secondary phase alone.
+    district_xy = centroid_xy(areas)
     secondary_routes = route_network(
         areas,
-        secondary_schools[["Easting", "Northing"]].to_numpy(),
+        secondary_distance(district_xy),
+        # Measured where the network is read already, as `load_region`
+        # measures them, since the routes take no cap here.
+        (
+            bus_minutes(
+                links(),
+                secondary_schools[["Easting", "Northing"]].to_numpy(),
+                district_xy,
+            )
+            if distance == "network"
+            else None
+        ),
         secondary_schools["P8MEA"].to_numpy(),
         secondary_schools["PlacesOffered"].to_numpy(),
         cohort_sizes(areas, "secondary"),
@@ -104,9 +141,8 @@ def build(
     # is a KS4 measure with no primary analogue, so it shapes secondary preferences
     # only, and priorities follow the same rule, `priority`, in both phases.
     primary_student_preferences, primary_preference_ranks = rank_bundles(
-        primary_student_xy,
+        primary_distance(primary_student_xy),
         primary_student_lsoa,
-        primary_schools[["Easting", "Northing"]].to_numpy(),
         district_index(primary_schools, areas),
         np.empty(0, dtype=np.int32),
         np.empty(0, dtype=np.int32),
@@ -120,7 +156,7 @@ def build(
         secondary_school_capacities,
         _,
     ) = secondary_instance(
-        secondary_student_xy,
+        secondary_distance(secondary_student_xy),
         secondary_student_lsoa,
         areas,
         secondary_schools,
@@ -146,8 +182,9 @@ def build(
     out_dir.mkdir(parents=True, exist_ok=True)
     # The district each student was drawn in and whether they are
     # disadvantaged are saved alongside, so a matching of this instance can be
-    # scored for segregation on its own, and the rule the priorities follow,
-    # so the instance says how it was ranked.
+    # scored for segregation on its own, and the rules the priorities follow
+    # and the distances are measured by, so the instance says how it was
+    # ranked.
     np.savez_compressed(
         out_dir / OUTPUT_NPZ,
         primary_student_preferences=primary_student_preferences,
@@ -161,6 +198,7 @@ def build(
         primary_student_disadvantaged=primary_student_disadvantaged,
         secondary_student_disadvantaged=secondary_student_disadvantaged,
         priority=priority,
+        distance=distance,
     )
 
 
@@ -170,6 +208,7 @@ def main() -> None:
         description="Build the matching inputs for both phases and write them out."
     )
     add_priority_argument(parser)
+    add_distance_argument(parser)
     add_region_arguments(parser)
     args = parser.parse_args()
 
@@ -179,8 +218,10 @@ def main() -> None:
             areas,
             primary_schools,
             secondary_schools,
-            region_dir(las, priority=args.priority),
+            region_dir(las, priority=args.priority, distance=args.distance),
+            "+".join(sorted(las)),
             priority=args.priority,
+            distance=args.distance,
         )
 
 
