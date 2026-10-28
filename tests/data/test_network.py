@@ -103,13 +103,23 @@ def test_bus_minutes_follow_the_peak_speeds_and_one_way_roads():
     np.testing.assert_allclose(minutes, [[0, 1], [np.hypot(1000, 1000) / 100 + 5, 0]])
 
 
-def test_unruled_bus_values_raise():
-    road = [(["a", "b"], [(0, 0), (100, 0)], {"bus": "permissive"})]
-    with pytest.raises(ValueError, match="bus values with no rule"):
+@pytest.mark.parametrize(
+    "tags, message",
+    [
+        ({"bus": "permissive"}, "bus values with no rule"),
+        ({"bus": "yes", "oneway": "yes", "bus:backward": "yes"}, "against their"),
+    ],
+    ids=["unruled bus value", "bus tag against the oneway"],
+)
+def test_unruled_bus_tags_raise(tags, message):
+    road = [(["a", "b"], [(0, 0), (100, 0)], tags)]
+    with pytest.raises(ValueError, match=message):
         nw.bus_network(bus_links(road))
 
 
-def test_network_is_never_shorter_than_the_straight_line(areas, secondary, monkeypatch):
+def test_network_is_never_shorter_than_the_straight_line(
+    areas, secondary, route_data, monkeypatch
+):
     region = "+".join(sorted(sources.LAS))
     school_xy = secondary[["Easting", "Northing"]].to_numpy()
     xy = np.column_stack([areas.centroid.x, areas.centroid.y])

@@ -112,7 +112,16 @@ NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
     ],
 )
 def test_main_writes_its_outputs_and_nothing_else(
-    module, argv, folder, written, anon_argv, areas, schools, tmp_path, monkeypatch
+    module,
+    argv,
+    folder,
+    written,
+    anon_argv,
+    areas,
+    schools,
+    route_data,
+    tmp_path,
+    monkeypatch,
 ):
     # The real output folder holds the user's results, so the region is
     # written to a temporary one, from the frames the session has loaded.

@@ -12,7 +12,8 @@ from geo_model.model.settings import DISADVANTAGE_CHOICES, SEED
 # A student sample: the coordinates of every student, the positional index of
 # the district each was drawn in, whether each was drawn disadvantaged, the
 # seed their tastes for the schools are drawn from, and the distance from every
-# student to every school.
+# student to every school, at single precision, since every sample of a run is
+# held at once, in the parent and in every worker.
 Sample = tuple[np.ndarray, np.ndarray, np.ndarray, np.random.SeedSequence, np.ndarray]
 
 
@@ -284,4 +285,10 @@ def student_samples(
             rng,
         )
         drawn = disadvantaged_students(student_lsoa, areas, rng)
-        yield student_xy, student_lsoa, drawn, stream.spawn(1)[0], to_school(student_xy)
+        yield (
+            student_xy,
+            student_lsoa,
+            drawn,
+            stream.spawn(1)[0],
+            to_school(student_xy).astype(np.float32),
+        )

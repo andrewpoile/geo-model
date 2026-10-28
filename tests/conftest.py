@@ -56,7 +56,14 @@ def network_cache(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def links(areas):
+def route_data(data):
+    """Skip the test unless the OS Multi-modal Routing Network is present."""
+    if not sources.MRN_GPKG.exists():
+        pytest.skip(f"{sources.MRN_GPKG} is not present")
+
+
+@pytest.fixture(scope="session")
+def links(areas, route_data):
     """The default region's links, as `region_links` gives them."""
     return nw.region_links(areas, "+".join(sorted(sources.LAS)))
 

@@ -283,7 +283,8 @@ def bus_network(links: gpd.GeoDataFrame) -> Network:
 
     Raises:
         ValueError: If a link direction has a bus access in neither BUS_OPEN
-        nor BUS_CLOSED, or a oneway value ONEWAY has no rule for, if a
+        nor BUS_CLOSED, or a oneway value ONEWAY has no rule for, if its
+        "bus:<direction>" opens a direction its oneway closes, if a
         direction open to buses has no speed or none above 0, or as
         `peak_speed` and `link_ends` raise of the links open to buses.
     """
@@ -304,9 +305,17 @@ def bus_network(links: gpd.GeoDataFrame) -> Network:
                 f"{unknown.value_counts(dropna=False).to_dict()}"
             )
         leaving_open = [value for value, ways in ONEWAY.items() if direction in ways]
-        opened[direction] = (
-            access.isin(BUS_OPEN) & (oneway.isna() | oneway.isin(leaving_open))
-        ).to_numpy()
+        left_open = oneway.isna() | oneway.isin(leaving_open)
+        # A bus tag of the direction's own opening a direction the oneway
+        # closes contradicts it, unless "oneway:bus" or "oneway:psv" lifts it.
+        contradicted = land[f"bus:{direction}"].isin(BUS_OPEN) & ~left_open
+        if contradicted.any():
+            raise ValueError(
+                f"{contradicted.sum()} links open {direction} to buses by "
+                f'"bus:{direction}" against their "oneway", with no rule for which '
+                "holds."
+            )
+        opened[direction] = (access.isin(BUS_OPEN) & left_open).to_numpy()
     either = opened["forward"] | opened["backward"]
     road = land[either]
     node_xy, start, end = link_ends(road)
@@ -337,8 +346,9 @@ def region_links(
     areas: gpd.GeoDataFrame, region: str, buffer: float = NETWORK_BUFFER
 ) -> gpd.GeoDataFrame:
     """The region's links, as `load_links` reads them, cached in
-    NETWORK_CACHE_DIR and reused until MRN_GPKG, the region's bounds, `buffer`
-    or LINK_COLUMNS change.
+    NETWORK_CACHE_DIR, a file per region and buffer, and reused until
+    MRN_GPKG, the region's bounds or LINK_COLUMNS change. MRN_GPKG must be
+    present even when the cache is, since the cache is checked against it.
 
     Args:
         areas (gpd.GeoDataFrame): The region's districts, in sources.CRS.
@@ -350,7 +360,15 @@ def region_links(
 
     Returns:
         gpd.GeoDataFrame: The region's links.
+
+    Raises:
+        FileNotFoundError: If MRN_GPKG is absent.
     """
+    if not sources.MRN_GPKG.exists():
+        raise FileNotFoundError(
+            f"{sources.MRN_GPKG} is not present, and the network cache cannot be "
+            "checked without it."
+        )
     stat = sources.MRN_GPKG.stat()
     key = (
         stat.st_mtime_ns,
@@ -359,7 +377,7 @@ def region_links(
         buffer,
         tuple(LINK_COLUMNS),
     )
-    cache = sources.NETWORK_CACHE_DIR / f"{region}.pkl"
+    cache = sources.NETWORK_CACHE_DIR / f"{region}.{buffer:g}m.pkl"
     if cache.exists():
         links = pd.read_pickle(cache)
         if links.attrs.get("source_key") == key:

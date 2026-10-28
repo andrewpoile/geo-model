@@ -87,7 +87,9 @@ def test_run_scores_writes_and_plots_the_setting_against_no_routes(
         assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
-def test_load_region_measures_along_the_walking_network_by_default(areas, to_school):
+def test_load_region_measures_along_the_walking_network_by_default(
+    areas, to_school, route_data
+):
     _, _, walk, district_distance, district_minutes, folder = rn.load_region(
         sources.LAS, areas, False, "distance", "network", math.inf
     )

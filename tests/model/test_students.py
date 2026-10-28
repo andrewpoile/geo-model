@@ -243,8 +243,12 @@ def test_student_samples_draws_one_reproducible_sample_per_seed(areas, to_school
         for a, b in zip(sample_a[:3], sample_b[:3]):
             np.testing.assert_array_equal(a, b)
         np.testing.assert_array_equal(taste_a, taste_b)
-        # Each carries its students' distance to every school.
-        np.testing.assert_array_equal(sample_a[4], to_school(sample_a[0]))
+        # Each carries its students' distance to every school, at single
+        # precision.
+        assert sample_a[4].dtype == np.float32
+        np.testing.assert_array_equal(
+            sample_a[4], to_school(sample_a[0]).astype(np.float32)
+        )
 
 
 def test_student_samples_draw_each_district_its_idaci_share_after_the_locations(
