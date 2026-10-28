@@ -56,6 +56,15 @@ OFFERS_CSV = DATA_DIR / (
 # for any school in England, so 2023-2024 is the latest usable year.
 KS4_CSV = DATA_DIR / "school_data/Performancetables_csv/2023-2024/england_ks4final.csv"
 
+# OS Multi-modal Routing Network, August 2026, all of Great Britain in EPSG:4326:
+# every road, path, rail line and ferry as a link between two nodes. A region's
+# links are cached in NETWORK_CACHE_DIR, one file per region.
+MRN_GPKG = DATA_DIR / (
+    "route_data/OS Route Data/mrn-gb_6529457/OSMulti-modalRoutingNetwork.gpkg"
+)
+MRN_LINKS = "mrn_ntwk_transportlink"
+NETWORK_CACHE_DIR = Path("temp/network")
+
 # NTS0614a: trips to and from school by trip length, main mode and age, England,
 # 2002 onwards. Education trips under 50 miles only; bus is private and local
 # bus together, other is rail and everything else.
