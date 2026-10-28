@@ -11,6 +11,8 @@ runs its compromise through `run`.
 """
 
 import argparse
+import functools
+import math
 from dataclasses import fields
 from pathlib import Path
 
@@ -39,7 +41,12 @@ from geo_model.cli import (
     add_travel_arguments,
 )
 from geo_model.data.anonymise import anonymise
-from geo_model.data.network import Distance, school_distance
+from geo_model.data.network import (
+    Distance,
+    bus_minutes,
+    region_links,
+    school_distance,
+)
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.data.travel import load_nts_mode_shares
@@ -106,6 +113,7 @@ def score_settings(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
     round_up: bool = ROUND_UP_SEATS,
@@ -132,6 +140,8 @@ def score_settings(
         takes them.
 
         district_distance (np.ndarray): Passed to `settings_routes`.
+
+        district_minutes (np.ndarray): Passed to `settings_routes`.
 
         shares (pd.DataFrame): Passed to `score_sample`.
 
@@ -178,6 +188,7 @@ def score_settings(
             areas,
             secondary_schools,
             district_distance,
+            district_minutes,
             round_up,
             linear,
             disadvantage,
@@ -229,10 +240,13 @@ def load_region(
     anon: bool,
     priority: str,
     distance: str,
-) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Distance, np.ndarray, Path]:
+    max_minutes: float,
+) -> tuple[
+    gpd.GeoDataFrame, gpd.GeoDataFrame, Distance, np.ndarray, np.ndarray | None, Path
+]:
     """A region's districts and secondary schools, the distance to its
-    schools from any point and from every district, and the folder its
-    outputs are written to, anonymised together where `anon`, so an
+    schools from any point and from every district, the minutes by bus to
+    them from every district, and the folder its outputs are written to, anonymised together where `anon`, so an
     anonymised run neither names the region nor writes over its named
     outputs.
 
@@ -250,25 +264,34 @@ def load_region(
 
         distance (str): Passed to `school_distance` and `region_dir`.
 
+        max_minutes (float): The cap on a route's minutes by bus. The minutes
+        are measured under "network" distance or a finite cap alone, so a
+        straight-line run reads no network unless it caps them.
+
     Returns:
-        tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Distance, np.ndarray, Path]:
-        The districts, the secondary schools as `load_schools` returns them,
-        the distance from any point to every one of them, as
-        `school_distance` measures it, the distance from every district's
+        tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Distance, np.ndarray,
+        np.ndarray | None, Path]: The districts, the secondary schools as
+        `load_schools` returns them, the distance from any point to every one
+        of them, as `school_distance` measures it, the distance and the
+        minutes by bus, as `bus_minutes` measures them or None where they are
+        not measured, from every district's
         population centroid to every one of them, and the folder `region_dir`
         gives.
     """
     _, secondary_schools = load_schools(las)
     if anon:
         areas, secondary_schools = anonymise(areas, secondary_schools)
-    to_school = school_distance(distance, areas, "+".join(sorted(las)))(
-        secondary_schools[["Easting", "Northing"]].to_numpy()
-    )
+    links = functools.cache(lambda: region_links(areas, "+".join(sorted(las))))
+    school_xy = secondary_schools[["Easting", "Northing"]].to_numpy()
+    to_school = school_distance(distance, links)(school_xy)
+    district_xy = centroid_xy(areas)
+    measured = distance == "network" or math.isfinite(max_minutes)
     return (
         areas,
         secondary_schools,
         to_school,
-        to_school(centroid_xy(areas)),
+        to_school(district_xy),
+        bus_minutes(links(), school_xy, district_xy) if measured else None,
         region_dir(las, anon, priority, distance),
     )
 
@@ -279,6 +302,7 @@ def run(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     out_dir: Path,
     circuity: float = CIRCUITY,
@@ -323,6 +347,9 @@ def run(
         district_distance (np.ndarray): Passed to `settings_routes`,
         `score_settings` and `settings_matchings`.
 
+        district_minutes (np.ndarray): Passed to `settings_routes`,
+        `score_settings` and `settings_matchings`.
+
         shares (pd.DataFrame): Passed to `score_settings`.
 
         out_dir (Path): Folder everything is written to.
@@ -364,6 +391,7 @@ def run(
         areas,
         secondary_schools,
         district_distance,
+        district_minutes,
         round_up,
         linear,
         disadvantage,
@@ -377,6 +405,7 @@ def run(
             areas,
             secondary_schools,
             district_distance,
+            district_minutes,
             shares,
             circuity,
             round_up,
@@ -412,6 +441,7 @@ def run(
                 areas,
                 secondary_schools,
                 district_distance,
+                district_minutes,
                 round_up,
                 linear,
                 disadvantage,
@@ -551,8 +581,20 @@ def main(
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")
-        areas, secondary_schools, to_school, district_distance, folder = load_region(
-            las, areas, args.anon, args.priority, args.distance
+        (
+            areas,
+            secondary_schools,
+            to_school,
+            district_distance,
+            district_minutes,
+            folder,
+        ) = load_region(
+            las,
+            areas,
+            args.anon,
+            args.priority,
+            args.distance,
+            settings.max_route_minutes,
         )
         samples = list(student_samples(areas, args.seeds, to_school))
         run(
@@ -561,6 +603,7 @@ def main(
             areas,
             secondary_schools,
             district_distance,
+            district_minutes,
             shares,
             folder / out_dir,
             args.circuity,

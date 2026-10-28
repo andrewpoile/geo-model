@@ -17,7 +17,14 @@ from geo_model.scripts import sweep as sw
 
 
 def test_sweep_scores_every_cell_on_the_same_samples(
-    samples, areas, secondary, district_distance, shares, tmp_path, monkeypatch
+    samples,
+    areas,
+    secondary,
+    district_distance,
+    district_minutes,
+    shares,
+    tmp_path,
+    monkeypatch,
 ):
     monkeypatch.setattr(
         sw,
@@ -35,6 +42,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(
         areas,
         secondary,
         district_distance,
+        district_minutes,
         shares,
         tmp_path,
         distance="euclidean",
@@ -74,6 +82,7 @@ def test_sweep_scores_every_cell_on_the_same_samples(
         areas,
         secondary,
         district_distance,
+        district_minutes,
         shares,
         tmp_path,
         workers=2,
@@ -104,6 +113,7 @@ def test_sweep_scores_every_cell_under_the_rule_given(monkeypatch, tmp_path):
         [],
         gpd.GeoDataFrame(),
         gpd.GeoDataFrame(),
+        np.empty((0, 0)),
         np.empty((0, 0)),
         pd.DataFrame(),
         tmp_path,

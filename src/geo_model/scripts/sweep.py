@@ -67,6 +67,7 @@ def sweep(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     out_dir: Path,
     circuity: float = CIRCUITY,
@@ -95,6 +96,8 @@ def sweep(
         takes them.
 
         district_distance (np.ndarray): Passed to `score_settings`.
+
+        district_minutes (np.ndarray): Passed to `score_settings`.
 
         shares (pd.DataFrame): Passed to `score_settings`.
 
@@ -146,6 +149,7 @@ def sweep(
         areas=areas,
         secondary_schools=secondary_schools,
         district_distance=district_distance,
+        district_minutes=district_minutes,
         shares=shares,
         circuity=circuity,
         round_up=round_up,
@@ -219,8 +223,20 @@ def main() -> None:
     parameters = swept(GRID, args.disadvantage, args.priority)
     fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
     for las, areas in regions(args.la, args.merge):
-        areas, secondary_schools, to_school, district_distance, folder = load_region(
-            las, areas, args.anon, args.priority, args.distance
+        (
+            areas,
+            secondary_schools,
+            to_school,
+            district_distance,
+            district_minutes,
+            folder,
+        ) = load_region(
+            las,
+            areas,
+            args.anon,
+            args.priority,
+            args.distance,
+            DEFAULTS.max_route_minutes,
         )
         out_dir = folder / SWEEP_DIR
         samples = list(student_samples(areas, args.seeds, to_school))
@@ -230,6 +246,7 @@ def main() -> None:
             areas,
             secondary_schools,
             district_distance,
+            district_minutes,
             shares,
             out_dir,
             args.circuity,
@@ -299,6 +316,7 @@ def main() -> None:
                     areas,
                     secondary_schools,
                     district_distance,
+                    district_minutes,
                     args.round_up_seats,
                     args.linear_progressivity,
                     args.disadvantage,

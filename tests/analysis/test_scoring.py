@@ -1,8 +1,10 @@
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from geo_model.analysis.scoring import district_rows, score_sample
+from geo_model.analysis.scoring import district_rows, score_sample, settings_routes
 from geo_model.measures.travel import MODES
 from geo_model.model.settings import DEFAULTS, DISADVANTAGE
 from geo_model.model.students import student_samples
@@ -159,3 +161,14 @@ def test_district_rows_count_every_seeds_own_students_by_district(areas, to_scho
     assert not np.array_equal(
         rows.loc[rows["seed"] == 0, "cohort"], rows.loc[rows["seed"] == 1, "cohort"]
     )
+
+
+def test_settings_routes_hold_to_the_cap_on_minutes_by_bus(
+    areas, secondary, district_distance, district_minutes
+):
+    capped, uncapped = (
+        settings_routes(settings, areas, secondary, district_distance, district_minutes)
+        for settings in (replace(DEFAULTS, max_route_minutes=20.0), DEFAULTS)
+    )
+    assert (capped["minutes"] <= 20).all()
+    assert (uncapped["minutes"] > 20).any()

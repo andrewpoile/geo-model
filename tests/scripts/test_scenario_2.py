@@ -6,7 +6,7 @@ from geo_model.scripts import scenario_2 as s2
 
 
 def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(
-    areas, secondary, district_distance
+    areas, secondary, district_distance, district_minutes
 ):
     # Every district in IDACI rank order may be routed to the schools beyond
     # the minimum distance if it holds a disadvantaged student, no school
@@ -19,7 +19,7 @@ def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(
     targets = ranked[rt.first_districts(allowed)]
 
     routes = settings_routes(
-        s2.SCENARIO, areas, secondary, district_distance, s2.ROUND_UP
+        s2.SCENARIO, areas, secondary, district_distance, district_minutes, s2.ROUND_UP
     )
 
     # One route per school, each from a district of its own, the districts the

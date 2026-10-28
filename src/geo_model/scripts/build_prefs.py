@@ -1,4 +1,5 @@
 import argparse
+import functools
 from pathlib import Path
 
 import geopandas as gpd
@@ -9,7 +10,12 @@ from geo_model.cli import (
     add_priority_argument,
     add_region_arguments,
 )
-from geo_model.data.network import DISTANCE, school_distance
+from geo_model.data.network import (
+    DISTANCE,
+    bus_minutes,
+    region_links,
+    school_distance,
+)
 from geo_model.data.regions import regions
 from geo_model.data.schools import load_schools
 from geo_model.model.preferences import (
@@ -63,7 +69,7 @@ def build(
 
         out_dir (Path): Folder the inputs are written to.
 
-        region (str): The region's name, passed to `school_distance`.
+        region (str): The region's name, passed to `region_links`.
 
         priority (str, optional): One of PRIORITY_CHOICES, the rule both
         phases' school priorities follow. Defaults to PRIORITY.
@@ -72,7 +78,8 @@ def build(
         distances are measured, as `school_distance` measures them. Defaults
         to DISTANCE.
     """
-    measured = school_distance(distance, areas, region)
+    links = functools.cache(lambda: region_links(areas, region))
+    measured = school_distance(distance, links)
     primary_distance, secondary_distance = (
         measured(schools[["Easting", "Northing"]].to_numpy())
         for schools in (primary_schools, secondary_schools)
@@ -108,9 +115,21 @@ def build(
 
     # Routes connect the most deprived districts to the secondary schools they
     # cannot reach unaided, so they exist for the secondary phase alone.
+    district_xy = centroid_xy(areas)
     secondary_routes = route_network(
         areas,
-        secondary_distance(centroid_xy(areas)),
+        secondary_distance(district_xy),
+        # Measured where the network is read already, as `load_region`
+        # measures them, since the routes take no cap here.
+        (
+            bus_minutes(
+                links(),
+                secondary_schools[["Easting", "Northing"]].to_numpy(),
+                district_xy,
+            )
+            if distance == "network"
+            else None
+        ),
         secondary_schools["P8MEA"].to_numpy(),
         secondary_schools["PlacesOffered"].to_numpy(),
         cohort_sizes(areas, "secondary"),

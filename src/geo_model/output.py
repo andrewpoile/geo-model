@@ -73,6 +73,7 @@ def save_routes(routes: pd.DataFrame, out_dir: Path) -> None:
         route_capacities=routes["capacity"].to_numpy(dtype=np.int32),
         route_school_idx=routes["school_idx"].to_numpy(dtype=np.int32),
         route_district_idx=routes["district_idx"].to_numpy(dtype=np.int32),
+        route_minutes=routes["minutes"].to_numpy(dtype=float),
     )
 
 

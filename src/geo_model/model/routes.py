@@ -17,6 +17,7 @@ from geo_model.model.settings import (
     LINEAR_PROGRESSIVITY,
     LOCAL_RADIUS,
     MAX_LOCAL_P8,
+    MAX_ROUTE_MINUTES,
     MIN_ROUTE_DISTANCE,
     ROUND_UP_SEATS,
     ROUTE_CAPACITY_SCALE,
@@ -216,7 +217,9 @@ def largest_first_pairs(distances: np.ndarray, places: np.ndarray) -> np.ndarray
 def build_routes(
     districts: gpd.GeoDataFrame,
     distances: np.ndarray,
+    minutes: np.ndarray,
     min_distance: float,
+    max_minutes: float,
     weight: np.ndarray,
     school_seats: np.ndarray,
     shortest_only: bool = False,
@@ -226,8 +229,9 @@ def build_routes(
     """Build the routes connecting route-eligible districts to schools.
 
     A route joins one district to one school, so the route set is the subset of
-    (district, school) pairs lying more than `min_distance` apart, the district
-    carrying some weight, and holding at least one seat. Distance is measured
+    (district, school) pairs lying more than `min_distance` apart and within
+    `max_minutes` by bus, the district carrying some weight, and holding at
+    least one seat. Distance and minutes are measured
     from the population centroid of the district, the point its students are
     sampled around, to the school, as `distances` gives it. With
     `shortest_only` each school keeps only the shortest of its routes, the
@@ -253,8 +257,15 @@ def build_routes(
         its rows aligned with `districts`. `school_idx` is positional into its
         columns.
 
+        minutes (np.ndarray): Minutes by bus at the weekday morning peak from
+        every district's population centroid to every school, aligned with
+        `distances`, NaN where not measured.
+
         min_distance (float): Districts are routed only to schools further away
         than this, in metres.
+
+        max_minutes (float): Districts are routed only to schools within this
+        many minutes by bus.
 
         weight (np.ndarray): Each district's claim on the seats of the schools
         it is routed to, shape (n_districts,). A district of no weight is not
@@ -279,9 +290,14 @@ def build_routes(
     Returns:
         pd.DataFrame: One row per route, with columns "route_id" (contiguous
         from 0, the route axis `fast_DAT` indexes), "district_idx", "LSOA21CD",
-        "school_idx" and "capacity".
+        "school_idx", "capacity" and "minutes".
     """
-    routed = (distances > min_distance) & (np.asarray(weight) > 0)[:, None]
+    # A pair whose minutes were not measured, NaN, is over no cap.
+    routed = (
+        (distances > min_distance)
+        & ~(minutes > max_minutes)
+        & (np.asarray(weight) > 0)[:, None]
+    )
     if shortest_only:
         # A school with no route has every distance masked, and stays unrouted.
         nearest = np.where(routed, distances, np.inf).argmin(axis=0)
@@ -344,6 +360,7 @@ def build_routes(
             "LSOA21CD": districts["LSOA21CD"].to_numpy()[district_pos],
             "school_idx": school_idx.astype(np.int32),
             "capacity": capacity[district_pos, school_idx].astype(np.int32),
+            "minutes": minutes[district_pos, school_idx],
         }
     )
 
@@ -351,11 +368,13 @@ def build_routes(
 def route_network(
     areas: gpd.GeoDataFrame,
     district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     school_scores: np.ndarray,
     school_places: np.ndarray,
     district_cohort: np.ndarray,
     decile: int = DISADVANTAGED_DECILE,
     min_distance: float = MIN_ROUTE_DISTANCE,
+    max_minutes: float = MAX_ROUTE_MINUTES,
     capacity_scale: float = ROUTE_CAPACITY_SCALE,
     max_local_p8: float = MAX_LOCAL_P8,
     local_radius: float = LOCAL_RADIUS,
@@ -410,6 +429,11 @@ def route_network(
         in metres, its rows aligned with `areas`. Every distance condition
         reads it.
 
+        district_minutes (np.ndarray | None): Minutes by bus at the weekday
+        morning peak from every district's population centroid to every
+        school, aligned with `district_distance`, or None where they were not
+        measured, under no cap.
+
         school_scores (np.ndarray): Progress 8 per school, shape (n_schools,),
         aligned with the columns of `district_distance`. `load_schools` drops
         a secondary school without a published score, so such a school is
@@ -428,6 +452,9 @@ def route_network(
 
         min_distance (float, optional): Districts are routed only to schools
         further away than this, in metres. Defaults to MIN_ROUTE_DISTANCE.
+
+        max_minutes (float, optional): Districts are routed only to schools
+        within this many minutes by bus. Defaults to MAX_ROUTE_MINUTES.
 
         capacity_scale (float, optional): k, the seats on the routes into a
         school as a multiple of the disadvantaged students' fair share of its
@@ -506,6 +533,17 @@ def route_network(
             f"district_distance must align with areas: got {len(district_distance)} "
             f"rows for {len(areas)} districts."
         )
+    if district_minutes is None:
+        if np.isfinite(max_minutes):
+            raise ValueError(
+                f"A cap of {max_minutes} minutes needs the minutes by bus measured."
+            )
+        district_minutes = np.full(district_distance.shape, np.nan)
+    if district_minutes.shape != district_distance.shape:
+        raise ValueError(
+            f"district_minutes must align with district_distance: got shape "
+            f"{district_minutes.shape} for {district_distance.shape}."
+        )
     if len(school_scores) != n_schools:
         raise ValueError(
             f"school_scores must align with district_distance: got "
@@ -521,6 +559,8 @@ def route_network(
             f"district_cohort must align with areas: got {len(district_cohort)} "
             f"cohorts for {len(areas)} districts."
         )
+    if max_minutes <= 0:
+        raise ValueError(f"max_minutes must be positive, got {max_minutes}.")
     if capacity_scale <= 0:
         raise ValueError(f"capacity_scale must be positive, got {capacity_scale}.")
     if progressivity < 0:
@@ -590,7 +630,9 @@ def route_network(
     routes = build_routes(
         eligible,
         district_distance[eligible.index],
+        district_minutes[eligible.index],
         min_distance,
+        max_minutes,
         weight,
         (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int64),
         shortest_only,
@@ -599,8 +641,14 @@ def route_network(
     )
     if routes.empty:
         raise EmptyRouteSet(
-            f"No school lies more than {min_distance}m from any of the "
-            f"{len(eligible)} route-eligible districts on a route holding a seat "
+            f"No school lies more than {min_distance}m"
+            + (
+                f" and within {max_minutes} minutes by bus"
+                if np.isfinite(max_minutes)
+                else ""
+            )
+            + f" from any of the {len(eligible)} route-eligible districts on a "
+            "route holding a seat "
             f"at capacity scale {capacity_scale}, so the route set is empty."
         )
 

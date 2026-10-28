@@ -45,11 +45,20 @@ def shares(data):
     return travel.load_nts_mode_shares()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def network_cache(tmp_path_factory):
-    """A folder the walking network is cached in for the session, so the
-    tests read it from the GeoPackage once and never from the real cache."""
-    return tmp_path_factory.mktemp("network")
+    """A folder every test caches the region's links in, so the session reads
+    them from the GeoPackage once and never touches the real cache."""
+    cache = tmp_path_factory.mktemp("network")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sources, "NETWORK_CACHE_DIR", cache)
+        yield cache
+
+
+@pytest.fixture(scope="session")
+def links(areas):
+    """The default region's links, as `region_links` gives them."""
+    return nw.region_links(areas, "+".join(sorted(sources.LAS)))
 
 
 @pytest.fixture(scope="session")
@@ -66,17 +75,29 @@ def district_distance(areas, to_school):
 
 
 @pytest.fixture(scope="session")
+def district_minutes(areas, secondary, links):
+    """Minutes by bus from every district's population centroid to every
+    school."""
+    return nw.bus_minutes(
+        links,
+        secondary[["Easting", "Northing"]].to_numpy(),
+        rt.centroid_xy(areas),
+    )
+
+
+@pytest.fixture(scope="session")
 def samples(areas, to_school):
     """One student sample of the default region."""
     return list(student_samples(areas, 1, to_school))
 
 
 @pytest.fixture(scope="session")
-def routes(areas, secondary, district_distance):
+def routes(areas, secondary, district_distance, district_minutes):
     """The default region's route network at the module defaults."""
     return rt.route_network(
         areas,
         district_distance,
+        district_minutes,
         secondary["P8MEA"].to_numpy(),
         secondary["PlacesOffered"].to_numpy(),
         cohort_sizes(areas, "secondary"),

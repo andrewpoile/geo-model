@@ -35,6 +35,7 @@ def test_optimise_rejects_a_parameter_named_twice(tmp_path):
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             np.empty((0, 0)),
+            np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
             parameters=["min_distance", "min_distance"],
@@ -60,6 +61,7 @@ def test_optimise_rejects_a_parameter_the_choices_bar(
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             np.empty((0, 0)),
+            np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
             parameters=[parameter],
@@ -79,6 +81,7 @@ def test_optimise_rejects_a_search_where_no_setting_leaves_a_route(
             NO_STUDENTS,
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
+            np.empty((0, 0)),
             np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
@@ -102,6 +105,7 @@ def test_optimise_scores_every_candidate_under_the_rule_given(monkeypatch, tmp_p
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
             np.empty((0, 0)),
+            np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
             pop_size=4,
@@ -118,7 +122,7 @@ def test_optimise_scores_every_candidate_under_the_rule_given(monkeypatch, tmp_p
 
 
 def test_score_feasible_names_a_setting_that_leaves_no_route(
-    samples, areas, secondary, district_distance, shares, capsys
+    samples, areas, secondary, district_distance, district_minutes, shares, capsys
 ):
     # Every Southampton district lies within 9.9km of every school.
     settings = replace(DEFAULTS, min_distance=20_000)
@@ -129,6 +133,7 @@ def test_score_feasible_names_a_setting_that_leaves_no_route(
         areas=areas,
         secondary_schools=secondary,
         district_distance=district_distance,
+        district_minutes=district_minutes,
         shares=shares,
         distance="euclidean",
     )
@@ -140,7 +145,7 @@ def test_score_feasible_names_a_setting_that_leaves_no_route(
 
 
 def test_optimise_finds_the_front_of_every_setting_scored(
-    samples, areas, secondary, district_distance, shares, tmp_path
+    samples, areas, secondary, district_distance, district_minutes, shares, tmp_path
 ):
     parameters = ["capacity_scale", "progressivity"]
 
@@ -149,6 +154,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         areas,
         secondary,
         district_distance,
+        district_minutes,
         shares,
         tmp_path,
         parameters,
@@ -197,6 +203,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(
             areas,
             secondary,
             district_distance,
+            district_minutes,
             shares,
             distance="euclidean",
         ),
@@ -210,6 +217,7 @@ def test_optimise_finds_the_front_of_every_setting_scored(
         areas,
         secondary,
         district_distance,
+        district_minutes,
         shares,
         tmp_path / "pooled",
         parameters,

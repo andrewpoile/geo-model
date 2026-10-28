@@ -113,6 +113,7 @@ def optimise(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     out_dir: Path,
     parameters: list[str] = LEVERS,
@@ -145,6 +146,8 @@ def optimise(
         secondary_schools (gpd.GeoDataFrame): Passed to `score_settings`.
 
         district_distance (np.ndarray): Passed to `score_settings`.
+
+        district_minutes (np.ndarray): Passed to `score_settings`.
 
         shares (pd.DataFrame): Passed to `score_settings`.
 
@@ -215,6 +218,7 @@ def optimise(
         areas=areas,
         secondary_schools=secondary_schools,
         district_distance=district_distance,
+        district_minutes=district_minutes,
         shares=shares,
         circuity=circuity,
         round_up=round_up,
@@ -258,6 +262,7 @@ def search(
     secondary_schools: gpd.GeoDataFrame,
     to_school: Distance,
     district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     out_dir: Path,
 ) -> None:
@@ -281,6 +286,9 @@ def search(
         district_distance (np.ndarray): Distance from every district to every
         school, as `load_region` gives it.
 
+        district_minutes (np.ndarray): Minutes by bus from every district to
+        every school, as `load_region` gives it.
+
         shares (pd.DataFrame): NTS mode shares, as `load_nts_mode_shares`
         returns them.
 
@@ -299,6 +307,7 @@ def search(
             areas,
             secondary_schools,
             district_distance,
+            district_minutes,
             shares,
             args.circuity,
             args.round_up_seats,
@@ -314,6 +323,7 @@ def search(
         areas,
         secondary_schools,
         district_distance,
+        district_minutes,
         shares,
         out_dir,
         args.parameters,
@@ -352,6 +362,7 @@ def search(
         areas,
         secondary_schools,
         district_distance,
+        district_minutes,
         shares,
         out_dir,
         args.circuity,
@@ -430,8 +441,20 @@ def main() -> None:
 
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
-        areas, secondary_schools, to_school, district_distance, folder = load_region(
-            las, areas, args.anon, args.priority, args.distance
+        (
+            areas,
+            secondary_schools,
+            to_school,
+            district_distance,
+            district_minutes,
+            folder,
+        ) = load_region(
+            las,
+            areas,
+            args.anon,
+            args.priority,
+            args.distance,
+            DEFAULTS.max_route_minutes,
         )
         search(
             args,
@@ -440,6 +463,7 @@ def main() -> None:
             secondary_schools,
             to_school,
             district_distance,
+            district_minutes,
             shares,
             folder / OUT_DIR,
         )

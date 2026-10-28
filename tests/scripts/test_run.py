@@ -1,3 +1,4 @@
+import math
 import sys
 from dataclasses import replace
 
@@ -26,7 +27,7 @@ from geo_model.scripts import run as rn
 
 
 def test_run_scores_writes_and_plots_the_setting_against_no_routes(
-    samples, areas, secondary, district_distance, shares, tmp_path
+    samples, areas, secondary, district_distance, district_minutes, shares, tmp_path
 ):
     settings = replace(DEFAULTS, capacity_scale=2.0, progressivity=0.5)
 
@@ -36,6 +37,7 @@ def test_run_scores_writes_and_plots_the_setting_against_no_routes(
         areas,
         secondary,
         district_distance,
+        district_minutes,
         shares,
         tmp_path,
         distance="euclidean",
@@ -47,6 +49,7 @@ def test_run_scores_writes_and_plots_the_setting_against_no_routes(
         areas,
         secondary,
         district_distance,
+        district_minutes,
         shares,
         utilisation=True,
         distance="euclidean",
@@ -84,18 +87,32 @@ def test_run_scores_writes_and_plots_the_setting_against_no_routes(
         assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
-def test_load_region_measures_along_the_walking_network_by_default(
-    areas, to_school, network_cache, monkeypatch
-):
-    monkeypatch.setattr(sources, "NETWORK_CACHE_DIR", network_cache)
-    _, _, walk, district_distance, folder = rn.load_region(
-        sources.LAS, areas, False, "distance", "network"
+def test_load_region_measures_along_the_walking_network_by_default(areas, to_school):
+    _, _, walk, district_distance, district_minutes, folder = rn.load_region(
+        sources.LAS, areas, False, "distance", "network", math.inf
     )
     straight = to_school(centroid_xy(areas))
     assert walk.rule == "network"
     assert district_distance.shape == straight.shape
     assert (district_distance >= straight).all()
+    assert district_minutes is not None
+    assert district_minutes.shape == straight.shape
+    assert np.isfinite(district_minutes).all()
     assert folder == region_dir(sources.LAS)
+
+
+def test_load_region_reads_no_network_in_a_straight_line_run_with_no_cap(
+    areas, monkeypatch
+):
+    def unread(*args):
+        raise AssertionError("read the network for a straight-line run")
+
+    monkeypatch.setattr(rn, "region_links", unread)
+    _, _, straight, _, district_minutes, _ = rn.load_region(
+        sources.LAS, areas, False, "distance", "euclidean", math.inf
+    )
+    assert straight.rule == "euclidean"
+    assert district_minutes is None
 
 
 def test_run_rejects_no_samples(tmp_path):
@@ -105,6 +122,7 @@ def test_run_rejects_no_samples(tmp_path):
             [],
             gpd.GeoDataFrame(),
             gpd.GeoDataFrame(),
+            np.empty((0, 0)),
             np.empty((0, 0)),
             pd.DataFrame(),
             tmp_path,
@@ -139,7 +157,14 @@ def test_main_rejects_settings_it_cannot_run_before_loading_a_region(monkeypatch
 @pytest.mark.parametrize("disadvantage", DISADVANTAGE_CHOICES)
 @pytest.mark.parametrize("priority", PRIORITY_CHOICES)
 def test_settings_matchings_are_the_ones_the_sweep_scores(
-    samples, areas, secondary, district_distance, shares, disadvantage, priority
+    samples,
+    areas,
+    secondary,
+    district_distance,
+    district_minutes,
+    shares,
+    disadvantage,
+    priority,
 ):
     # Off the default discount, so a discount settings_matchings or
     # score_settings leaves behind shows; below them, score_sample's own
@@ -151,6 +176,7 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
         areas,
         secondary,
         district_distance,
+        district_minutes,
         disadvantage=disadvantage,
         priority=priority,
     )
@@ -160,6 +186,7 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
         areas,
         secondary,
         district_distance,
+        district_minutes,
         shares,
         disadvantage=disadvantage,
         priority=priority,

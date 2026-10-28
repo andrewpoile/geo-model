@@ -293,16 +293,18 @@ def score_sample(
                     "LSOA21CD": lsoa,
                     "school": name,
                     "capacity": capacity,
+                    "minutes": minutes,
                     "disadvantaged": a,
                     "other": b,
                 }
-                for route, lsoa, name, capacity, a, b in zip(
+                for route, lsoa, name, capacity, minutes, a, b in zip(
                     routes["route_id"],
                     routes["LSOA21CD"],
                     secondary_schools["EstablishmentName"].to_numpy()[
                         routes["school_idx"]
                     ],
                     routes["capacity"],
+                    routes["minutes"],
                     riders_a,
                     riders_b,
                 )
@@ -315,6 +317,7 @@ def settings_routes(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
@@ -331,6 +334,8 @@ def settings_routes(
 
         district_distance (np.ndarray): Passed to `route_network`.
 
+        district_minutes (np.ndarray): Passed to `route_network`.
+
         round_up (bool, optional): Passed to `route_network`. Defaults to
         ROUND_UP_SEATS.
 
@@ -346,11 +351,13 @@ def settings_routes(
     return route_network(
         areas,
         district_distance,
+        district_minutes,
         secondary_schools["P8MEA"].to_numpy(),
         secondary_schools["PlacesOffered"].to_numpy(),
         cohort_sizes(areas, "secondary"),
         decile=settings.decile,
         min_distance=settings.min_distance,
+        max_minutes=settings.max_route_minutes,
         capacity_scale=settings.capacity_scale,
         max_local_p8=settings.max_local_p8,
         local_radius=settings.local_radius,
@@ -370,6 +377,7 @@ def settings_matchings(
     areas: gpd.GeoDataFrame,
     secondary_schools: gpd.GeoDataFrame,
     district_distance: np.ndarray,
+    district_minutes: np.ndarray | None,
     round_up: bool = ROUND_UP_SEATS,
     linear: bool = LINEAR_PROGRESSIVITY,
     disadvantage: str = DISADVANTAGE,
@@ -395,6 +403,8 @@ def settings_matchings(
         takes them.
 
         district_distance (np.ndarray): Passed to `settings_routes`.
+
+        district_minutes (np.ndarray): Passed to `settings_routes`.
 
         round_up (bool, optional): Passed to `settings_routes`. Defaults to
         ROUND_UP_SEATS.
@@ -423,6 +433,7 @@ def settings_matchings(
             areas,
             secondary_schools,
             district_distance,
+            district_minutes,
             round_up,
             linear,
             disadvantage,

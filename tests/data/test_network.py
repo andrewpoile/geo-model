@@ -1,5 +1,6 @@
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 from shapely import LineString
 
@@ -58,19 +59,70 @@ def test_points_off_the_network_are_placed_on_its_largest_part():
     assert distance(np.array([[1000, 0]]))[0, 0] == pytest.approx(1900)
 
 
-def test_network_is_never_shorter_than_the_straight_line(
-    areas, secondary, network_cache, monkeypatch
-):
-    monkeypatch.setattr(sources, "NETWORK_CACHE_DIR", network_cache)
+def bus_links(rows):
+    """A stand-in for `load_links` of roads: (node ids, coordinates, tags) per
+    link, every tag absent that a link does not give."""
+    frame = links([(ids, xy, "yes") for ids, xy, _ in rows])
+    columns = [column for column in nw.LINK_COLUMNS if column not in frame]
+    return frame.join(pd.DataFrame([tags for _, _, tags in rows], columns=columns))
+
+
+# Roads a-b-c, a right-angled triangle of 1km sides. a-b runs at 12 km/h at
+# the morning peak, 30 km/h before it; b-c is one-way, at an average 60 km/h
+# under a 30 km/h limit; the 1414m hypotenuse c-a has a limit of 6 km/h alone.
+PEAKS = "30 @ (Mo-Fr 04:00-07:00); 12 @ (Mo-Fr 07:00-09:00)"
+TRIANGLE = [
+    (
+        ["a", "b"],
+        [(0, 0), (1000, 0)],
+        {"bus": "yes", **{f"avgspeed:{d}:conditional": PEAKS for d in nw.DIRECTIONS}},
+    ),
+    (
+        ["b", "c"],
+        [(1000, 0), (1000, 1000)],
+        {
+            "bus": "yes",
+            "oneway": "yes",
+            "avgspeed:forward": 60.0,
+            "maxspeed:forward": 30.0,
+        },
+    ),
+    (
+        ["c", "a"],
+        [(1000, 1000), (0, 0)],
+        {"bus": "yes", "maxspeed:forward": 6.0, "maxspeed:backward": 6.0},
+    ),
+]
+
+
+def test_bus_minutes_follow_the_peak_speeds_and_one_way_roads():
+    xy = np.array([[1000, 0], [1000, 1000]])
+    minutes = nw.bus_minutes(bus_links(TRIANGLE), xy, xy)
+    # b to c takes a minute; c to b goes round by a, 1414m at 100m a minute
+    # then 1000m at 200m a minute.
+    np.testing.assert_allclose(minutes, [[0, 1], [np.hypot(1000, 1000) / 100 + 5, 0]])
+
+
+def test_unruled_bus_values_raise():
+    road = [(["a", "b"], [(0, 0), (100, 0)], {"bus": "permissive"})]
+    with pytest.raises(ValueError, match="bus values with no rule"):
+        nw.bus_network(bus_links(road))
+
+
+def test_network_is_never_shorter_than_the_straight_line(areas, secondary, monkeypatch):
     region = "+".join(sorted(sources.LAS))
     school_xy = secondary[["Easting", "Northing"]].to_numpy()
     xy = np.column_stack([areas.centroid.x, areas.centroid.y])
-    read = nw.NetworkDistance(nw.load_walk_network(areas, region), school_xy)(xy)
+    read = nw.NetworkDistance(
+        nw.walk_network(nw.region_links(areas, region)), school_xy
+    )(xy)
     assert (read >= nw.Euclidean(school_xy)(xy)).all()
 
     def unread(*args):
         raise AssertionError("the cached links were not reused")
 
     monkeypatch.setattr(nw, "load_links", unread)
-    cached = nw.NetworkDistance(nw.load_walk_network(areas, region), school_xy)(xy)
+    cached = nw.NetworkDistance(
+        nw.walk_network(nw.region_links(areas, region)), school_xy
+    )(xy)
     assert np.array_equal(cached, read)

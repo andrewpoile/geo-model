@@ -7,7 +7,7 @@ from geo_model.scripts import scenario_3 as s3
 
 
 def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
-    areas, secondary, district_distance
+    areas, secondary, district_distance, district_minutes
 ):
     places = secondary["PlacesOffered"].to_numpy()
     targets = (
@@ -17,7 +17,7 @@ def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
     )
 
     routes = settings_routes(
-        s3.SCENARIO, areas, secondary, district_distance, s3.ROUND_UP
+        s3.SCENARIO, areas, secondary, district_distance, district_minutes, s3.ROUND_UP
     )
 
     # One route per school, each from a district of its own, the districts
