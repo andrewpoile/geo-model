@@ -105,6 +105,33 @@ DESCRIPTION = (
     "Match fresh samples with and without the routes of one setting of the "
     "parameters, and plot and map the two against each other."
 )
+# DISTRICTS_CSV's columns of each district's published deprivation, which an
+# anonymised run leaves out: either column alone, over every district, singles
+# out its authority in the national file.
+DEPRIVATION_COLUMNS = ["IDACI Decile", "IDACI Score"]
+
+
+def register_fsm(
+    secondary_schools: gpd.GeoDataFrame, measure: str, anon: bool
+) -> pd.Series:
+    """The register's FSM figure for each school, as `fsm_term` or `fsm_share`
+    gives it, whichever `measure` is, or blank for an anonymised run, since
+    the register publishes every school's figures.
+
+    Args:
+        secondary_schools (gpd.GeoDataFrame): Schools, as `fsm_term` and
+        `fsm_share` take them.
+
+        measure (str): A key of INTAKE_MEASURES.
+
+        anon (bool): Leave every figure blank, NaN.
+
+    Returns:
+        pd.Series: The figure, indexed by establishment name.
+    """
+    if anon:
+        return pd.Series(np.nan, index=secondary_schools["EstablishmentName"])
+    return {"dissimilarity": fsm_term, "share": fsm_share}[measure](secondary_schools)
 
 
 def score_settings(
@@ -313,7 +340,7 @@ def run(
     *,
     distance: str,
     measure: str = "dissimilarity",
-    mapped: bool = True,
+    anon: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and write,
     plot and report the two against each other in `out_dir`.
@@ -326,7 +353,7 @@ def run(
     t-test to DISSIMILARITY_PNG, who is left unassigned to UNASSIGNED_PNG,
     each school's intake to INTAKE_PNG and the expected modes and their
     change to MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map
-    of the first sample's two matchings to MAP_PNG where `mapped`, the seats
+    of the first sample's two matchings to MAP_PNG unless `anon`, the seats
     each route provides and its riders take to ROUTES_PNG, and the local
     students each school accepts of those who applied, with the change the
     routes make to them per seed, to LOCALS_PNG. Then prints the two
@@ -375,9 +402,10 @@ def run(
         measure (str, optional): A key of INTAKE_MEASURES, what the intake
         heatmap shows. Defaults to "dissimilarity".
 
-        mapped (bool, optional): Draw the map. An anonymised run draws none,
-        since any map of the districts' true shapes gives the region away.
-        Defaults to True.
+        anon (bool, optional): An anonymised run, which draws no map, since
+        any map of the districts' true shapes gives the region away, leaves
+        the register's FSM figures blank, as `register_fsm` does, and writes
+        DISTRICTS_CSV without DEPRIVATION_COLUMNS. Defaults to False.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]: The
@@ -425,12 +453,13 @@ def run(
     fig = Figure(
         figsize=(8, 1.5 + 0.4 * schools["school"].nunique()), layout="constrained"
     )
-    fsm = {"dissimilarity": fsm_term, "share": fsm_share}[measure]
-    draw_school_intake(fig, schools, fsm(secondary_schools), measure)
+    draw_school_intake(
+        fig, schools, register_fsm(secondary_schools, measure, anon), measure
+    )
     save(fig, out_dir / INTAKE_PNG)
     plot_modes(modes, out_dir / MODES_PNG)
     plot_lorenz(schools, out_dir / LORENZ_PNG, disadvantage)
-    if mapped:
+    if not anon:
         plot_map(
             areas,
             secondary_schools,
@@ -468,6 +497,8 @@ def run(
     districts = district_rows(
         samples, areas, settings.decile, disadvantage
     ).sort_values(["seed", "LSOA21CD"], kind="stable", ignore_index=True)
+    if anon:
+        districts = districts.drop(columns=DEPRIVATION_COLUMNS)
     for frame, name in (
         (results, RESULTS_CSV),
         (schools, SCHOOLS_CSV),
@@ -613,7 +644,7 @@ def main(
             priority=args.priority,
             distance=to_school.rule,
             measure=args.intake,
-            mapped=not args.anon,
+            anon=args.anon,
         )
 
 

@@ -167,7 +167,11 @@ def test_main_writes_its_outputs_and_nothing_else(
         savefig(fig, *args, **kwargs)
         figures.append(fig)
 
+    def unread(_):
+        raise AssertionError("an anonymised run read the register's FSM figures")
+
     monkeypatch.setattr(Figure, "savefig", keep)
+    monkeypatch.setattr(rn, "fsm_term", unread)
     monkeypatch.setattr(sys, "argv", [module.__name__, *anon_argv])
 
     module.main()
@@ -177,10 +181,13 @@ def test_main_writes_its_outputs_and_nothing_else(
         set(written) - {rn.MAP_PNG, sw.MAP_PNG}
     )
     # Only the names differ, and the order of the districts numbered by
-    # deprivation, so the matchings are the named run's.
+    # deprivation, so the matchings are the named run's, and the districts'
+    # deprivation is left out.
     for path in out_dir.glob("*.csv"):
         rows, anon_rows = pd.read_csv(path), pd.read_csv(anon_dir / path.name)
-        kept = list(rows.columns.drop([c for c in NAME_COLUMNS if c in rows]))
+        assert not set(rn.DEPRIVATION_COLUMNS) & set(anon_rows)
+        dropped = [c for c in NAME_COLUMNS + rn.DEPRIVATION_COLUMNS if c in rows]
+        kept = list(rows.columns.drop(dropped))
         pd.testing.assert_frame_equal(
             rows[kept].sort_values(kept, ignore_index=True),
             anon_rows[kept].sort_values(kept, ignore_index=True),

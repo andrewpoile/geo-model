@@ -616,11 +616,13 @@ def route_network(
         )
     district_decile = eligible["IDACI Decile"].to_numpy()
     rank = (decile + 1 - district_decile) / decile if linear else 1 / district_decile
-    # Under `bottleneck` each school's one route holds all of its seats, so the
-    # weight only gates on disadvantaged students, and the progressive weight,
-    # on the linear profile not positive above the decile bottleneck draws
-    # from, plays no part.
-    weight = eligible_disadvantaged * (1 if bottleneck else rank**progressivity)
+    # Under `bottleneck` and `largest_first` each school's one route holds all
+    # of its seats, so the weight only gates on disadvantaged students, and the
+    # progressive weight, on the linear profile not positive above the decile
+    # both draw from, plays no part.
+    weight = eligible_disadvantaged * (
+        1 if bottleneck or largest_first else rank**progressivity
+    )
     seats = (
         capacity_scale
         * np.asarray(school_places, dtype=float)

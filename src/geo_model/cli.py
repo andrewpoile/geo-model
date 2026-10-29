@@ -52,8 +52,10 @@ def add_anon_argument(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="number the schools, districts and authorities rather than name "
         "them, the districts by IDACI rank, and draw no map, since any map of "
-        "the districts' true shapes gives the region away, so no plot or table "
-        "names the region; the results are the named run's, written to "
+        "the districts' true shapes gives the region away, nor the districts' "
+        "IDACI deciles and scores or the register's FSM figures, which the "
+        "national files tie to the region, so no plot or table names the "
+        "region; the results are the named run's, written to "
         f"{OUTPUT_DIR}/<NAME>/{ANON_DIR}",
     )
 

@@ -30,10 +30,6 @@ from geo_model.cli import (
 )
 from geo_model.data.regions import regions
 from geo_model.data.travel import load_nts_mode_shares
-from geo_model.measures.segregation import (
-    fsm_share,
-    fsm_term,
-)
 from geo_model.measures.summaries import unassigned_rows
 from geo_model.measures.travel import CIRCUITY, MODES, mode_change
 from geo_model.model.settings import (
@@ -49,7 +45,7 @@ from geo_model.plots.comparison import plot_lorenz
 from geo_model.plots.maps import plot_map
 from geo_model.plots.style import INTAKE_MEASURES
 from geo_model.plots.sweep import plot_sweep
-from geo_model.scripts.run import load_region, score_settings
+from geo_model.scripts.run import load_region, register_fsm, score_settings
 
 # The sweep's folder within each region's, and the files written to it.
 SWEEP_DIR = Path("sweep")
@@ -221,7 +217,6 @@ def main() -> None:
 
     shares = load_nts_mode_shares(args.years)
     parameters = swept(GRID, args.disadvantage, args.priority)
-    fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
     for las, areas in regions(args.la, args.merge):
         (
             areas,
@@ -299,7 +294,7 @@ def main() -> None:
             results,
             schools,
             modes,
-            fsm(secondary_schools),
+            register_fsm(secondary_schools, args.intake, args.anon),
             GRID,
             parameters,
             out_dir / PLOT_PNG,

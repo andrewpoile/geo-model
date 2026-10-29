@@ -372,7 +372,7 @@ def search(
         priority=args.priority,
         distance=to_school.rule,
         measure=args.intake,
-        mapped=not args.anon,
+        anon=args.anon,
     )
 
     written = [EVALUATIONS_CSV, FRONT_CSV]
