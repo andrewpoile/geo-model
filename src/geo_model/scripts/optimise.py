@@ -59,7 +59,6 @@ from geo_model.measures.travel import CIRCUITY
 from geo_model.model.routes import EmptyRouteSet
 from geo_model.model.settings import (
     DEFAULTS,
-    ROUND_UP_SEATS,
     SEED,
     Settings,
 )
@@ -403,7 +402,7 @@ def main() -> None:
     parser.add_argument("--generations", type=int, default=GENERATIONS)
     add_workers_argument(parser)
     add_travel_arguments(parser)
-    add_seat_arguments(parser, ROUND_UP_SEATS)
+    add_seat_arguments(parser)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)

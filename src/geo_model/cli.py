@@ -13,6 +13,7 @@ from geo_model.model.settings import (
     PRIORITY,
     PRIORITY_CHOICES,
     PRIORITY_DISCOUNT,
+    ROUND_UP_SEATS,
     RULES,
     Settings,
 )
@@ -108,19 +109,16 @@ def add_travel_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_seat_arguments(parser: argparse.ArgumentParser, round_up: bool) -> None:
+def add_seat_arguments(parser: argparse.ArgumentParser) -> None:
     """Add the option of how each school's route seats are rounded.
 
     Args:
         parser (argparse.ArgumentParser): The entry point's parser.
-
-        round_up (bool): Whether seats are rounded up unless the option says
-        otherwise.
     """
     parser.add_argument(
         "--round-up-seats",
         action=argparse.BooleanOptionalAction,
-        default=round_up,
+        default=ROUND_UP_SEATS,
         help="round each school's route seats up rather than to the nearest "
         "seat, before they are split between its routes",
     )

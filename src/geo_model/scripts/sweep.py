@@ -37,7 +37,6 @@ from geo_model.measures.travel import CIRCUITY, MODES, mode_change
 from geo_model.model.settings import (
     DEFAULTS,
     N_SEEDS,
-    ROUND_UP_SEATS,
     RULES,
     Settings,
 )
@@ -173,7 +172,7 @@ def main() -> None:
     add_seeds_argument(parser, N_SEEDS)
     add_workers_argument(parser)
     add_travel_arguments(parser)
-    add_seat_arguments(parser, ROUND_UP_SEATS)
+    add_seat_arguments(parser)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)

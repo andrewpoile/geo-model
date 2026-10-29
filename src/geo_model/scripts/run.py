@@ -520,7 +520,7 @@ def main(
     add_seeds_argument(parser, seeds)
     add_settings_arguments(parser, settings)
     add_travel_arguments(parser)
-    add_seat_arguments(parser, settings.round_up_seats)
+    add_seat_arguments(parser)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
