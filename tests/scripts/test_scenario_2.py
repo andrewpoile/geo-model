@@ -19,7 +19,7 @@ def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(
     targets = ranked[rt.first_districts(allowed)]
 
     routes = settings_routes(
-        s2.SCENARIO, areas, secondary, district_distance, district_minutes, s2.ROUND_UP
+        s2.SCENARIO, areas, secondary, district_distance, district_minutes
     )
 
     # One route per school, each from a district of its own, the districts the

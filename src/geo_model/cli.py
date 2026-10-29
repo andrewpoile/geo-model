@@ -212,8 +212,10 @@ def add_intake_argument(parser: argparse.ArgumentParser, measures: list[str]) ->
 
 
 def add_settings_arguments(parser: argparse.ArgumentParser, settings: Settings) -> None:
-    """Add an option for every field of Settings, each defaulting to its value
-    in `settings`, so any setting can be run from the command line.
+    """Add an option for every field of Settings carrying help, each
+    defaulting to its value in `settings`, so any setting can be run from the
+    command line. The rules carry none, their options being the add_*
+    functions above.
 
     Args:
         parser (argparse.ArgumentParser): The entry point's parser.
@@ -222,6 +224,8 @@ def add_settings_arguments(parser: argparse.ArgumentParser, settings: Settings) 
         a preset's.
     """
     for field in fields(Settings):
+        if "help" not in field.metadata:
+            continue
         flag = "--" + field.name.replace("_", "-")
         default = getattr(settings, field.name)
         if field.type is bool:

@@ -221,14 +221,20 @@ def optimise(
         district_minutes=district_minutes,
         shares=shares,
         circuity=circuity,
-        round_up=round_up,
-        linear=linear,
-        disadvantage=disadvantage,
-        priority=priority,
         distance=distance,
     )
+    rules = {
+        "round_up_seats": round_up,
+        "linear_progressivity": linear,
+        "disadvantage": disadvantage,
+        "priority": priority,
+    }
     with task_map(score, workers) as scores:
-        problem = Pipeline(parameters, objectives, scores)
+        problem = Pipeline(
+            parameters,
+            objectives,
+            lambda candidates: scores([replace(c, **rules) for c in candidates]),
+        )
         minimize(problem, NSGA2(pop_size=pop_size), ("n_gen", generations), seed=SEED)
 
     evaluations = pd.DataFrame(problem.evaluations).assign(
@@ -299,10 +305,17 @@ def search(
     # samples are the ones a search of as many seeds alone would draw.
     samples = list(student_samples(areas, args.seeds + args.held_out_seeds, to_school))
     searched, held_out = samples[: args.seeds], samples[args.seeds :]
+    base = replace(
+        DEFAULTS,
+        round_up_seats=args.round_up_seats,
+        linear_progressivity=args.linear_progressivity,
+        disadvantage=args.disadvantage,
+        priority=args.priority,
+    )
 
     reference = objective_values(
         score_settings(
-            DEFAULTS,
+            base,
             searched,
             areas,
             secondary_schools,
@@ -310,10 +323,6 @@ def search(
             district_minutes,
             shares,
             args.circuity,
-            args.round_up_seats,
-            args.linear_progressivity,
-            args.disadvantage,
-            priority=args.priority,
             distance=to_school.rule,
         ),
         args.objectives,
@@ -357,7 +366,7 @@ def search(
 
     print(f"At the compromise, on {len(held_out)} held-out samples:")
     run(
-        replace(DEFAULTS, **cast({p: chosen[p] for p in args.parameters})),
+        replace(base, **cast({p: chosen[p] for p in args.parameters})),
         held_out,
         areas,
         secondary_schools,
@@ -366,10 +375,6 @@ def search(
         shares,
         out_dir,
         args.circuity,
-        args.round_up_seats,
-        args.linear_progressivity,
-        args.disadvantage,
-        priority=args.priority,
         distance=to_school.rule,
         measure=args.intake,
         anon=args.anon,

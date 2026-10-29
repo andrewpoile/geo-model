@@ -171,16 +171,11 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
     # Off the default discount, so a discount settings_matchings or
     # score_settings leaves behind shows; below them, score_sample's own
     # test covers the way down.
-    settings = replace(DEFAULTS, priority_discount=0.9)
+    settings = replace(
+        DEFAULTS, priority_discount=0.9, disadvantage=disadvantage, priority=priority
+    )
     matchings = settings_matchings(
-        settings,
-        samples[0],
-        areas,
-        secondary,
-        district_distance,
-        district_minutes,
-        disadvantage=disadvantage,
-        priority=priority,
+        settings, samples[0], areas, secondary, district_distance, district_minutes
     )
     rows, _, _, route_rows = rn.score_settings(
         settings,
@@ -190,8 +185,6 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
         district_distance,
         district_minutes,
         shares,
-        disadvantage=disadvantage,
-        priority=priority,
         distance="euclidean",
     )
     # The route rows are kept only when asked for.

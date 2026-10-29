@@ -6,6 +6,7 @@ travel mode against every parameter.
 
 import argparse
 import functools
+from dataclasses import replace
 from pathlib import Path
 
 import geopandas as gpd
@@ -134,8 +135,14 @@ def sweep(
         and "value" ahead of the columns `score_settings` returns. Also
         written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV in `out_dir`.
     """
+    rules = {
+        "round_up_seats": round_up,
+        "linear_progressivity": linear,
+        "disadvantage": disadvantage,
+        "priority": priority,
+    }
     cells = [
-        (p, settings)
+        (p, replace(settings, **rules))
         for p in swept(GRID, disadvantage, priority)
         for settings in GRID[p]
     ]
@@ -148,10 +155,6 @@ def sweep(
         district_minutes=district_minutes,
         shares=shares,
         circuity=circuity,
-        round_up=round_up,
-        linear=linear,
-        disadvantage=disadvantage,
-        priority=priority,
         distance=distance,
     )
     with task_map(score, workers) as scores:
@@ -306,16 +309,18 @@ def main() -> None:
                 secondary_schools,
                 samples[0][0],
                 settings_matchings(
-                    DEFAULTS,
+                    replace(
+                        DEFAULTS,
+                        round_up_seats=args.round_up_seats,
+                        linear_progressivity=args.linear_progressivity,
+                        disadvantage=args.disadvantage,
+                        priority=args.priority,
+                    ),
                     samples[0],
                     areas,
                     secondary_schools,
                     district_distance,
                     district_minutes,
-                    args.round_up_seats,
-                    args.linear_progressivity,
-                    args.disadvantage,
-                    priority=args.priority,
                 ),
                 out_dir / MAP_PNG,
             )

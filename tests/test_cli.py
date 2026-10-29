@@ -97,9 +97,16 @@ def test_a_choice_outside_those_offered_is_rejected(argv):
 
 
 def test_every_setting_takes_the_presets_value_and_its_own():
-    preset = replace(DEFAULTS, max_local_p8=np.inf, shortest_only=True)
+    preset = replace(
+        DEFAULTS, max_local_p8=np.inf, shortest_only=True, round_up_seats=True
+    )
+    # The rules' options as run adds them beside the parameters'.
     parser = argparse.ArgumentParser()
     add_settings_arguments(parser, preset)
+    add_seat_arguments(parser, preset.round_up_seats)
+    add_progressivity_argument(parser)
+    add_disadvantage_argument(parser)
+    add_priority_argument(parser)
 
     # Unset, every option is the preset's value, so the preset runs as it is.
     assert Settings(**vars(parser.parse_args([]))) == preset

@@ -95,7 +95,7 @@ def test_optimise_scores_every_candidate_under_the_rule_given(monkeypatch, tmp_p
     rules = []
 
     def score(settings, **kwargs):
-        rules.append(kwargs["priority"])
+        rules.append(settings.priority)
 
     monkeypatch.setattr(op, "score_feasible", score)
 
