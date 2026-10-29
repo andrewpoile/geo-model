@@ -20,6 +20,7 @@ All written code should prioritise accuracy and correctness above all else.
 All written code should be as lean and human-readable as possible, no bloat.
 Test suite should be as lean as possible.
 CLAUDE.md should stay concise.
+BE CONCISE.
 
 ## Commands
 
