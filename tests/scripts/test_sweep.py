@@ -104,7 +104,7 @@ def test_sweep_scores_every_cell_under_the_rule_given(monkeypatch, tmp_path):
     scored = []
 
     def score(settings, **kwargs):
-        scored.append((settings, kwargs["priority"]))
+        scored.append(settings)
         return [], [], [], []
 
     monkeypatch.setattr(sw, "score_settings", score)
@@ -117,18 +117,17 @@ def test_sweep_scores_every_cell_under_the_rule_given(monkeypatch, tmp_path):
         np.empty((0, 0)),
         pd.DataFrame(),
         tmp_path,
-        priority="bracket",
+        rules=replace(DEFAULTS, priority="bracket"),
         distance="euclidean",
     )
 
     # Every cell is scored under the rule, and none of the priority
     # discount's, which the rule leaves inert.
-    assert [settings for settings, _ in scored] == [
-        cell
+    assert scored == [
+        replace(cell, priority="bracket")
         for parameter in swept(GRID, DISADVANTAGE, "bracket")
         for cell in GRID[parameter]
     ]
-    assert {priority for _, priority in scored} == {"bracket"}
 
 
 def test_main_rejects_a_map_of_an_anonymised_sweep(monkeypatch):

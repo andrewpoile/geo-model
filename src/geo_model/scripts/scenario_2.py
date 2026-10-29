@@ -28,16 +28,16 @@ N_SEEDS = 100
 # local schools and the local radius is inert. The districts routed are taken
 # in IDACI rank order once the minimum distance is applied, so the decile does
 # not pick them, and each school's one route holds all of its route seats, so
-# progressivity is inert too.
+# progressivity is inert too. Seats are rounded up, as scenario 1 rounds them,
+# so a school's one route keeps a seat where the school's route seats fall
+# below half of one.
 SCENARIO = replace(
     DEFAULTS,
     progressivity=0.0,
     max_local_p8=np.inf,
     bottleneck=True,
+    round_up_seats=True,
 )
-# Seats are rounded up, as scenario 1 rounds them, so a school's one route
-# keeps a seat where the school's route seats fall below half of one.
-ROUND_UP = True
 
 
 def main() -> None:
@@ -48,7 +48,6 @@ def main() -> None:
         "school paired with one of the most deprived districts so the longest "
         "route is shortest, and plot and map the two against each other.",
         seeds=N_SEEDS,
-        round_up=ROUND_UP,
     )
 
 

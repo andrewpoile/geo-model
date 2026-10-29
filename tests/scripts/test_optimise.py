@@ -65,8 +65,7 @@ def test_optimise_rejects_a_parameter_the_choices_bar(
             pd.DataFrame(),
             tmp_path,
             parameters=[parameter],
-            disadvantage=disadvantage,
-            priority=priority,
+            rules=replace(DEFAULTS, disadvantage=disadvantage, priority=priority),
             distance="euclidean",
         )
 
@@ -95,7 +94,7 @@ def test_optimise_scores_every_candidate_under_the_rule_given(monkeypatch, tmp_p
     rules = []
 
     def score(settings, **kwargs):
-        rules.append(kwargs["priority"])
+        rules.append(settings.priority)
 
     monkeypatch.setattr(op, "score_feasible", score)
 
@@ -110,7 +109,7 @@ def test_optimise_scores_every_candidate_under_the_rule_given(monkeypatch, tmp_p
             tmp_path,
             pop_size=4,
             generations=1,
-            priority="bracket",
+            rules=replace(DEFAULTS, priority="bracket"),
             distance="euclidean",
         )
     assert rules == ["bracket"] * 4

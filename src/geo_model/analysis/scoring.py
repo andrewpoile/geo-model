@@ -19,11 +19,9 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     DISADVANTAGED_PERFORMANCE_WEIGHT,
     DISADVANTAGED_ROUTE_DISCOUNT,
-    LINEAR_PROGRESSIVITY,
     PERFORMANCE_WEIGHT,
     PRIORITY,
     PRIORITY_DISCOUNT,
-    ROUND_UP_SEATS,
     ROUTE_DISCOUNT,
     SCENARIOS,
     Settings,
@@ -318,14 +316,12 @@ def settings_routes(
     secondary_schools: gpd.GeoDataFrame,
     district_distance: np.ndarray,
     district_minutes: np.ndarray | None,
-    round_up: bool = ROUND_UP_SEATS,
-    linear: bool = LINEAR_PROGRESSIVITY,
-    disadvantage: str = DISADVANTAGE,
 ) -> pd.DataFrame:
     """The route set at one setting of the parameters.
 
     Args:
-        settings (Settings): The parameter values to build routes with.
+        settings (Settings): The parameter values and rules to build routes
+        with.
 
         areas (gpd.GeoDataFrame): Districts, as `route_network` takes them.
 
@@ -335,15 +331,6 @@ def settings_routes(
         district_distance (np.ndarray): Passed to `route_network`.
 
         district_minutes (np.ndarray): Passed to `route_network`.
-
-        round_up (bool, optional): Passed to `route_network`. Defaults to
-        ROUND_UP_SEATS.
-
-        linear (bool, optional): Passed to `route_network`. Defaults to
-        LINEAR_PROGRESSIVITY.
-
-        disadvantage (str, optional): Passed to `route_network`. Defaults to
-        DISADVANTAGE.
 
     Returns:
         pd.DataFrame: The route set, as returned by `route_network`.
@@ -361,10 +348,10 @@ def settings_routes(
         capacity_scale=settings.capacity_scale,
         max_local_p8=settings.max_local_p8,
         local_radius=settings.local_radius,
-        round_up=round_up,
+        round_up=settings.round_up_seats,
         progressivity=settings.progressivity,
-        linear=linear,
-        disadvantage=disadvantage,
+        linear=settings.linear_progressivity,
+        disadvantage=settings.disadvantage,
         shortest_only=settings.shortest_only,
         bottleneck=settings.bottleneck,
         largest_first=settings.largest_first,
@@ -378,10 +365,6 @@ def settings_matchings(
     secondary_schools: gpd.GeoDataFrame,
     district_distance: np.ndarray,
     district_minutes: np.ndarray | None,
-    round_up: bool = ROUND_UP_SEATS,
-    linear: bool = LINEAR_PROGRESSIVITY,
-    disadvantage: str = DISADVANTAGE,
-    priority: str = PRIORITY,
     routes: pd.DataFrame | None = None,
 ) -> dict[str, np.ndarray]:
     """Match one student sample at `settings`, with routes and without.
@@ -391,8 +374,8 @@ def settings_matchings(
     sample at `settings`.
 
     Args:
-        settings (Settings): The parameter values to build routes and rank
-        preferences with.
+        settings (Settings): The parameter values and rules to build routes
+        and rank preferences with.
 
         sample (Sample): One student sample, as yielded by
         `student_samples`.
@@ -406,18 +389,6 @@ def settings_matchings(
 
         district_minutes (np.ndarray): Passed to `settings_routes`.
 
-        round_up (bool, optional): Passed to `settings_routes`. Defaults to
-        ROUND_UP_SEATS.
-
-        linear (bool, optional): Passed to `settings_routes`. Defaults to
-        LINEAR_PROGRESSIVITY.
-
-        disadvantage (str, optional): As `score_settings` takes it. Defaults
-        to DISADVANTAGE.
-
-        priority (str, optional): Passed to `match_sample`. Defaults to
-        PRIORITY.
-
         routes (pd.DataFrame | None, optional): The route set at `settings`,
         as `settings_routes` builds it, where the caller has built it already.
         Defaults to None, building it here.
@@ -429,14 +400,7 @@ def settings_matchings(
     _, student_lsoa, drawn, noise_seed, student_distance = sample
     if routes is None:
         routes = settings_routes(
-            settings,
-            areas,
-            secondary_schools,
-            district_distance,
-            district_minutes,
-            round_up,
-            linear,
-            disadvantage,
+            settings, areas, secondary_schools, district_distance, district_minutes
         )
     return {
         scenario: matching
@@ -447,15 +411,15 @@ def settings_matchings(
             secondary_schools,
             routes,
             disadvantaged_group(
-                student_lsoa, drawn, areas, settings.decile, disadvantage
+                student_lsoa, drawn, areas, settings.decile, settings.disadvantage
             ),
             noise_seed,
             settings.performance_weight,
             settings.route_discount,
             settings.disadvantaged_performance_weight,
             settings.disadvantaged_route_discount,
-            disadvantage,
-            priority=priority,
+            settings.disadvantage,
+            priority=settings.priority,
             priority_discount=settings.priority_discount,
         )
     }
