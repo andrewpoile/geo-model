@@ -117,7 +117,7 @@ def test_sweep_scores_every_cell_under_the_rule_given(monkeypatch, tmp_path):
         np.empty((0, 0)),
         pd.DataFrame(),
         tmp_path,
-        priority="bracket",
+        rules=replace(DEFAULTS, priority="bracket"),
         distance="euclidean",
     )
 

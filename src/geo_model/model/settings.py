@@ -261,8 +261,8 @@ class Settings:
             )
         },
     )
-    # The rules. Their options are cli's add_* functions, which the sweep and
-    # the search take as well, so they carry no help of their own.
+    # The rules, RULES. Their options are cli's add_* functions, which the
+    # sweep and the search take as well, so they carry no help of their own.
     round_up_seats: bool = ROUND_UP_SEATS
     linear_progressivity: bool = LINEAR_PROGRESSIVITY
     disadvantage: str = DISADVANTAGE
@@ -270,6 +270,11 @@ class Settings:
 
 
 DEFAULTS = Settings()
+
+# The fields of Settings that set the rules a matching follows rather than a
+# parameter it is swept or searched over, so every cell and candidate takes
+# them from the command line alike.
+RULES = ("round_up_seats", "linear_progressivity", "disadvantage", "priority")
 
 # The two scenarios every sample is matched in: with the routes, and the same
 # students with none, the baseline the routes are measured against.

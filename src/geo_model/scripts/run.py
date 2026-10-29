@@ -13,7 +13,6 @@ runs its compromise through `run`.
 import argparse
 import functools
 import math
-from dataclasses import fields
 from pathlib import Path
 
 import geopandas as gpd
@@ -39,6 +38,7 @@ from geo_model.cli import (
     add_seeds_argument,
     add_settings_arguments,
     add_travel_arguments,
+    parsed_settings,
 )
 from geo_model.data.anonymise import anonymise
 from geo_model.data.network import (
@@ -63,6 +63,7 @@ from geo_model.model.routes import centroid_xy
 from geo_model.model.settings import (
     DEFAULTS,
     N_SEEDS,
+    RULES,
     Settings,
 )
 from geo_model.model.students import Sample, disadvantaged_group, student_samples
@@ -527,6 +528,9 @@ def main(
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
     add_anon_argument(parser)
+    # The rules' options default to the constants, so a preset's own rules
+    # are made their defaults here.
+    parser.set_defaults(**{rule: getattr(settings, rule) for rule in RULES})
     args = parser.parse_args()
     # Checked here as well as by route_network and rank_bundles, so a run
     # fails before its region is loaded and sampled rather than after.
@@ -546,7 +550,7 @@ def main(
             "cannot be set with --priority bracket"
         )
 
-    settings = Settings(**{f.name: getattr(args, f.name) for f in fields(Settings)})
+    settings = parsed_settings(args, settings)
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")

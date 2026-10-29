@@ -151,6 +151,28 @@ def test_main_rejects_settings_it_cannot_run_before_loading_a_region(monkeypatch
         rn.main()
 
 
+def test_main_runs_a_preset_under_its_own_rules(monkeypatch):
+    preset = replace(
+        DEFAULTS,
+        round_up_seats=True,
+        linear_progressivity=True,
+        disadvantage="decile",
+        priority="bracket",
+    )
+    parsed = []
+    parse = rn.parsed_settings
+    monkeypatch.setattr(
+        rn, "parsed_settings", lambda *args: parsed.append(parse(*args)) or parsed[0]
+    )
+    monkeypatch.setattr(rn, "load_nts_mode_shares", lambda years: None)
+    monkeypatch.setattr(rn, "regions", lambda las, merge: iter(()))
+    monkeypatch.setattr(sys, "argv", ["run"])
+
+    rn.main(preset)
+
+    assert parsed == [preset]
+
+
 # --------------------------------------------------------------------------
 # settings_matchings: against the real data folder
 # --------------------------------------------------------------------------

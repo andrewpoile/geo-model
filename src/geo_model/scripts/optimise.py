@@ -50,6 +50,7 @@ from geo_model.cli import (
     add_seeds_argument,
     add_travel_arguments,
     add_workers_argument,
+    parsed_settings,
 )
 from geo_model.data.network import Distance
 from geo_model.data.regions import regions
@@ -58,9 +59,6 @@ from geo_model.measures.travel import CIRCUITY
 from geo_model.model.routes import EmptyRouteSet
 from geo_model.model.settings import (
     DEFAULTS,
-    DISADVANTAGE,
-    LINEAR_PROGRESSIVITY,
-    PRIORITY,
     ROUND_UP_SEATS,
     SEED,
     Settings,
@@ -122,10 +120,7 @@ def optimise(
     generations: int = GENERATIONS,
     workers: int = 1,
     circuity: float = CIRCUITY,
-    round_up: bool = ROUND_UP_SEATS,
-    linear: bool = LINEAR_PROGRESSIVITY,
-    disadvantage: str = DISADVANTAGE,
-    priority: str = PRIORITY,
+    rules: Settings = DEFAULTS,
     *,
     distance: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -155,8 +150,8 @@ def optimise(
         to.
 
         parameters (list[str], optional): Keys of OPTIMISABLE to search, each
-        over its `bounds`, every one `searchable` under `disadvantage` and
-        `priority`. Defaults to LEVERS.
+        over its `bounds`, every one `searchable` under the disadvantage and
+        priority of `rules`. Defaults to LEVERS.
 
         objectives (list[str], optional): Keys of OBJECTIVES to optimise.
         Defaults to DEFAULT_OBJECTIVES, every one.
@@ -174,17 +169,8 @@ def optimise(
         circuity (float, optional): Passed to `score_settings`. Defaults to
         CIRCUITY.
 
-        round_up (bool, optional): Passed to `score_settings`. Defaults to
-        ROUND_UP_SEATS.
-
-        linear (bool, optional): Passed to `score_settings`. Defaults to
-        LINEAR_PROGRESSIVITY.
-
-        disadvantage (str, optional): Passed to `searchable` and
-        `score_settings`. Defaults to DISADVANTAGE.
-
-        priority (str, optional): Passed to `searchable` and
-        `score_settings`. Defaults to PRIORITY.
+        rules (Settings, optional): Passed to `Pipeline`, whose RULES every
+        candidate takes. Defaults to DEFAULTS.
 
         distance (str): Passed to `score_settings`.
 
@@ -201,11 +187,12 @@ def optimise(
     for named in (parameters, objectives):
         if len(set(named)) != len(named):
             raise ValueError(f"Each may be named once, got {named}.")
-    allowed = searchable(disadvantage, priority)
+    allowed = searchable(rules.disadvantage, rules.priority)
     barred = [parameter for parameter in parameters if parameter not in allowed]
     if barred:
         raise ValueError(
-            f"Under disadvantage {disadvantage!r} and priority {priority!r} "
+            f"Under disadvantage {rules.disadvantage!r} and priority "
+            f"{rules.priority!r} "
             f"{barred} cannot be searched: the other students' route discount "
             "is inert unless they ride, the priority discount under 'bracket', "
             "and under 'decile' the decile moves the group the index measures. "
@@ -223,22 +210,12 @@ def optimise(
         circuity=circuity,
         distance=distance,
     )
-    rules = {
-        "round_up_seats": round_up,
-        "linear_progressivity": linear,
-        "disadvantage": disadvantage,
-        "priority": priority,
-    }
     with task_map(score, workers) as scores:
-        problem = Pipeline(
-            parameters,
-            objectives,
-            lambda candidates: scores([replace(c, **rules) for c in candidates]),
-        )
+        problem = Pipeline(parameters, objectives, scores, rules)
         minimize(problem, NSGA2(pop_size=pop_size), ("n_gen", generations), seed=SEED)
 
     evaluations = pd.DataFrame(problem.evaluations).assign(
-        priority=priority, distance=distance
+        priority=rules.priority, distance=distance
     )
     feasible = evaluations[evaluations["feasible"]]
     if feasible.empty:
@@ -305,13 +282,8 @@ def search(
     # samples are the ones a search of as many seeds alone would draw.
     samples = list(student_samples(areas, args.seeds + args.held_out_seeds, to_school))
     searched, held_out = samples[: args.seeds], samples[args.seeds :]
-    base = replace(
-        DEFAULTS,
-        round_up_seats=args.round_up_seats,
-        linear_progressivity=args.linear_progressivity,
-        disadvantage=args.disadvantage,
-        priority=args.priority,
-    )
+    # The defaults under the rules given, which the search varies.
+    base = parsed_settings(args)
 
     reference = objective_values(
         score_settings(
@@ -341,10 +313,7 @@ def search(
         args.generations,
         args.workers,
         args.circuity,
-        args.round_up_seats,
-        args.linear_progressivity,
-        args.disadvantage,
-        priority=args.priority,
+        base,
         distance=to_school.rule,
     )
     print(

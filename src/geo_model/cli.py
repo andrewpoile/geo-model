@@ -1,17 +1,19 @@
 import argparse
-from dataclasses import fields
+from dataclasses import fields, replace
 
 from geo_model.data.network import DISTANCE, DISTANCE_CHOICES
 from geo_model.data.sources import LAS
 from geo_model.data.travel import NTS_YEARS
 from geo_model.measures.travel import CIRCUITY
 from geo_model.model.settings import (
+    DEFAULTS,
     DISADVANTAGE,
     DISADVANTAGE_CHOICES,
     LINEAR_PROGRESSIVITY,
     PRIORITY,
     PRIORITY_CHOICES,
     PRIORITY_DISCOUNT,
+    RULES,
     Settings,
 )
 from geo_model.output import ANON_DIR, OUTPUT_DIR
@@ -212,10 +214,9 @@ def add_intake_argument(parser: argparse.ArgumentParser, measures: list[str]) ->
 
 
 def add_settings_arguments(parser: argparse.ArgumentParser, settings: Settings) -> None:
-    """Add an option for every field of Settings carrying help, each
-    defaulting to its value in `settings`, so any setting can be run from the
-    command line. The rules carry none, their options being the add_*
-    functions above.
+    """Add an option for every field of Settings but RULES, each defaulting
+    to its value in `settings`, so any setting can be run from the command
+    line. The rules' options are the add_* functions above.
 
     Args:
         parser (argparse.ArgumentParser): The entry point's parser.
@@ -224,7 +225,7 @@ def add_settings_arguments(parser: argparse.ArgumentParser, settings: Settings) 
         a preset's.
     """
     for field in fields(Settings):
-        if "help" not in field.metadata:
+        if field.name in RULES:
             continue
         flag = "--" + field.name.replace("_", "-")
         default = getattr(settings, field.name)
@@ -242,3 +243,22 @@ def add_settings_arguments(parser: argparse.ArgumentParser, settings: Settings) 
                 default=default,
                 help=field.metadata["help"],
             )
+
+
+def parsed_settings(args: argparse.Namespace, base: Settings = DEFAULTS) -> Settings:
+    """`base` with every field of Settings the command line took an option
+    for set as it was parsed, so an entry point reads them all one way.
+
+    Args:
+        args (argparse.Namespace): The entry point's parsed arguments.
+
+        base (Settings, optional): The values of the fields it took no option
+        for. Defaults to DEFAULTS.
+
+    Returns:
+        Settings: The setting the command line sets out.
+    """
+    return replace(
+        base,
+        **{f.name: getattr(args, f.name) for f in fields(Settings) if f.name in args},
+    )
