@@ -25,6 +25,8 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     LINEAR_PROGRESSIVITY,
     PRIORITY,
+    ROUND_UP_SEATS,
+    RULES,
     Settings,
 )
 
@@ -35,7 +37,7 @@ def every_shared_option() -> argparse.ArgumentParser:
     add_seeds_argument(parser, 7)
     add_workers_argument(parser)
     add_travel_arguments(parser)
-    add_seat_arguments(parser, True)
+    add_seat_arguments(parser)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
@@ -54,7 +56,7 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
         "workers": 1,
         "years": NTS_YEARS,
         "circuity": CIRCUITY,
-        "round_up_seats": True,
+        "round_up_seats": ROUND_UP_SEATS,
         "linear_progressivity": LINEAR_PROGRESSIVITY,
         "disadvantage": DISADVANTAGE,
         "priority": PRIORITY,
@@ -63,10 +65,10 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
         "merge": False,
         "anon": False,
     }
-    # Every flag, its type and the --no- form of the switches.
+    # Every flag and its type.
     args = parser.parse_args(
         ["--seeds", "3", "--workers", "4", "--years", "2024", "2025"]
-        + ["--circuity", "1.3", "--no-round-up-seats", "--linear-progressivity"]
+        + ["--circuity", "1.3", "--round-up-seats", "--linear-progressivity"]
         + ["--disadvantage", "decile", "--priority", "bracket"]
         + ["--intake", "dissimilarity"]
         + ["--la", "Hampshire", "Southampton", "--merge", "--anon"]
@@ -76,7 +78,7 @@ def test_every_shared_option_takes_its_default_and_its_own_value():
         "workers": 4,
         "years": [2024, 2025],
         "circuity": 1.3,
-        "round_up_seats": False,
+        "round_up_seats": True,
         "linear_progressivity": True,
         "disadvantage": "decile",
         "priority": "bracket",
@@ -97,9 +99,18 @@ def test_a_choice_outside_those_offered_is_rejected(argv):
 
 
 def test_every_setting_takes_the_presets_value_and_its_own():
-    preset = replace(DEFAULTS, max_local_p8=np.inf, shortest_only=True)
+    preset = replace(
+        DEFAULTS, max_local_p8=np.inf, shortest_only=True, round_up_seats=True
+    )
+    # The rules' options and their preset defaults, as run adds them beside
+    # the parameters'.
     parser = argparse.ArgumentParser()
     add_settings_arguments(parser, preset)
+    add_seat_arguments(parser)
+    add_progressivity_argument(parser)
+    add_disadvantage_argument(parser)
+    add_priority_argument(parser)
+    parser.set_defaults(**{rule: getattr(preset, rule) for rule in RULES})
 
     # Unset, every option is the preset's value, so the preset runs as it is.
     assert Settings(**vars(parser.parse_args([]))) == preset

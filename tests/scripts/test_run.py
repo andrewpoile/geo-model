@@ -151,6 +151,28 @@ def test_main_rejects_settings_it_cannot_run_before_loading_a_region(monkeypatch
         rn.main()
 
 
+def test_main_runs_a_preset_under_its_own_rules(monkeypatch):
+    preset = replace(
+        DEFAULTS,
+        round_up_seats=True,
+        linear_progressivity=True,
+        disadvantage="decile",
+        priority="bracket",
+    )
+    parsed = []
+    parse = rn.parsed_settings
+    monkeypatch.setattr(
+        rn, "parsed_settings", lambda *args: parsed.append(parse(*args)) or parsed[0]
+    )
+    monkeypatch.setattr(rn, "load_nts_mode_shares", lambda years: None)
+    monkeypatch.setattr(rn, "regions", lambda las, merge: iter(()))
+    monkeypatch.setattr(sys, "argv", ["run"])
+
+    rn.main(preset)
+
+    assert parsed == [preset]
+
+
 # --------------------------------------------------------------------------
 # settings_matchings: against the real data folder
 # --------------------------------------------------------------------------
@@ -171,16 +193,11 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
     # Off the default discount, so a discount settings_matchings or
     # score_settings leaves behind shows; below them, score_sample's own
     # test covers the way down.
-    settings = replace(DEFAULTS, priority_discount=0.9)
+    settings = replace(
+        DEFAULTS, priority_discount=0.9, disadvantage=disadvantage, priority=priority
+    )
     matchings = settings_matchings(
-        settings,
-        samples[0],
-        areas,
-        secondary,
-        district_distance,
-        district_minutes,
-        disadvantage=disadvantage,
-        priority=priority,
+        settings, samples[0], areas, secondary, district_distance, district_minutes
     )
     rows, _, _, route_rows = rn.score_settings(
         settings,
@@ -190,8 +207,6 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
         district_distance,
         district_minutes,
         shares,
-        disadvantage=disadvantage,
-        priority=priority,
         distance="euclidean",
     )
     # The route rows are kept only when asked for.

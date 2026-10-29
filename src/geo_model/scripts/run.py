@@ -13,7 +13,6 @@ runs its compromise through `run`.
 import argparse
 import functools
 import math
-from dataclasses import fields
 from pathlib import Path
 
 import geopandas as gpd
@@ -39,6 +38,7 @@ from geo_model.cli import (
     add_seeds_argument,
     add_settings_arguments,
     add_travel_arguments,
+    parsed_settings,
 )
 from geo_model.data.anonymise import anonymise
 from geo_model.data.network import (
@@ -62,11 +62,8 @@ from geo_model.measures.travel import CIRCUITY, MODES
 from geo_model.model.routes import centroid_xy
 from geo_model.model.settings import (
     DEFAULTS,
-    DISADVANTAGE,
-    LINEAR_PROGRESSIVITY,
     N_SEEDS,
-    PRIORITY,
-    ROUND_UP_SEATS,
+    RULES,
     Settings,
 )
 from geo_model.model.students import Sample, disadvantaged_group, student_samples
@@ -105,6 +102,33 @@ DESCRIPTION = (
     "Match fresh samples with and without the routes of one setting of the "
     "parameters, and plot and map the two against each other."
 )
+# DISTRICTS_CSV's columns of each district's published deprivation, which an
+# anonymised run leaves out: either column alone, over every district, singles
+# out its authority in the national file.
+DEPRIVATION_COLUMNS = ["IDACI Decile", "IDACI Score"]
+
+
+def register_fsm(
+    secondary_schools: gpd.GeoDataFrame, measure: str, anon: bool
+) -> pd.Series:
+    """The register's FSM figure for each school, as `fsm_term` or `fsm_share`
+    gives it, whichever `measure` is, or blank for an anonymised run, since
+    the register publishes every school's figures.
+
+    Args:
+        secondary_schools (gpd.GeoDataFrame): Schools, as `fsm_term` and
+        `fsm_share` take them.
+
+        measure (str): A key of INTAKE_MEASURES.
+
+        anon (bool): Leave every figure blank, NaN.
+
+    Returns:
+        pd.Series: The figure, indexed by establishment name.
+    """
+    if anon:
+        return pd.Series(np.nan, index=secondary_schools["EstablishmentName"])
+    return {"dissimilarity": fsm_term, "share": fsm_share}[measure](secondary_schools)
 
 
 def score_settings(
@@ -116,10 +140,6 @@ def score_settings(
     district_minutes: np.ndarray | None,
     shares: pd.DataFrame,
     circuity: float = CIRCUITY,
-    round_up: bool = ROUND_UP_SEATS,
-    linear: bool = LINEAR_PROGRESSIVITY,
-    disadvantage: str = DISADVANTAGE,
-    priority: str = PRIORITY,
     *,
     distance: str,
     utilisation: bool = False,
@@ -128,8 +148,9 @@ def score_settings(
     """Score every sample at one setting of the parameters.
 
     Args:
-        settings (Settings): The parameter values to build routes and rank
-        preferences with.
+        settings (Settings): The parameter values and rules to build routes
+        and rank preferences with, its disadvantage setting each sample's
+        disadvantaged group with `disadvantaged_group` at its decile.
 
         samples (list[Sample]): Student samples, as yielded by
         `student_samples`, in seed order.
@@ -147,19 +168,6 @@ def score_settings(
 
         circuity (float, optional): Passed to `score_sample`. Defaults to
         CIRCUITY.
-
-        round_up (bool, optional): Passed to `settings_routes`. Defaults to
-        ROUND_UP_SEATS.
-
-        linear (bool, optional): Passed to `settings_routes`. Defaults to
-        LINEAR_PROGRESSIVITY.
-
-        disadvantage (str, optional): Passed to `settings_routes` and
-        `score_sample`, and sets each sample's disadvantaged group with
-        `disadvantaged_group` at `settings.decile`. Defaults to DISADVANTAGE.
-
-        priority (str, optional): Passed to `score_sample`. Defaults to
-        PRIORITY.
 
         distance (str): The `rule` of the Distance the samples' distances and
         `district_distance` were measured by, recorded on the scenario rows.
@@ -181,17 +189,10 @@ def score_settings(
         record the rules that ranked them. The route rows are empty unless
         `utilisation`.
     """
-    print(f"Scoring {settings} under priority {priority!r} and distance {distance!r}")
+    print(f"Scoring {settings} under distance {distance!r}")
     if routes is None:
         routes = settings_routes(
-            settings,
-            areas,
-            secondary_schools,
-            district_distance,
-            district_minutes,
-            round_up,
-            linear,
-            disadvantage,
+            settings, areas, secondary_schools, district_distance, district_minutes
         )
     rows, school_rows, mode_rows, route_rows = [], [], [], []
     for seed, (_, student_lsoa, drawn, noise_seed, student_distance) in enumerate(
@@ -204,7 +205,7 @@ def score_settings(
             secondary_schools,
             routes,
             disadvantaged_group(
-                student_lsoa, drawn, areas, settings.decile, disadvantage
+                student_lsoa, drawn, areas, settings.decile, settings.disadvantage
             ),
             shares,
             noise_seed,
@@ -213,15 +214,15 @@ def score_settings(
             disadvantaged_performance_weight=settings.disadvantaged_performance_weight,
             disadvantaged_route_discount=settings.disadvantaged_route_discount,
             circuity=circuity,
-            disadvantage=disadvantage,
-            priority=priority,
+            disadvantage=settings.disadvantage,
+            priority=settings.priority,
             priority_discount=settings.priority_discount,
         )
         rows += [
             {
                 "seed": seed,
                 "n_routes": len(routes),
-                "priority": priority,
+                "priority": settings.priority,
                 "distance": distance,
                 **r,
             }
@@ -306,14 +307,10 @@ def run(
     shares: pd.DataFrame,
     out_dir: Path,
     circuity: float = CIRCUITY,
-    round_up: bool = ROUND_UP_SEATS,
-    linear: bool = LINEAR_PROGRESSIVITY,
-    disadvantage: str = DISADVANTAGE,
-    priority: str = PRIORITY,
     *,
     distance: str,
     measure: str = "dissimilarity",
-    mapped: bool = True,
+    anon: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and write,
     plot and report the two against each other in `out_dir`.
@@ -326,7 +323,7 @@ def run(
     t-test to DISSIMILARITY_PNG, who is left unassigned to UNASSIGNED_PNG,
     each school's intake to INTAKE_PNG and the expected modes and their
     change to MODES_PNG. Draws the Lorenz curves to LORENZ_PNG as well, a map
-    of the first sample's two matchings to MAP_PNG where `mapped`, the seats
+    of the first sample's two matchings to MAP_PNG unless `anon`, the seats
     each route provides and its riders take to ROUTES_PNG, and the local
     students each school accepts of those who applied, with the change the
     routes make to them per seed, to LOCALS_PNG. Then prints the two
@@ -334,8 +331,9 @@ def run(
     route's seats and riders, and each school's local applicants.
 
     Args:
-        settings (Settings): The parameter values to build routes and rank
-        preferences with.
+        settings (Settings): The parameter values and rules to build routes
+        and rank preferences with, its disadvantage naming the group
+        `district_rows` and `plot_lorenz` count.
 
         samples (list[Sample]): Student samples, as yielded by
         `student_samples`, in seed order.
@@ -357,27 +355,15 @@ def run(
         circuity (float, optional): Passed to `score_settings`. Defaults to
         CIRCUITY.
 
-        round_up (bool, optional): Passed to `settings_routes` and
-        `score_settings`. Defaults to ROUND_UP_SEATS.
-
-        linear (bool, optional): Passed to `settings_routes` and
-        `score_settings`. Defaults to LINEAR_PROGRESSIVITY.
-
-        disadvantage (str, optional): Passed to `settings_routes`,
-        `score_settings`, `district_rows`, `plot_lorenz` and
-        `settings_matchings`. Defaults to DISADVANTAGE.
-
-        priority (str, optional): Passed to `score_settings` and
-        `settings_matchings`. Defaults to PRIORITY.
-
         distance (str): Passed to `score_settings`.
 
         measure (str, optional): A key of INTAKE_MEASURES, what the intake
         heatmap shows. Defaults to "dissimilarity".
 
-        mapped (bool, optional): Draw the map. An anonymised run draws none,
-        since any map of the districts' true shapes gives the region away.
-        Defaults to True.
+        anon (bool, optional): An anonymised run, which draws no map, since
+        any map of the districts' true shapes gives the region away, leaves
+        the register's FSM figures blank, as `register_fsm` does, and writes
+        DISTRICTS_CSV without DEPRIVATION_COLUMNS. Defaults to False.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]: The
@@ -387,14 +373,7 @@ def run(
     if not samples:
         raise ValueError("No student sample to compare on.")
     network = settings_routes(
-        settings,
-        areas,
-        secondary_schools,
-        district_distance,
-        district_minutes,
-        round_up,
-        linear,
-        disadvantage,
+        settings, areas, secondary_schools, district_distance, district_minutes
     )
     save_routes(network, out_dir)
     results, schools, modes, routes = (
@@ -408,10 +387,6 @@ def run(
             district_minutes,
             shares,
             circuity,
-            round_up,
-            linear,
-            disadvantage,
-            priority=priority,
             distance=distance,
             utilisation=True,
             routes=network,
@@ -425,12 +400,13 @@ def run(
     fig = Figure(
         figsize=(8, 1.5 + 0.4 * schools["school"].nunique()), layout="constrained"
     )
-    fsm = {"dissimilarity": fsm_term, "share": fsm_share}[measure]
-    draw_school_intake(fig, schools, fsm(secondary_schools), measure)
+    draw_school_intake(
+        fig, schools, register_fsm(secondary_schools, measure, anon), measure
+    )
     save(fig, out_dir / INTAKE_PNG)
     plot_modes(modes, out_dir / MODES_PNG)
-    plot_lorenz(schools, out_dir / LORENZ_PNG, disadvantage)
-    if mapped:
+    plot_lorenz(schools, out_dir / LORENZ_PNG, settings.disadvantage)
+    if not anon:
         plot_map(
             areas,
             secondary_schools,
@@ -442,10 +418,6 @@ def run(
                 secondary_schools,
                 district_distance,
                 district_minutes,
-                round_up,
-                linear,
-                disadvantage,
-                priority=priority,
                 routes=network,
             ),
             out_dir / MAP_PNG,
@@ -466,8 +438,10 @@ def run(
     # In district order, so an anonymised run's rows follow its labels, by
     # deprivation, rather than the code order the districts are held in.
     districts = district_rows(
-        samples, areas, settings.decile, disadvantage
+        samples, areas, settings.decile, settings.disadvantage
     ).sort_values(["seed", "LSOA21CD"], kind="stable", ignore_index=True)
+    if anon:
+        districts = districts.drop(columns=DEPRIVATION_COLUMNS)
     for frame, name in (
         (results, RESULTS_CSV),
         (schools, SCHOOLS_CSV),
@@ -523,7 +497,6 @@ def main(
     description: str = DESCRIPTION,
     *,
     seeds: int = N_SEEDS,
-    round_up: bool = ROUND_UP_SEATS,
 ) -> None:
     """Run one setting in every region named, as the command line sets out.
 
@@ -531,8 +504,8 @@ def main(
     to, so a preset takes every option a run takes.
 
     Args:
-        settings (Settings, optional): The setting every parameter's option
-        defaults to. Defaults to DEFAULTS.
+        settings (Settings, optional): The setting every parameter's option,
+        and the rounding of route seats, defaults to. Defaults to DEFAULTS.
 
         out_dir (Path, optional): The folder within each region's the run
         writes to. Defaults to OUT_DIR.
@@ -542,15 +515,12 @@ def main(
 
         seeds (int, optional): Samples drawn unless --seeds says otherwise.
         Defaults to N_SEEDS.
-
-        round_up (bool, optional): Whether route seats are rounded up unless
-        --no-round-up-seats says otherwise. Defaults to ROUND_UP_SEATS.
     """
     parser = argparse.ArgumentParser(description=description)
     add_seeds_argument(parser, seeds)
     add_settings_arguments(parser, settings)
     add_travel_arguments(parser)
-    add_seat_arguments(parser, round_up)
+    add_seat_arguments(parser)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
@@ -558,6 +528,9 @@ def main(
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
     add_anon_argument(parser)
+    # The rules' options default to the constants, so a preset's own rules
+    # are made their defaults here.
+    parser.set_defaults(**{rule: getattr(settings, rule) for rule in RULES})
     args = parser.parse_args()
     # Checked here as well as by route_network and rank_bundles, so a run
     # fails before its region is loaded and sampled rather than after.
@@ -577,7 +550,7 @@ def main(
             "cannot be set with --priority bracket"
         )
 
-    settings = Settings(**{f.name: getattr(args, f.name) for f in fields(Settings)})
+    settings = parsed_settings(args, settings)
     shares = load_nts_mode_shares(args.years)
     for las, areas in regions(args.la, args.merge):
         print(" + ".join(las) + ":")
@@ -592,7 +565,7 @@ def main(
             las,
             areas,
             args.anon,
-            args.priority,
+            settings.priority,
             args.distance,
             settings.max_route_minutes,
         )
@@ -607,13 +580,9 @@ def main(
             shares,
             folder / out_dir,
             args.circuity,
-            args.round_up_seats,
-            args.linear_progressivity,
-            args.disadvantage,
-            priority=args.priority,
             distance=to_school.rule,
             measure=args.intake,
-            mapped=not args.anon,
+            anon=args.anon,
         )
 
 

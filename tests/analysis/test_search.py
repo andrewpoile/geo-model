@@ -1,5 +1,4 @@
 import functools
-from dataclasses import asdict
 
 import numpy as np
 import pandas as pd
@@ -83,7 +82,7 @@ def test_bounds_hold_the_default_of_every_optimisable_parameter():
     for parameter in OPTIMISABLE:
         low, high = bounds(parameter)
         assert low < high
-        assert low <= asdict(DEFAULTS)[parameter] <= high
+        assert low <= getattr(DEFAULTS, parameter) <= high
 
 
 def test_bounds_search_the_decile_over_the_deciles_swept():

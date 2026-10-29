@@ -23,9 +23,12 @@ def fast_DAT(
 
     A student holds at most one seat, so the rank of the bundle each student
     holds is kept per student, and a full school finds its worst-ranked
-    seated bundle by scanning its own students rather than every bundle it
-    could ever be offered. Among equal ranks the lower route index gives way
-    first, routeless bundles last, and the lower student index among those.
+    seated bundle by scanning the students it seats, kept in a list per
+    school, rather than every student. An evicted student's place in the
+    list goes to the student taking their seat, so a list only ever grows
+    or has an entry replaced. Among equal ranks the lower route index gives
+    way first, routeless bundles last, and the lower student index among
+    those.
 
     Args:
         student_preferences (np.ndarray[student, preference, object]): Elements of the array are schools and routes.
@@ -46,6 +49,13 @@ def fast_DAT(
     route_acceptance_numbers = np.zeros(n_routes, dtype=np.int32)
     # Priority rank of the bundle each student holds, -1 while unseated.
     held_rank = np.full(n_students, -1, dtype=np.int32)
+    # The students each school seats, its first acceptance-number entries,
+    # and each seated student's place in their school's list.
+    max_capacity = 0
+    for capacity in school_capacities:
+        max_capacity = max(max_capacity, capacity)
+    seated = np.empty((n_schools, max_capacity), dtype=np.int32)
+    seat_of = np.empty(n_students, dtype=np.int32)
 
     free_students = np.arange(n_students, dtype=np.int32)
     pointer = n_students
@@ -76,6 +86,8 @@ def fast_DAT(
 
         if not school_is_full and not route_is_full:
             held_rank[s_id] = c_rank
+            seated[target_school, c_acc_num] = s_id
+            seat_of[s_id] = c_acc_num
             school_acceptance_numbers[target_school] += 1
             if target_route > -1:
                 route_acceptance_numbers[target_route] += 1
@@ -86,18 +98,24 @@ def fast_DAT(
         elif route_is_full:
             lowest_priority_student = -1
             worst_rank = -1
-            for s in range(n_students):
-                if (
-                    matching[s, 0] == target_school
-                    and matching[s, 1] == target_route
-                    and held_rank[s] > worst_rank
+            for seat in range(c_acc_num):
+                s = seated[target_school, seat]
+                if matching[s, 1] != target_route:
+                    continue
+                rank = held_rank[s]
+                # The list is in no student order, so a tie goes to the lower
+                # student index explicitly.
+                if rank > worst_rank or (
+                    rank == worst_rank and s < lowest_priority_student
                 ):
-                    worst_rank = held_rank[s]
+                    worst_rank = rank
                     lowest_priority_student = s
             eviction_required = c_rank < worst_rank
             if eviction_required:
                 held_rank[lowest_priority_student] = -1
                 held_rank[s_id] = c_rank
+                seat_of[s_id] = seat_of[lowest_priority_student]
+                seated[target_school, seat_of[s_id]] = s_id
                 matching[lowest_priority_student, 0] = -1
                 matching[lowest_priority_student, 1] = -1
                 matching[s_id, 0] = target_school
@@ -111,14 +129,21 @@ def fast_DAT(
             lowest_priority_route = -1
             worst_rank = -1
             worst_route = n_routes + 1
-            for s in range(n_students):
-                if matching[s, 0] != target_school:
-                    continue
+            for seat in range(c_acc_num):
+                s = seated[target_school, seat]
                 rank = held_rank[s]
                 # A routeless seat sits last on the route axis, so it is the
                 # last to give way among equal ranks.
                 route = matching[s, 1] if matching[s, 1] > -1 else n_routes
-                if rank > worst_rank or (rank == worst_rank and route < worst_route):
+                if (
+                    rank > worst_rank
+                    or (rank == worst_rank and route < worst_route)
+                    or (
+                        rank == worst_rank
+                        and route == worst_route
+                        and s < lowest_priority_student
+                    )
+                ):
                     worst_rank = rank
                     worst_route = route
                     lowest_priority_route = matching[s, 1]
@@ -127,6 +152,8 @@ def fast_DAT(
             if eviction_required:
                 held_rank[lowest_priority_student] = -1
                 held_rank[s_id] = c_rank
+                seat_of[s_id] = seat_of[lowest_priority_student]
+                seated[target_school, seat_of[s_id]] = s_id
                 # The evicted student gives up their seat on their route as
                 # well as the one at the school, and the applicant takes both.
                 if lowest_priority_route > -1:

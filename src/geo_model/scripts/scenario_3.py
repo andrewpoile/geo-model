@@ -28,16 +28,16 @@ N_SEEDS = 100
 # local schools and the local radius is inert. The districts routed are those
 # holding the most disadvantaged students, so the decile picks them only where
 # it picks who is disadvantaged, and each school's one route holds all of its
-# route seats, so progressivity is inert too.
+# route seats, so progressivity is inert too. Seats are rounded up, as
+# scenario 1 rounds them, so a school's one route keeps a seat where the
+# school's route seats fall below half of one.
 SCENARIO = replace(
     DEFAULTS,
     progressivity=0.0,
     max_local_p8=np.inf,
     largest_first=True,
+    round_up_seats=True,
 )
-# Seats are rounded up, as scenario 1 rounds them, so a school's one route
-# keeps a seat where the school's route seats fall below half of one.
-ROUND_UP = True
 
 
 def main() -> None:
@@ -49,7 +49,6 @@ def main() -> None:
         "with the free school offering the most places, and plot and map the "
         "two against each other.",
         seeds=N_SEEDS,
-        round_up=ROUND_UP,
     )
 
 

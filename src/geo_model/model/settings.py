@@ -137,7 +137,8 @@ PREFERENCE_NOISE = 0.5
 @dataclass(frozen=True)
 class Settings:
     """The parameters a matching can be scored under, at the model's defaults,
-    each field's metadata holding the help of its command-line option."""
+    each swept field's metadata holding the help of its command-line option,
+    and the rules its routes and rankings follow."""
 
     decile: int = field(
         default=DISADVANTAGED_DECILE,
@@ -260,9 +261,20 @@ class Settings:
             )
         },
     )
+    # The rules, RULES. Their options are cli's add_* functions, which the
+    # sweep and the search take as well, so they carry no help of their own.
+    round_up_seats: bool = ROUND_UP_SEATS
+    linear_progressivity: bool = LINEAR_PROGRESSIVITY
+    disadvantage: str = DISADVANTAGE
+    priority: str = PRIORITY
 
 
 DEFAULTS = Settings()
+
+# The fields of Settings that set the rules a matching follows rather than a
+# parameter it is swept or searched over, so every cell and candidate takes
+# them from the command line alike.
+RULES = ("round_up_seats", "linear_progressivity", "disadvantage", "priority")
 
 # The two scenarios every sample is matched in: with the routes, and the same
 # students with none, the baseline the routes are measured against.

@@ -815,7 +815,10 @@ def test_route_network_passes_over_a_lowest_ranked_district_a_local_school_serve
     assert "the longest route 9500m" in out
 
 
-def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(capsys):
+@pytest.mark.parametrize("linear", [False, True])
+def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(
+    capsys, linear
+):
     # Districts at 0, 10, 20 and 30km hold 1, 9, 5 and 5 disadvantaged
     # students. District 1 is routed on its count, and district 3 wins the tie
     # with district 2 on its lower rank; district 0, of lowest rank, is not
@@ -823,7 +826,8 @@ def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(caps
     # takes school 1, at 5km, which offers more places than school 0, leaving
     # district 3 school 0, though the other way round the longest route would
     # be shorter. Each route holds all 1 * places * 20 / 40 seats of its
-    # school.
+    # school, so the linear profile, not positive above the decile, plays no
+    # part.
     areas = make_areas([1, 5, 1, 5], scores=[0.1, 0.9, 0.5, 0.5], ranks=[1, 4, 3, 2])
 
     routes = network(
@@ -831,6 +835,7 @@ def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(caps
         np.array([[0.0, 0.0], [5_000.0, 0.0]]),
         school_places=np.array([100, 200]),
         largest_first=True,
+        linear=linear,
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [1, 3])

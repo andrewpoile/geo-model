@@ -8,7 +8,7 @@ from pymoo.core.problem import Problem
 
 from geo_model.analysis.sweep import GRID, swept
 from geo_model.measures.travel import mode_change
-from geo_model.model.settings import DEFAULTS, Settings
+from geo_model.model.settings import DEFAULTS, RULES, Settings
 
 # Every swept parameter. Which of them a search may vary depends on the
 # choices of DISADVANTAGE and PRIORITY, as `searchable` gives it.
@@ -166,6 +166,9 @@ class Pipeline(Problem):
         scores (Callable[[list[Settings]], Iterable[Scored | None]]):
         `score_feasible`, every argument but the settings bound, mapped in
         order over the candidates of a generation, as `task_map` maps it.
+
+        rules (Settings, optional): Whose RULES every candidate takes, every
+        parameter not searched holding DEFAULTS. Defaults to DEFAULTS.
     """
 
     def __init__(
@@ -173,6 +176,7 @@ class Pipeline(Problem):
         parameters: list[str],
         objectives: list[str],
         scores: Callable[[list[Settings]], Iterable[Scored | None]],
+        rules: Settings = DEFAULTS,
     ) -> None:
         low, high = zip(*(bounds(parameter) for parameter in parameters))
         super().__init__(
@@ -185,6 +189,7 @@ class Pipeline(Problem):
         self.parameters = parameters
         self.objectives = objectives
         self.scores = scores
+        self.rules = {rule: getattr(rules, rule) for rule in RULES}
         self.evaluations: list[dict] = []
         self.generation = 0
 
@@ -193,7 +198,7 @@ class Pipeline(Problem):
         print(f"Generation {self.generation}: scoring {len(x)} settings.")
         candidates = [cast(dict(zip(self.parameters, row))) for row in x]
         scored = self.scores(
-            [replace(DEFAULTS, **candidate) for candidate in candidates]
+            [replace(DEFAULTS, **candidate, **self.rules) for candidate in candidates]
         )
         rows = [
             {

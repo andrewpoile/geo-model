@@ -6,6 +6,7 @@ travel mode against every parameter.
 
 import argparse
 import functools
+from dataclasses import replace
 from pathlib import Path
 
 import geopandas as gpd
@@ -27,29 +28,24 @@ from geo_model.cli import (
     add_seeds_argument,
     add_travel_arguments,
     add_workers_argument,
+    parsed_settings,
 )
 from geo_model.data.regions import regions
 from geo_model.data.travel import load_nts_mode_shares
-from geo_model.measures.segregation import (
-    fsm_share,
-    fsm_term,
-)
 from geo_model.measures.summaries import unassigned_rows
 from geo_model.measures.travel import CIRCUITY, MODES, mode_change
 from geo_model.model.settings import (
     DEFAULTS,
-    DISADVANTAGE,
-    LINEAR_PROGRESSIVITY,
     N_SEEDS,
-    PRIORITY,
-    ROUND_UP_SEATS,
+    RULES,
+    Settings,
 )
 from geo_model.model.students import Sample, student_samples
 from geo_model.plots.comparison import plot_lorenz
 from geo_model.plots.maps import plot_map
 from geo_model.plots.style import INTAKE_MEASURES
 from geo_model.plots.sweep import plot_sweep
-from geo_model.scripts.run import load_region, score_settings
+from geo_model.scripts.run import load_region, register_fsm, score_settings
 
 # The sweep's folder within each region's, and the files written to it.
 SWEEP_DIR = Path("sweep")
@@ -72,10 +68,7 @@ def sweep(
     out_dir: Path,
     circuity: float = CIRCUITY,
     workers: int = 1,
-    round_up: bool = ROUND_UP_SEATS,
-    linear: bool = LINEAR_PROGRESSIVITY,
-    disadvantage: str = DISADVANTAGE,
-    priority: str = PRIORITY,
+    rules: Settings = DEFAULTS,
     *,
     distance: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -84,7 +77,7 @@ def sweep(
     Every cell matches the same student samples, so the scores of two cells
     differ by their parameter values alone, and the default cell of every
     parameter reproduces the scores `run` gives the defaults, on the same
-    samples at the same `disadvantage` and `priority`.
+    samples under the same rules.
 
     Args:
         samples (list[Sample]): Student samples, as yielded by
@@ -116,17 +109,8 @@ def sweep(
         slower than one process. Defaults to 1, which scores in this
         process.
 
-        round_up (bool, optional): Passed to `score_settings`. Defaults to
-        ROUND_UP_SEATS.
-
-        linear (bool, optional): Passed to `score_settings`. Defaults to
-        LINEAR_PROGRESSIVITY.
-
-        disadvantage (str, optional): Passed to `swept` and `score_settings`.
-        Defaults to DISADVANTAGE.
-
-        priority (str, optional): Passed to `swept` and `score_settings`.
-        Defaults to PRIORITY.
+        rules (Settings, optional): Whose RULES every cell takes, its
+        disadvantage and priority passed to `swept`. Defaults to DEFAULTS.
 
         distance (str): Passed to `score_settings`.
 
@@ -138,9 +122,10 @@ def sweep(
         and "value" ahead of the columns `score_settings` returns. Also
         written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV in `out_dir`.
     """
+    taken = {rule: getattr(rules, rule) for rule in RULES}
     cells = [
-        (p, settings)
-        for p in swept(GRID, disadvantage, priority)
+        (p, replace(settings, **taken))
+        for p in swept(GRID, rules.disadvantage, rules.priority)
         for settings in GRID[p]
     ]
     score = functools.partial(
@@ -152,10 +137,6 @@ def sweep(
         district_minutes=district_minutes,
         shares=shares,
         circuity=circuity,
-        round_up=round_up,
-        linear=linear,
-        disadvantage=disadvantage,
-        priority=priority,
         distance=distance,
     )
     with task_map(score, workers) as scores:
@@ -191,7 +172,7 @@ def main() -> None:
     add_seeds_argument(parser, N_SEEDS)
     add_workers_argument(parser)
     add_travel_arguments(parser)
-    add_seat_arguments(parser, ROUND_UP_SEATS)
+    add_seat_arguments(parser)
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
@@ -219,9 +200,10 @@ def main() -> None:
             "so it cannot be set with --anon"
         )
 
+    # The defaults under the rules given, whose cells the sweep varies.
+    base = parsed_settings(args)
     shares = load_nts_mode_shares(args.years)
-    parameters = swept(GRID, args.disadvantage, args.priority)
-    fsm = {"dissimilarity": fsm_term, "share": fsm_share}[args.intake]
+    parameters = swept(GRID, base.disadvantage, base.priority)
     for las, areas in regions(args.la, args.merge):
         (
             areas,
@@ -234,9 +216,9 @@ def main() -> None:
             las,
             areas,
             args.anon,
-            args.priority,
+            base.priority,
             args.distance,
-            DEFAULTS.max_route_minutes,
+            base.max_route_minutes,
         )
         out_dir = folder / SWEEP_DIR
         samples = list(student_samples(areas, args.seeds, to_school))
@@ -251,10 +233,7 @@ def main() -> None:
             out_dir,
             args.circuity,
             args.workers,
-            args.round_up_seats,
-            args.linear_progressivity,
-            args.disadvantage,
-            priority=args.priority,
+            base,
             distance=to_school.rule,
         )
         print(" + ".join(las) + ":")
@@ -299,7 +278,7 @@ def main() -> None:
             results,
             schools,
             modes,
-            fsm(secondary_schools),
+            register_fsm(secondary_schools, args.intake, args.anon),
             GRID,
             parameters,
             out_dir / PLOT_PNG,
@@ -311,22 +290,18 @@ def main() -> None:
                 secondary_schools,
                 samples[0][0],
                 settings_matchings(
-                    DEFAULTS,
+                    base,
                     samples[0],
                     areas,
                     secondary_schools,
                     district_distance,
                     district_minutes,
-                    args.round_up_seats,
-                    args.linear_progressivity,
-                    args.disadvantage,
-                    priority=args.priority,
                 ),
                 out_dir / MAP_PNG,
             )
         if args.lorenz:
             plot_lorenz(
-                default_cell(schools, GRID), out_dir / LORENZ_PNG, args.disadvantage
+                default_cell(schools, GRID), out_dir / LORENZ_PNG, base.disadvantage
             )
         print(
             f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, {TESTS_CSV} and "
