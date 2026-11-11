@@ -22,8 +22,10 @@ def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(
         s2.SCENARIO, areas, secondary, district_distance, district_minutes
     )
 
-    # One route per school, each from a district of its own, the districts the
-    # most deprived that can each have a school of their own.
+    # One route per school, each from a district of its own, every school's
+    # seats covering any district's disadvantaged students at the scenario's
+    # capacity scale, the districts the most deprived that can each have a
+    # school of their own.
     assert sorted(routes["school_idx"]) == list(range(len(secondary)))
     assert routes["district_idx"].is_unique
     assert set(routes["district_idx"]) == set(targets.index)

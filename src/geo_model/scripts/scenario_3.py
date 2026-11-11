@@ -1,9 +1,10 @@
 """Scenario 3: routes leave only the districts holding the most disadvantaged
-students, as many as there are schools, which take turns from the most
-disadvantaged down, each paired with the school offering the most places that
-no district before it took, beyond the default minimum distance, with no
-condition on nearby schools, the route holding all of the school's route
-seats.
+students, at most as many as there are schools, which take turns from the
+most disadvantaged down, each paired with the school offering the most places
+that no district before it took, beyond the default minimum distance, and
+with the next while the seats routed from it are below its expected
+disadvantaged students, with no condition on nearby schools, each route
+holding all of its school's route seats.
 
 The scenario is a preset of `run`: its students are matched with and
 without routes over fresh samples, and written, plotted and reported as
@@ -45,9 +46,9 @@ def main() -> None:
         SCENARIO,
         OUT_DIR,
         "Match fresh samples with and without scenario 3's routes, the "
-        "districts holding the most disadvantaged students each paired in turn "
-        "with the free school offering the most places, and plot and map the "
-        "two against each other.",
+        "districts holding the most disadvantaged students taking in turn the "
+        "free schools offering the most places, and plot and map the two "
+        "against each other.",
         seeds=N_SEEDS,
     )
 

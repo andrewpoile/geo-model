@@ -20,9 +20,10 @@ def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
         s3.SCENARIO, areas, secondary, district_distance, district_minutes
     )
 
-    # One route per school, each from a district of its own, the districts
-    # being the region's holding the most disadvantaged students, as many as
-    # there are schools.
+    # One route per school, each from a district of its own, every school's
+    # seats covering any district's disadvantaged students at the scenario's
+    # capacity scale, the districts being the region's holding the most
+    # disadvantaged students, as many as there are schools.
     assert sorted(routes["school_idx"]) == list(range(len(secondary)))
     assert routes["district_idx"].is_unique
     assert set(routes["district_idx"]) == set(targets.index)
