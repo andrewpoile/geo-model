@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from geo_model.analysis.scoring import settings_routes
 from geo_model.model import routes as rt
 from geo_model.model.settings import MIN_ROUTE_DISTANCE
@@ -37,3 +39,23 @@ def test_scenario_pairs_every_school_with_one_of_the_most_deprived_districts(
     # without a district of its own.
     shorter = (distances > MIN_ROUTE_DISTANCE) & (distances < lengths.max())
     assert rt.matching_size(shorter) < len(secondary)
+
+
+def test_scenario_shares_a_district_between_schools_at_a_small_capacity_scale(
+    areas, secondary, district_distance, district_minutes
+):
+    routes = settings_routes(
+        replace(s2.SCENARIO, capacity_scale=0.1),
+        areas,
+        secondary,
+        district_distance,
+        district_minutes,
+    )
+
+    # Still one route per school, some district now taking several, each
+    # short of its disadvantaged students without the smallest of its routes.
+    assert sorted(routes["school_idx"]) == list(range(len(secondary)))
+    assert not routes["district_idx"].is_unique
+    seats = routes.groupby("district_idx")["capacity"]
+    students = disadvantaged_cohort(areas, cohort_sizes(areas, "secondary"))
+    assert (seats.sum() - seats.min() < students[seats.sum().index]).all()

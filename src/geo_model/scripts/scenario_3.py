@@ -1,7 +1,8 @@
 """Scenario 3: routes leave only the districts holding the most disadvantaged
 students, at most as many as there are schools, which take turns from the
 most disadvantaged down, each paired with the school offering the most places
-that no district before it took, beyond the default minimum distance, and
+that no district before it took, beyond the default minimum distance, one
+left no such school giving way to the next, and
 with the next while the seats routed from it are below its expected
 disadvantaged students, with no condition on nearby schools, each route
 holding all of its school's route seats.
