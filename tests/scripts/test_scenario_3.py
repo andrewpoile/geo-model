@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 
 from geo_model.analysis.scoring import settings_routes
@@ -20,9 +22,10 @@ def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
         s3.SCENARIO, areas, secondary, district_distance, district_minutes
     )
 
-    # One route per school, each from a district of its own, the districts
-    # being the region's holding the most disadvantaged students, as many as
-    # there are schools.
+    # One route per school, each from a district of its own, every school's
+    # seats covering any district's disadvantaged students at the scenario's
+    # capacity scale, the districts being the region's holding the most
+    # disadvantaged students, as many as there are schools.
     assert sorted(routes["school_idx"]) == list(range(len(secondary)))
     assert routes["district_idx"].is_unique
     assert set(routes["district_idx"]) == set(targets.index)
@@ -38,3 +41,23 @@ def test_scenario_pairs_the_most_disadvantaged_districts_largest_first(
         free = np.setdiff1d(np.flatnonzero(row > MIN_ROUTE_DISTANCE), taken)
         assert places[school] == places[free].max()
         taken.append(school)
+
+
+def test_scenario_shares_a_district_between_schools_at_a_small_capacity_scale(
+    areas, secondary, district_distance, district_minutes
+):
+    routes = settings_routes(
+        replace(s3.SCENARIO, capacity_scale=0.1),
+        areas,
+        secondary,
+        district_distance,
+        district_minutes,
+    )
+
+    # Still one route per school, some district now taking several, each
+    # short of its disadvantaged students without the smallest of its routes.
+    assert sorted(routes["school_idx"]) == list(range(len(secondary)))
+    assert not routes["district_idx"].is_unique
+    seats = routes.groupby("district_idx")["capacity"]
+    students = disadvantaged_cohort(areas, cohort_sizes(areas, "secondary"))
+    assert (seats.sum() - seats.min() < students[seats.sum().index]).all()

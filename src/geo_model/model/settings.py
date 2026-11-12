@@ -67,20 +67,23 @@ ROUND_UP_SEATS = False
 # a seat on one, so every school offers a single route.
 SHORTEST_ROUTE_ONLY = False
 
-# True routes from only as many districts as there are schools, whatever their
-# decile. The route-eligible districts are taken in IDACI rank order, the most
-# deprived in England first, each kept if it and those kept before it can still
-# each have a school of its own beyond the minimum distance, so a district that
-# cannot is passed over for the next. Each school is paired with one of them so
-# the longest route is as short as it can be, ties going to the least total
-# length. Every school offers a single route.
+# True routes from at most as many districts as there are schools, whatever
+# their decile. The route-eligible districts are taken in IDACI rank order, the
+# most deprived in England first, each kept for every school it can still have
+# beyond the minimum distance alongside those kept before it, so a district
+# that cannot is passed over for the next. A district may have as many schools
+# as it would take of those holding the most route seats before the seats
+# routed from it reach its disadvantaged students. Each school is paired with
+# one of them so the longest route is as short as it can be, ties going to the
+# least total length. Every school offers a single route.
 BOTTLENECK_ROUTES = False
 
-# True routes from only as many districts as there are schools, those holding
-# the most disadvantaged students, whatever their decile, a tie going to the
-# lower IDACI rank. Taking them in that order, each district is paired with the
-# school offering the most places that no district before it took, a tie going
-# to the nearer. Every school offers a single route.
+# True routes from at most as many districts as there are schools, those
+# holding the most disadvantaged students, whatever their decile, a tie going
+# to the lower IDACI rank. Taking them in that order, each district is paired
+# with the school offering the most places that no district before it took, a
+# tie going to the nearer, and with the next while the seats routed from it are
+# below its disadvantaged students. Every school offers a single route.
 LARGEST_FIRST_ROUTES = False
 
 # A route carries a student past their local schools, so a district already
@@ -245,9 +248,11 @@ class Settings:
         default=BOTTLENECK_ROUTES,
         metadata={
             "help": (
-                "route only as many districts as there are schools, the most deprived "
-                "by IDACI rank that can each have a school of their own, each school "
-                "paired with one so the longest route is as short as it can be"
+                "route at most as many districts as there are schools, the most "
+                "deprived by IDACI rank that can have a school, a district having a "
+                "further school while the seats routed from it would fall short of its "
+                "disadvantaged students, each school paired with one so the longest "
+                "route is as short as it can be"
             )
         },
     )
@@ -255,9 +260,10 @@ class Settings:
         default=LARGEST_FIRST_ROUTES,
         metadata={
             "help": (
-                "route only the districts holding the most disadvantaged students, as "
-                "many as there are schools, each paired in turn with the free school "
-                "offering the most places"
+                "route only the districts holding the most disadvantaged students, at "
+                "most as many as there are schools, each paired in turn with the free "
+                "school offering the most places, and with the next while the seats "
+                "routed from it fall short of its disadvantaged students"
             )
         },
     )

@@ -1,9 +1,11 @@
 """Scenario 2: routes leave only the most deprived districts by IDACI rank
-that can each have a school of their own beyond the default minimum distance,
-as many as there are schools, a district that cannot giving way to the next
-in rank. Each school is paired with one of them so the longest route is as
-short as it can be, with no condition on nearby schools, the route holding
-all of the school's route seats.
+that can have a school beyond the default minimum distance, at most as many
+as there are schools, a district that cannot giving way to the next in rank.
+A district may have as many schools as it would take of those holding the
+most route seats before the seats routed from it reach its expected
+disadvantaged students. Each school is paired with one of them so the longest
+route is as short as it can be, with no condition on nearby schools, the
+route holding all of the school's route seats.
 
 The scenario is a preset of `run`: its students are matched with and
 without routes over fresh samples, and written, plotted and reported as

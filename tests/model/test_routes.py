@@ -162,13 +162,13 @@ def test_bottleneck_pairs_rejects_schools_that_cannot_each_have_a_district():
 
 
 def test_first_districts_passes_over_a_district_that_cannot_have_a_school():
-    # District 1 may be routed to no school, and district 2 only to school 0,
-    # which district 0 needs, so both give way to district 3. Every school has
-    # a district by then, so district 4 is not taken.
-    allowed = np.array([[1, 0], [0, 0], [1, 0], [0, 1], [1, 1]], dtype=bool)
+    # District 1 may be routed to no school, and districts 2 and 3 only to
+    # school 0, which district 0 needs, so all three give way to district 4.
+    # Every school has a district by then, so district 5 is not taken.
+    allowed = np.array([[1, 0], [0, 0], [1, 0], [1, 0], [0, 1], [1, 1]], dtype=bool)
 
     np.testing.assert_array_equal(
-        rt.first_districts(allowed), [True, False, False, True, False]
+        rt.first_districts(allowed), [True, False, False, False, True, False]
     )
 
 
@@ -176,7 +176,9 @@ def test_first_districts_rejects_schools_that_cannot_each_have_a_district():
     # Both districts may be routed to school 0 alone.
     allowed = np.array([[1, 0], [1, 0]], dtype=bool)
 
-    with pytest.raises(rt.EmptyRouteSet, match="Only 1 of the 2 schools"):
+    with pytest.raises(
+        rt.EmptyRouteSet, match="Only 1 of the 2 schools .* the 2 districts given"
+    ):
         rt.first_districts(allowed)
 
 
@@ -185,11 +187,15 @@ def test_first_districts_rejects_schools_that_cannot_each_have_a_district():
 # --------------------------------------------------------------------------
 
 
+# Each school's 30 seats cover a district's one student, so every district
+# takes one school.
+
+
 def test_largest_first_pairs_gives_the_first_district_the_school_of_most_places():
     # District 0 is nearer school 0 but takes school 1, which offers more
     # places, leaving district 1 school 0.
     pairs = rt.largest_first_pairs(
-        np.array([[1.0, 9.0], [2.0, 3.0]]), np.array([100, 200])
+        np.array([[1.0, 9.0], [2.0, 3.0]]), np.array([100, 200]), SCHOOL_SEATS, WEIGHT
     )
 
     np.testing.assert_array_equal(pairs, [[False, True], [True, False]])
@@ -199,7 +205,7 @@ def test_largest_first_pairs_skips_a_barred_school():
     # District 0 is barred from school 1, so takes school 0.
     inf = np.inf
     pairs = rt.largest_first_pairs(
-        np.array([[1.0, inf], [5.0, 5.0]]), np.array([100, 200])
+        np.array([[1.0, inf], [5.0, 5.0]]), np.array([100, 200]), SCHOOL_SEATS, WEIGHT
     )
 
     np.testing.assert_array_equal(pairs, [[True, False], [False, True]])
@@ -207,23 +213,23 @@ def test_largest_first_pairs_skips_a_barred_school():
 
 def test_largest_first_pairs_gives_a_tie_in_places_to_the_nearer_school():
     pairs = rt.largest_first_pairs(
-        np.array([[5.0, 2.0], [1.0, 1.0]]), np.array([100, 100])
+        np.array([[5.0, 2.0], [1.0, 1.0]]), np.array([100, 100]), SCHOOL_SEATS, WEIGHT
     )
 
     np.testing.assert_array_equal(pairs, [[False, True], [True, False]])
 
 
-def test_largest_first_pairs_rejects_a_district_left_no_school():
+def test_largest_first_pairs_rejects_a_school_no_district_took():
     # District 0 takes school 1, which district 1 alone may be paired with,
     # though pairing district 0 with school 0 would have served both.
     inf = np.inf
-    with pytest.raises(ValueError, match="turn 2 of 2 finds every school"):
-        rt.largest_first_pairs(np.array([[1.0, 2.0], [inf, 2.0]]), np.array([100, 200]))
-
-
-def test_largest_first_pairs_rejects_fewer_districts_than_schools():
-    with pytest.raises(ValueError, match="1 districts for 2 schools"):
-        rt.largest_first_pairs(np.array([[1.0, 2.0]]), np.array([100, 200]))
+    with pytest.raises(rt.EmptyRouteSet, match="1 of the 2 schools are left"):
+        rt.largest_first_pairs(
+            np.array([[1.0, 2.0], [inf, 2.0]]),
+            np.array([100, 200]),
+            SCHOOL_SEATS,
+            WEIGHT,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -387,7 +393,10 @@ def test_build_routes_keeps_only_the_shortest_route_holding_a_seat_of_each_schoo
     np.testing.assert_array_equal(routes["route_id"], [0, 1])
 
 
-def test_build_routes_gives_no_district_to_a_school_holding_no_seat(capsys):
+@pytest.mark.parametrize(
+    "rule", [{"bottleneck": True}, {"school_places": np.array([100, 200])}]
+)
+def test_build_routes_gives_no_district_to_a_school_holding_no_seat(capsys, rule):
     # Districts at 0 and 10km may each be routed to both schools, at 20km and
     # 5km. School 1 holds no seat, so district 0, the first, takes school 0,
     # rather than school 1, where its route would be dropped for holding no
@@ -399,7 +408,8 @@ def test_build_routes_gives_no_district_to_a_school_holding_no_seat(capsys):
         NO_CAP,
         WEIGHT,
         np.array([30, 0]),
-        bottleneck=True,
+        students=WEIGHT,
+        **rule,
     )
 
     np.testing.assert_array_equal(routes["district_idx"], [0])
@@ -408,15 +418,40 @@ def test_build_routes_gives_no_district_to_a_school_holding_no_seat(capsys):
     assert "1 of the 2 schools hold no route seat" in capsys.readouterr().out
 
 
+def test_build_routes_counts_a_districts_schools_on_those_holding_the_most_seats():
+    # Districts at 0 and 10km hold 3 students each, and schools at 30km and
+    # 20km 3 and 2 seats. The larger school alone would seat a district, so
+    # each may take one school only: district 0, paired with the smaller for
+    # the shorter longest route, takes no second, though 2 seats fall short.
+    districts = make_areas([1, 1])
+    routes = rt.build_routes(
+        districts,
+        *travel(districts, np.array([[30_000.0, 0.0], [20_000.0, 0.0]])),
+        MIN_ROUTE_DISTANCE,
+        NO_CAP,
+        WEIGHT,
+        np.array([3, 2]),
+        bottleneck=True,
+        students=np.array([3, 3]),
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [0, 1])
+    np.testing.assert_array_equal(routes["school_idx"], [1, 0])
+    np.testing.assert_array_equal(routes["capacity"], [2, 3])
+
+
 @pytest.mark.parametrize(
-    "ranks, seats, error, message",
+    "ranks, seats, students, error, message",
     [
-        ([2, 1], [30, 30], ValueError, "it must be IDACI rank order"),
-        ([1, 2], [0, 0], rt.EmptyRouteSet, "No school holds a route seat"),
+        ([2, 1], [30, 30], WEIGHT, ValueError, "it must be IDACI rank order"),
+        ([1, 2], [0, 0], WEIGHT, rt.EmptyRouteSet, "No school holds a route seat"),
+        ([1, 2], [30, 30], None, ValueError, "so they must be given"),
     ],
-    ids=["frame out of rank order", "no school holding a seat"],
+    ids=["frame out of rank order", "no school holding a seat", "no students"],
 )
-def test_build_routes_rejects_what_bottleneck_cannot_take(ranks, seats, error, message):
+def test_build_routes_rejects_what_bottleneck_cannot_take(
+    ranks, seats, students, error, message
+):
     with pytest.raises(error, match=message):
         rt.build_routes(
             make_areas([1, 1], ranks=ranks),
@@ -426,6 +461,7 @@ def test_build_routes_rejects_what_bottleneck_cannot_take(ranks, seats, error, m
             WEIGHT,
             np.array(seats),
             bottleneck=True,
+            students=students,
         )
 
 
@@ -755,7 +791,7 @@ def test_route_network_pairs_each_school_with_one_of_the_lowest_ranked_districts
     np.testing.assert_array_equal(routes["capacity"], [100, 100])
     out = capsys.readouterr().out
     assert "4 districts in IDACI rank order" in out
-    assert "each school paired with a district of its own" in out
+    assert "each school paired with one of 2 districts" in out
     assert "reaching down to IDACI rank 2" in out
     assert "the longest route 25000m" in out
     assert "per district" not in out
@@ -842,8 +878,44 @@ def test_route_network_pairs_the_most_disadvantaged_districts_largest_first(
     np.testing.assert_array_equal(routes["school_idx"], [1, 0])
     np.testing.assert_array_equal(routes["capacity"], [100, 50])
     out = capsys.readouterr().out
-    assert "2 districts holding the most disadvantaged students" in out
-    assert "each paired with the free school offering the most places" in out
+    assert "4 districts in order of disadvantaged students" in out
+    assert "2 districts in turn from the most disadvantaged taking" in out
+
+
+def test_route_network_passes_over_a_most_disadvantaged_district_left_no_school():
+    # Districts at 0, 10 and 20km hold 9, 5 and 1 disadvantaged students, and
+    # the schools sit at 0 and 1km. District 0 takes its turn first but lies
+    # within the minimum distance of both, so gives way: district 1 takes
+    # school 1, the nearer of two offering the same places, and district 2
+    # school 0.
+    routes = network(
+        make_areas([1, 1, 1], scores=[0.9, 0.5, 0.1]),
+        np.array([[0.0, 0.0], [1_000.0, 0.0]]),
+        largest_first=True,
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [1, 2])
+    np.testing.assert_array_equal(routes["school_idx"], [1, 0])
+
+
+@pytest.mark.parametrize("rule", ["bottleneck", "largest_first"])
+def test_route_network_gives_a_district_a_further_school_while_its_seats_fall_short(
+    rule,
+):
+    # Districts at 0 and 10km hold 10 disadvantaged students each, and schools
+    # at 30km and 40km 1 * 5 * 20 / 20 route seats each. District 0, the first
+    # by rank and by count alike, takes both, one school's seats falling short
+    # of its students, and district 1 neither.
+    routes = network(
+        make_areas([1, 1]),
+        np.array([[30_000.0, 0.0], [40_000.0, 0.0]]),
+        school_places=np.full(2, 5),
+        **{rule: True},
+    )
+
+    np.testing.assert_array_equal(routes["district_idx"], [0, 0])
+    np.testing.assert_array_equal(routes["school_idx"], [0, 1])
+    np.testing.assert_array_equal(routes["capacity"], [5, 5])
 
 
 # --------------------------------------------------------------------------
