@@ -137,6 +137,8 @@ def test_run_rejects_no_samples(tmp_path):
     [
         ["--shortest-only", "--bottleneck"],
         ["--priority-discount", "1.5"],
+        ["--local-radius", "-5"],
+        ["--local-radius", "nan"],
         ["--priority", "bracket", "--priority-discount", "0.8"],
         ["--priority", "bracket", "--priority-per-route"],
     ],

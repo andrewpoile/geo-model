@@ -543,6 +543,8 @@ def main(
         )
     if not 0 <= args.priority_discount <= 1:
         parser.error("--priority-discount must lie in [0, 1]")
+    if not args.local_radius >= 0:
+        parser.error("--local-radius must be at least 0")
     if args.priority == "bracket" and (
         args.priority_discount != settings.priority_discount
         or args.priority_per_route != settings.priority_per_route

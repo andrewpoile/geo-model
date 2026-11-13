@@ -201,8 +201,9 @@ def rank_bundles(
         raise ValueError(
             f"priority_discount must lie in [0, 1], got {priority_discount}."
         )
-    if local_radius < 0:
-        raise ValueError(f"local_radius must not be negative, got {local_radius}.")
+    # Written so that NaN fails as well.
+    if not local_radius >= 0:
+        raise ValueError(f"local_radius must be at least 0, got {local_radius}.")
 
     student_district = np.asarray(student_district, dtype=np.int64)
     school_district = np.asarray(school_district, dtype=np.int64)
@@ -268,11 +269,11 @@ def rank_bundles(
         ]
         bundle_student = np.concatenate([np.arange(n_students), *riders])
         distance = distances[bundle_student, school]
-        routed = np.arange(len(bundle_student)) >= n_students
         ends = np.cumsum([n_students, *map(len, riders)])
         # Each rule sorts on a key of its own, the true distance breaking its
         # ties.
         if priority == "bracket":
+            routed = np.arange(len(bundle_student)) >= n_students
             key = np.where(
                 routed | (student_district[bundle_student] == school_district[school]),
                 0,
@@ -280,7 +281,7 @@ def rank_bundles(
             )
         else:
             limit = (1 - priority_discount) * local_radius
-            scale = np.ones(len(bundle_student))
+            key = distance.copy()
             groups = (
                 [slice(start, stop) for start, stop in pairwise(ends)]
                 if priority_per_route
@@ -289,9 +290,10 @@ def rank_bundles(
             for group in groups:
                 furthest = distance[group].max(initial=0.0)
                 # Riders already within the limit are never pushed outwards.
+                # Divided first, so the furthest ranks at the limit exactly
+                # and those of several routes tie on it.
                 if furthest > limit:
-                    scale[group] = limit / furthest
-            key = scale * distance
+                    key[group] = limit * (distance[group] / furthest)
         order = np.lexsort((distance, key))
         rank = np.empty(len(order), dtype=np.int32)
         rank[order] = np.arange(len(order), dtype=np.int32)
