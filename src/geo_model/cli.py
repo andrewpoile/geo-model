@@ -167,9 +167,10 @@ def add_priority_argument(parser: argparse.ArgumentParser) -> None:
         "--priority",
         choices=PRIORITY_CHOICES,
         default=PRIORITY,
-        help="distance: each school ranks every student by distance, a routed "
-        f"student's taken down by the priority discount, {PRIORITY_DISCOUNT} "
-        "unless --priority-discount, the sweep or the search sets it; bracket: "
+        help="distance: each school ranks every student by distance, its routed "
+        "students' scaled down together so the furthest ranks at the local "
+        f"radius less the priority discount, {PRIORITY_DISCOUNT} unless "
+        "--priority-discount, the sweep or the search sets it; bracket: "
         "every routed student and every student of the school's own district "
         "first, everyone else after, each by distance, the model as it was "
         f"before, written to {OUTPUT_DIR}/<NAME>/bracket",

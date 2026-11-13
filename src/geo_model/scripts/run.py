@@ -217,6 +217,8 @@ def score_settings(
             disadvantage=settings.disadvantage,
             priority=settings.priority,
             priority_discount=settings.priority_discount,
+            local_radius=settings.local_radius,
+            priority_per_route=settings.priority_per_route,
         )
         rows += [
             {

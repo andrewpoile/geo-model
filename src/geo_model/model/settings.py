@@ -116,19 +116,24 @@ DISADVANTAGED_PERFORMANCE_WEIGHT = PERFORMANCE_WEIGHT
 DISADVANTAGED_ROUTE_DISCOUNT = ROUTE_DISCOUNT
 
 # How a school orders the bundles proposed to it:
-#   "distance"  By the student's distance alone, a routed bundle's discounted
-#               by PRIORITY_DISCOUNT, a tie going to the nearer on the true
-#               distance.
+#   "distance"  By the student's distance alone, the routed bundles' scaled
+#               down together so the furthest rider ranks at LOCAL_RADIUS,
+#               the outer limit of a local student, less PRIORITY_DISCOUNT of
+#               it, a tie going to the nearer on the true distance.
 #   "bracket"   Every routed bundle and every student of the school's own
 #               district first, everyone else after, each bracket by
 #               distance: the model as it was before.
 PRIORITY_CHOICES = ("distance", "bracket")
 PRIORITY = "distance"
 
-# Share of a routed student's distance a school's priority takes off under
-# PRIORITY "distance". At 0.5 a routed bundle ranks as if the student lived
-# half as far away.
-PRIORITY_DISCOUNT = 0.5
+# Share of LOCAL_RADIUS a school's priority takes off the distance its
+# furthest routed student ranks at under PRIORITY "distance". At 0 that
+# student ranks on the local radius itself.
+PRIORITY_DISCOUNT = 0.0
+
+# Whether the furthest routed student is taken over each route's own riders
+# rather than over every rider of the school, under PRIORITY "distance".
+PRIORITY_PER_ROUTE = False
 
 # Standard deviation of every student's taste for each school, added to its
 # preference cost, in the cost's units: those of a standard deviation of
@@ -231,8 +236,17 @@ class Settings:
         default=PRIORITY_DISCOUNT,
         metadata={
             "help": (
-                "share of a routed student's distance a school's priority takes off, "
-                "under --priority distance"
+                "share of the local radius a school's priority takes off the distance "
+                "its furthest routed student ranks at, under --priority distance"
+            )
+        },
+    )
+    priority_per_route: bool = field(
+        default=PRIORITY_PER_ROUTE,
+        metadata={
+            "help": (
+                "rank the furthest rider of each route on the local radius, rather "
+                "than the furthest of each school, under --priority distance"
             )
         },
     )
