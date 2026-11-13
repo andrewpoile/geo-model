@@ -1,3 +1,5 @@
+from itertools import pairwise
+
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -7,11 +9,13 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     DISADVANTAGED_PERFORMANCE_WEIGHT,
     DISADVANTAGED_ROUTE_DISCOUNT,
+    LOCAL_RADIUS,
     PERFORMANCE_WEIGHT,
     PREFERENCE_NOISE,
     PRIORITY,
     PRIORITY_CHOICES,
     PRIORITY_DISCOUNT,
+    PRIORITY_PER_ROUTE,
     ROUTE_DISCOUNT,
 )
 
@@ -40,6 +44,8 @@ def rank_bundles(
     route_eligible: ArrayLike = True,
     priority: str = PRIORITY,
     priority_discount: float = PRIORITY_DISCOUNT,
+    local_radius: float = LOCAL_RADIUS,
+    priority_per_route: bool = PRIORITY_PER_ROUTE,
     noise_scale: float = 0.0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -68,8 +74,13 @@ def rank_bundles(
     penalty. A bundle therefore never ranks below the same school without one.
 
     School priorities follow `priority`. Under "distance" a school orders every
-    bundle by the student's distance, a routed bundle's taken down by
-    `priority_discount`, a tie going to the nearer on the true distance. Under
+    bundle by the student's distance, the routed bundles' scaled down together
+    so the furthest rider ranks at `local_radius`, the outer limit of a local
+    student, less `priority_discount` of it, and the nearer riders keep their
+    relative distances between the school and that limit. Riders already
+    within the limit keep their true distances. The furthest is taken over
+    every rider of the school, or over each route's own under
+    `priority_per_route`. A tie goes to the nearer on the true distance. Under
     "bracket" they carry the model's two brackets: the top holds every routed
     bundle to the school, those of eligible students alone, and every student
     living in the school's own district, the bottom the routeless bundles of
@@ -123,11 +134,21 @@ def rank_bundles(
         priority (str, optional): One of PRIORITY_CHOICES, the rule school
         priorities follow. Defaults to PRIORITY.
 
-        priority_discount (float, optional): Share of a routed student's
-        distance a school's priority takes off under "distance", in [0, 1].
-        0 ranks a routed bundle on its true distance, 1 as if the student
-        lived at the school. Student preferences are unaffected. Defaults to
-        PRIORITY_DISCOUNT.
+        priority_discount (float, optional): Share of `local_radius` a
+        school's priority takes off the distance its furthest routed student
+        ranks at under "distance", in [0, 1]. 0 ranks that student on the
+        local radius, 1 every routed student as if they lived at the school.
+        Student preferences are unaffected. Defaults to PRIORITY_DISCOUNT.
+
+        local_radius (float, optional): Distance of the outer limit of a
+        local student, which a school's furthest routed student ranks at
+        under "distance", in the units of `distances`. Defaults to
+        LOCAL_RADIUS.
+
+        priority_per_route (bool, optional): Whether the furthest routed
+        student is taken over each route's own riders rather than over every
+        rider of the school, under "distance". Defaults to
+        PRIORITY_PER_ROUTE.
 
         noise_scale (float, optional): Standard deviation of Gaussian noise
         added to the combined preference cost, measured in units of that cost
@@ -180,6 +201,9 @@ def rank_bundles(
         raise ValueError(
             f"priority_discount must lie in [0, 1], got {priority_discount}."
         )
+    # Written so that NaN fails as well.
+    if not local_radius >= 0:
+        raise ValueError(f"local_radius must be at least 0, got {local_radius}.")
 
     student_district = np.asarray(student_district, dtype=np.int64)
     school_district = np.asarray(school_district, dtype=np.int64)
@@ -245,23 +269,36 @@ def rank_bundles(
         ]
         bundle_student = np.concatenate([np.arange(n_students), *riders])
         distance = distances[bundle_student, school]
-        routed = np.arange(len(bundle_student)) >= n_students
+        ends = np.cumsum([n_students, *map(len, riders)])
         # Each rule sorts on a key of its own, the true distance breaking its
         # ties.
         if priority == "bracket":
+            routed = np.arange(len(bundle_student)) >= n_students
             key = np.where(
                 routed | (student_district[bundle_student] == school_district[school]),
                 0,
                 1,
             )
         else:
-            key = np.where(routed, 1 - priority_discount, 1.0) * distance
+            limit = (1 - priority_discount) * local_radius
+            key = distance.copy()
+            groups = (
+                [slice(start, stop) for start, stop in pairwise(ends)]
+                if priority_per_route
+                else [slice(n_students, None)]
+            )
+            for group in groups:
+                furthest = distance[group].max(initial=0.0)
+                # Riders already within the limit are never pushed outwards.
+                # Divided first, so the furthest ranks at the limit exactly
+                # and those of several routes tie on it.
+                if furthest > limit:
+                    key[group] = limit * (distance[group] / furthest)
         order = np.lexsort((distance, key))
         rank = np.empty(len(order), dtype=np.int32)
         rank[order] = np.arange(len(order), dtype=np.int32)
 
         routeless_rank[school] = rank[:n_students]
-        ends = np.cumsum([n_students, *map(len, riders)])
         for route, start, stop in zip(routes, ends[:-1], ends[1:]):
             routed_rank[route] = rank[start:stop]
 
@@ -404,6 +441,8 @@ def secondary_instance(
     disadvantage: str = DISADVANTAGE,
     priority: str = PRIORITY,
     priority_discount: float = PRIORITY_DISCOUNT,
+    local_radius: float = LOCAL_RADIUS,
+    priority_per_route: bool = PRIORITY_PER_ROUTE,
     noise_scale: float = PREFERENCE_NOISE,
     noise_seed: int | np.random.SeedSequence | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -463,6 +502,12 @@ def secondary_instance(
         priority_discount (float, optional): Passed to `rank_bundles`.
         Defaults to PRIORITY_DISCOUNT.
 
+        local_radius (float, optional): Passed to `rank_bundles`. Defaults to
+        LOCAL_RADIUS.
+
+        priority_per_route (bool, optional): Passed to `rank_bundles`.
+        Defaults to PRIORITY_PER_ROUTE.
+
         noise_scale (float, optional): Passed to `rank_bundles`. Defaults to
         PREFERENCE_NOISE.
 
@@ -500,6 +545,8 @@ def secondary_instance(
         route_eligible=disadvantaged if disadvantage == "score" else True,
         priority=priority,
         priority_discount=priority_discount,
+        local_radius=local_radius,
+        priority_per_route=priority_per_route,
         noise_scale=noise_scale,
         rng=None if noise_seed is None else np.random.default_rng(noise_seed),
     )

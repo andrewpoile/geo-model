@@ -217,6 +217,8 @@ def score_settings(
             disadvantage=settings.disadvantage,
             priority=settings.priority,
             priority_discount=settings.priority_discount,
+            local_radius=settings.local_radius,
+            priority_per_route=settings.priority_per_route,
         )
         rows += [
             {
@@ -541,13 +543,15 @@ def main(
         )
     if not 0 <= args.priority_discount <= 1:
         parser.error("--priority-discount must lie in [0, 1]")
-    if (
-        args.priority == "bracket"
-        and args.priority_discount != settings.priority_discount
+    if not args.local_radius >= 0:
+        parser.error("--local-radius must be at least 0")
+    if args.priority == "bracket" and (
+        args.priority_discount != settings.priority_discount
+        or args.priority_per_route != settings.priority_per_route
     ):
         parser.error(
-            "--priority-discount is read under --priority distance alone, so it "
-            "cannot be set with --priority bracket"
+            "--priority-discount and --priority-per-route are read under --priority "
+            "distance alone, so they cannot be set with --priority bracket"
         )
 
     settings = parsed_settings(args, settings)

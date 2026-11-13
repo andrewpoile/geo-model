@@ -43,7 +43,10 @@ GRID = {
     "max_local_p8": [replace(DEFAULTS, max_local_p8=p / 4) for p in range(-2, 5)],
     # Half miles in metres. Every Southampton district at or below the default
     # decile has a school above MAX_LOCAL_P8 within 5.6km, so there the route
-    # set empties from that radius.
+    # set empties from that radius. Under PRIORITY "distance" the radius is
+    # the limit a school's furthest routed student ranks at as well, so a cell
+    # moves both, and at 0 every routed student ranks as if living at the
+    # school.
     "local_radius": [
         replace(DEFAULTS, local_radius=r)
         for r in (0, 805, 1609, 2414, 3218, 4023, 4828)

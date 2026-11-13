@@ -19,9 +19,11 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     DISADVANTAGED_PERFORMANCE_WEIGHT,
     DISADVANTAGED_ROUTE_DISCOUNT,
+    LOCAL_RADIUS,
     PERFORMANCE_WEIGHT,
     PRIORITY,
     PRIORITY_DISCOUNT,
+    PRIORITY_PER_ROUTE,
     ROUTE_DISCOUNT,
     SCENARIOS,
     Settings,
@@ -48,6 +50,8 @@ def match_sample(
     disadvantage: str = DISADVANTAGE,
     priority: str = PRIORITY,
     priority_discount: float = PRIORITY_DISCOUNT,
+    local_radius: float = LOCAL_RADIUS,
+    priority_per_route: bool = PRIORITY_PER_ROUTE,
 ) -> Iterator[tuple[str, np.ndarray, np.ndarray]]:
     """Match one student sample with and without routes.
 
@@ -95,6 +99,12 @@ def match_sample(
         priority_discount (float, optional): Passed to `secondary_instance`.
         Defaults to PRIORITY_DISCOUNT.
 
+        local_radius (float, optional): Passed to `secondary_instance`.
+        Defaults to LOCAL_RADIUS.
+
+        priority_per_route (bool, optional): Passed to `secondary_instance`.
+        Defaults to PRIORITY_PER_ROUTE.
+
     Yields:
         tuple[str, np.ndarray, np.ndarray]: The scenario, "with routes" then
         "without routes", the students' preferences in it, as
@@ -116,6 +126,8 @@ def match_sample(
             disadvantage,
             priority=priority,
             priority_discount=priority_discount,
+            local_radius=local_radius,
+            priority_per_route=priority_per_route,
             noise_seed=noise_seed,
         )
         yield scenario, instance[0], fast_DAT(*instance)
@@ -139,6 +151,8 @@ def score_sample(
     disadvantage: str = DISADVANTAGE,
     priority: str = PRIORITY,
     priority_discount: float = PRIORITY_DISCOUNT,
+    local_radius: float = LOCAL_RADIUS,
+    priority_per_route: bool = PRIORITY_PER_ROUTE,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Match one student sample with and without routes and score both.
 
@@ -198,6 +212,12 @@ def score_sample(
         priority_discount (float, optional): Passed to `secondary_instance`.
         Defaults to PRIORITY_DISCOUNT.
 
+        local_radius (float, optional): Passed to `secondary_instance`.
+        Defaults to LOCAL_RADIUS.
+
+        priority_per_route (bool, optional): Passed to `secondary_instance`.
+        Defaults to PRIORITY_PER_ROUTE.
+
     Returns:
         tuple[list[dict], list[dict], list[dict], list[dict]]: One row per
         scenario, with keys "scenario", "dissimilarity", "n_matched",
@@ -233,6 +253,8 @@ def score_sample(
         disadvantage,
         priority=priority,
         priority_discount=priority_discount,
+        local_radius=local_radius,
+        priority_per_route=priority_per_route,
     ):
         matched_school = matching[:, 0]
         rows.append(
@@ -421,6 +443,8 @@ def settings_matchings(
             settings.disadvantage,
             priority=settings.priority,
             priority_discount=settings.priority_discount,
+            local_radius=settings.local_radius,
+            priority_per_route=settings.priority_per_route,
         )
     }
 

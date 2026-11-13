@@ -144,24 +144,24 @@ def test_rank_bundles_ranks_a_distant_local_above_a_near_outsider_by_bracket_alo
 
 
 @pytest.mark.parametrize(
-    "priority, priority_discount, expected",
+    "priority, priority_discount, local_radius, expected",
     [
-        # Each routed bundle ties with its own school without one, which
-        # ranks first.
-        ("distance", 0.0, [[0, -1], [4, 3], [2, 1]]),
-        # s2's route, 6m taken down to 3m, outranks s0 at 4m, and s1's, 10m
-        # taken down to 5m, does not.
-        ("distance", 0.5, [[1, -1], [2, 4], [0, 3]]),
+        # The furthest rider is already within the radius, so each routed
+        # bundle ties with its own school without one, which ranks first.
+        ("distance", 0.0, 10.0, [[0, -1], [4, 3], [2, 1]]),
+        # The furthest rider, s1 at 10m, ranks on the radius, 5m, behind s0 at
+        # 4m, and s2, 6m scaled alike to 3m, ahead of it.
+        ("distance", 0.0, 5.0, [[1, -1], [2, 4], [0, 3]]),
         # Every routed bundle ties at 0m, the nearer rider ranking first.
-        ("distance", 1.0, [[2, -1], [1, 4], [0, 3]]),
+        ("distance", 1.0, 5.0, [[2, -1], [1, 4], [0, 3]]),
         # Local s0 and both routes share the top bracket, whatever the
         # discount.
-        ("bracket", 0.0, [[0, -1], [2, 4], [1, 3]]),
-        ("bracket", 1.0, [[0, -1], [2, 4], [1, 3]]),
+        ("bracket", 0.0, 5.0, [[0, -1], [2, 4], [1, 3]]),
+        ("bracket", 1.0, 5.0, [[0, -1], [2, 4], [1, 3]]),
     ],
 )
-def test_rank_bundles_discounts_routed_bundles_under_distance_priority_alone(
-    priority, priority_discount, expected
+def test_rank_bundles_scales_routed_bundles_under_distance_priority_alone(
+    priority, priority_discount, local_radius, expected
 ):
     # s0 lives 4m from the school, in its district, and riders s1 and s2 10m
     # and 6m. A full route discount puts each rider's route first on its list.
@@ -174,6 +174,36 @@ def test_rank_bundles_discounts_routed_bundles_under_distance_priority_alone(
         route_discount=1.0,
         priority=priority,
         priority_discount=priority_discount,
+        local_radius=local_radius,
+    )
+    np.testing.assert_array_equal(ranks, expected)
+
+
+@pytest.mark.parametrize(
+    "priority_per_route, expected",
+    [
+        # One scale for the school: s3 at 20m ranks on the 5m radius, and s1
+        # and s2, scaled alike to 2.5m and 1.5m, both ahead of s0 at 4m.
+        (False, [[2, -1], [1, 5], [0, 4], [3, 6]]),
+        # One scale per route: s1 and s3, the furthest of each, tie on the
+        # radius, the nearer first, and s2 at 3m alone outranks s0.
+        (True, [[1, -1], [2, 5], [0, 4], [3, 6]]),
+    ],
+)
+def test_rank_bundles_takes_the_furthest_rider_of_the_school_or_of_each_route(
+    priority_per_route, expected
+):
+    # s0 lives 4m from the school, riders s1 and s2 of one route 10m and 6m
+    # and rider s3 of another 20m.
+    _, ranks = rank_bundles(
+        np.array([[4.0], [10.0], [6.0], [20.0]]),
+        np.array([0, 1, 1, 2]),
+        np.array([0]),
+        np.array([1, 2]),
+        np.array([0, 0]),
+        route_discount=1.0,
+        local_radius=5.0,
+        priority_per_route=priority_per_route,
     )
     np.testing.assert_array_equal(ranks, expected)
 
@@ -318,6 +348,8 @@ def test_rank_bundles_noise_gives_the_same_tastes_with_routes_and_without():
         ({"priority": "nothing"}, "priority must be one of"),
         ({"priority_discount": 1.5}, "priority_discount must lie"),
         ({"priority_discount": -0.1}, "priority_discount must lie"),
+        ({"local_radius": -1.0}, "local_radius must be at least 0"),
+        ({"local_radius": np.nan}, "local_radius must be at least 0"),
         ({"noise_scale": 0.5}, "noise_scale > 0 needs an rng"),
         ({"student_district": np.array([0, 1, 0])}, "one district per student"),
         ({"school_district": np.array([0])}, "one district per school"),

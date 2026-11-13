@@ -14,7 +14,9 @@ from geo_model.model.settings import DEFAULTS, RULES, Settings
 # choices of DISADVANTAGE and PRIORITY, as `searchable` gives it.
 OPTIMISABLE = list(GRID)
 # The settings a transport authority holds. The preference weights describe
-# the students, so they hold DEFAULTS unless named.
+# the students, so they hold DEFAULTS unless named. Under PRIORITY "distance"
+# local_radius sets the limit routed students rank within as well, which
+# priority_discount scales, so the two overlap when both are searched.
 LEVERS = [
     "min_distance",
     "capacity_scale",

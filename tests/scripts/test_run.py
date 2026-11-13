@@ -137,7 +137,10 @@ def test_run_rejects_no_samples(tmp_path):
     [
         ["--shortest-only", "--bottleneck"],
         ["--priority-discount", "1.5"],
+        ["--local-radius", "-5"],
+        ["--local-radius", "nan"],
         ["--priority", "bracket", "--priority-discount", "0.8"],
+        ["--priority", "bracket", "--priority-per-route"],
     ],
 )
 def test_main_rejects_settings_it_cannot_run_before_loading_a_region(monkeypatch, argv):
@@ -190,11 +193,16 @@ def test_settings_matchings_are_the_ones_the_sweep_scores(
     disadvantage,
     priority,
 ):
-    # Off the default discount, so a discount settings_matchings or
-    # score_settings leaves behind shows; below them, score_sample's own
+    # Off the default discount, radius and scale, so one settings_matchings
+    # or score_settings leaves behind shows; below them, score_sample's own
     # test covers the way down.
     settings = replace(
-        DEFAULTS, priority_discount=0.9, disadvantage=disadvantage, priority=priority
+        DEFAULTS,
+        priority_discount=0.9,
+        local_radius=805,
+        priority_per_route=True,
+        disadvantage=disadvantage,
+        priority=priority,
     )
     matchings = settings_matchings(
         settings, samples[0], areas, secondary, district_distance, district_minutes

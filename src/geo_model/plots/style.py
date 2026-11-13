@@ -10,7 +10,7 @@ AXIS_LABELS = {
     "capacity_scale": "Route capacity scale (× disadvantaged share of places)",
     "progressivity": "Route seat progressivity (weight f(D)^p)",
     "max_local_p8": "Highest Progress 8 allowed nearby",
-    "local_radius": "Local performance radius (m)",
+    "local_radius": "Local radius (m)",
     "performance_weight": "Performance weight, other students",
     "disadvantaged_performance_weight": "Performance weight, disadvantaged students",
     "route_discount": "Route discount, other students",
