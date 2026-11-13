@@ -113,7 +113,7 @@ def test_score_sample_ranks_priorities_on_the_rule_and_discount_given(
 ):
     ((_, student_lsoa, disadvantaged, noise_seed, student_distance),) = samples
 
-    def scored(priority, priority_discount):
+    def scored(priority, priority_discount, **kwargs):
         return score_sample(
             student_distance,
             student_lsoa,
@@ -125,12 +125,16 @@ def test_score_sample_ranks_priorities_on_the_rule_and_discount_given(
             noise_seed,
             priority=priority,
             priority_discount=priority_discount,
+            **kwargs,
         )
 
-    # The discount moves routed bundles under "distance" and none under
-    # "bracket", so a rule or a discount left behind on the way down to the
-    # ranking fails one of these.
-    assert scored("distance", 0.0) != scored("distance", 1.0)
+    # The discount, the radius and the scale move routed bundles under
+    # "distance" and none under "bracket", so a rule or any of the three left
+    # behind on the way down to the ranking fails one of these.
+    default = scored("distance", 0.0)
+    assert default != scored("distance", 1.0)
+    assert default != scored("distance", 0.0, local_radius=805)
+    assert default != scored("distance", 0.0, priority_per_route=True)
     assert scored("bracket", 0.0) == scored("bracket", 1.0)
 
 
