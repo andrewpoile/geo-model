@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 SEED = 20260907
 # Samples drawn unless --seeds says otherwise by run.py and sweep.py, and by
@@ -295,6 +296,12 @@ DEFAULTS = Settings()
 # parameter it is swept or searched over, so every cell and candidate takes
 # them from the command line alike.
 RULES = ("round_up_seats", "linear_progressivity", "disadvantage", "priority")
+
+
+def rules_of(settings: Settings) -> dict[str, Any]:
+    """The RULES of `settings`, each by its field's name."""
+    return {rule: getattr(settings, rule) for rule in RULES}
+
 
 # Every field of Settings in three characters, as output file names spell it.
 SHORT = {

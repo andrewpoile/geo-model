@@ -442,7 +442,8 @@ def plot_sweep(
     parameters: list[str],
     path: Path,
     measure: str = "dissimilarity",
-    suffix: str = "",
+    *,
+    suffix: str,
 ) -> None:
     """Plot every parameter on its own and all of them side by side.
 
@@ -470,8 +471,8 @@ def plot_sweep(
         measure (str, optional): Passed to `draw_columns`. Defaults to
         "dissimilarity".
 
-        suffix (str, optional): The sweep's, as `run_suffix` gives it, which
-        `path` already ends in. Defaults to "".
+        suffix (str): What each parameter's file name ends in, as `path`
+        does already.
     """
     for parameter in parameters:
         # A bare Figure draws without a display backend, which pyplot would need.

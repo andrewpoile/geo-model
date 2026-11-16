@@ -31,9 +31,9 @@ def draw(parameters: list[str]) -> np.ndarray:
 def test_plot_sweep_writes_a_png_per_parameter_and_the_matrix(tmp_path):
     out_dir = tmp_path / "out"
 
-    plot_sweep(*synthetic_frames(), GRID, DRAWN, out_dir / "sweep.png")
+    plot_sweep(*synthetic_frames(), GRID, DRAWN, out_dir / "sweep_x.png", suffix="_x")
 
-    for name in [*(f"{p}.png" for p in DRAWN), "sweep.png"]:
+    for name in [*(f"{p}_x.png" for p in DRAWN), "sweep_x.png"]:
         png = out_dir / name
         assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 

@@ -1,4 +1,3 @@
-import re
 import sys
 from dataclasses import replace
 
@@ -10,8 +9,9 @@ from matplotlib.text import Text
 
 from geo_model import output
 from geo_model.data import regions as rg
+from geo_model.data.network import DISTANCE
 from geo_model.model.settings import DEFAULTS, PRIORITY
-from geo_model.output import ANON_DIR, ROUTES_CSV, ROUTES_NPZ
+from geo_model.output import ANON_DIR, ROUTES_CSV, ROUTES_NPZ, run_suffix, suffixed
 from geo_model.scripts import build_prefs as bp
 from geo_model.scripts import optimise as op
 from geo_model.scripts import run as rn
@@ -56,11 +56,6 @@ OPTIMISE_ARGV = [
 # The columns naming a school, district or authority, the only ones an
 # anonymised run writes otherwise than a named one.
 NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
-
-
-def unsuffixed(name: str) -> str:
-    """The file name `name` without its run's suffix."""
-    return re.sub(r"_dis-.*(?=\.)", "", name)
 
 
 # --------------------------------------------------------------------------
@@ -145,15 +140,19 @@ def test_main_writes_its_outputs_and_nothing_else(
 
     out_dir = tmp_path / "Southampton" / folder
     rule = "bracket" if argv[-len(BRACKET) :] == BRACKET else PRIORITY
-    # Every file is named for the rules it ran under, and a scenario's for
-    # its preset's parameters as well.
-    names = [path.name for path in out_dir.iterdir() if path.is_file()]
-    assert all(f"_dis-score_pri-{rule}_dst-network" in name for name in names)
-    assert sorted(map(unsuffixed, names)) == sorted(written)
+    # Every file is named for the rules it ran under, a scenario's for its
+    # preset's parameters as well, and the search's compromise as one.
+    settings = replace(getattr(module, "SCENARIO", DEFAULTS), priority=rule)
+    suffix = run_suffix(settings, DISTANCE)
+    ran = suffix + op.COMPROMISE if module is op else suffix
+    written = [suffixed(name, ran if name in RUN_FILES else suffix) for name in written]
+    assert sorted(path.name for path in out_dir.iterdir() if path.is_file()) == sorted(
+        written
+    )
     # Every row scored, and the instance built, records the rule it ran
     # under.
     if module is bp:
-        with np.load(next(out_dir.glob("prefprio*"))) as built:
+        with np.load(out_dir / suffixed(bp.OUTPUT_NPZ, suffix)) as built:
             recorded = [{str(built["priority"])}]
     else:
         recorded = [
@@ -184,8 +183,8 @@ def test_main_writes_its_outputs_and_nothing_else(
     module.main()
 
     anon_dir = tmp_path / "Southampton" / ANON_DIR / folder
-    assert sorted(unsuffixed(path.name) for path in anon_dir.iterdir()) == sorted(
-        set(written) - {rn.MAP_PNG, sw.MAP_PNG}
+    assert sorted(path.name for path in anon_dir.iterdir()) == sorted(
+        name for name in written if not name.startswith("map")
     )
     # Only the names differ, and the order of the districts numbered by
     # deprivation, so the matchings are the named run's, and the districts'

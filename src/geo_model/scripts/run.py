@@ -313,7 +313,7 @@ def run(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and write,
     plot and report the two against each other in `out_dir`, every file
-    named below `suffixed` with `suffix`, so runs under different settings never write over each other.
+    named below `suffixed` with `suffix`.
 
     Writes the route set, as `save_routes` does, the scenario, school, mode
     and route rows to RESULTS_CSV, SCHOOLS_CSV, MODES_CSV and
@@ -491,7 +491,8 @@ def run(
     print(local_summary(schools))
     print(
         f"Wrote the routes, {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, "
-        f"{ROUTE_UTILISATION_CSV}, {DISTRICTS_CSV} and the plots in {out_dir}, each ending {suffix}."
+        f"{ROUTE_UTILISATION_CSV}, {DISTRICTS_CSV} and the plots in {out_dir}, "
+        f"each ending {suffix}."
     )
     return results, schools, modes, routes
 

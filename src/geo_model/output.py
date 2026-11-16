@@ -1,11 +1,11 @@
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
-from geo_model.model.settings import DEFAULTS, RULES, SHORT, Settings
+from geo_model.model.settings import DEFAULTS, RULES, SHORT, Settings, rules_of
 
 # Read by the type checker alone, so writing routes needs no plotting library.
 if TYPE_CHECKING:
@@ -45,7 +45,8 @@ def run_suffix(settings: Settings, distance: str) -> str:
     parameters sit side by side in one folder: blocks joined by "_", each a
     name of SHORT, "-" and the value. The disadvantage, priority and distance
     rules always, then every other rule and then every parameter that is not
-    at its default, a True one as its name alone.
+    at its default, a True one as its name alone. No name holds a "-", so a
+    block splits on its first, whatever its value holds.
 
     Args:
         settings (Settings): The rules and parameters the run follows.
@@ -56,19 +57,24 @@ def run_suffix(settings: Settings, distance: str) -> str:
         str: The suffix, led by "_", such as
         "_dis-score_pri-distance_dst-network_rus_mnd-4828".
     """
-    blocks = [
-        f"{SHORT['disadvantage']}-{settings.disadvantage}",
-        f"{SHORT['priority']}-{settings.priority}",
-        f"dst-{distance}",
-    ]
+    always = ("disadvantage", "priority")
+    blocks = [f"{SHORT[name]}-{getattr(settings, name)}" for name in always]
+    blocks.append(f"dst-{distance}")
     names = [field.name for field in fields(Settings)]
     # Stable, so the rules lead and each group keeps the order of Settings.
     for name in sorted(names, key=lambda name: name not in RULES):
         value = getattr(settings, name)
-        if isinstance(value, str) or value == getattr(DEFAULTS, name):
+        if name in always or value == getattr(DEFAULTS, name):
             continue
-        blocks.append(SHORT[name] if value is True else f"{SHORT[name]}-{value:.12g}")
+        text = value if isinstance(value, str) else f"{value:.12g}"
+        blocks.append(SHORT[name] if value is True else f"{SHORT[name]}-{text}")
     return "_" + "_".join(blocks)
+
+
+def rules_suffix(settings: Settings, distance: str) -> str:
+    """The `run_suffix` of the RULES of `settings` alone, which the sweep's
+    and the search's files end in, their parameters being what they vary."""
+    return run_suffix(replace(DEFAULTS, **rules_of(settings)), distance)
 
 
 def suffixed(name: str, suffix: str) -> str:
