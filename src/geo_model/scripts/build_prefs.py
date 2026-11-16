@@ -1,5 +1,6 @@
 import argparse
 import functools
+from dataclasses import replace
 from pathlib import Path
 
 import geopandas as gpd
@@ -26,6 +27,7 @@ from geo_model.model.preferences import (
 )
 from geo_model.model.routes import centroid_xy, route_network
 from geo_model.model.settings import (
+    DEFAULTS,
     DISADVANTAGE,
     DISADVANTAGED_DECILE,
     PREFERENCE_NOISE,
@@ -39,7 +41,7 @@ from geo_model.model.students import (
     draw_cohort_sizes,
     sample_students,
 )
-from geo_model.output import region_dir, save_routes
+from geo_model.output import region_dir, run_suffix, save_routes, suffixed
 
 # Written to each region's folder.
 OUTPUT_NPZ = "prefprio.npz"
@@ -55,7 +57,8 @@ def build(
     distance: str = DISTANCE,
 ) -> None:
     """Build one region's matching inputs for both phases and write them out,
-    to OUTPUT_NPZ in `out_dir` and the route set beside it.
+    to OUTPUT_NPZ in `out_dir` and the route set beside it, each `suffixed`
+    with the `run_suffix` of the two rules.
 
     Args:
         areas (gpd.GeoDataFrame): The region's districts, as `load_areas`
@@ -134,7 +137,8 @@ def build(
         secondary_schools["PlacesOffered"].to_numpy(),
         cohort_sizes(areas, "secondary"),
     )
-    save_routes(secondary_routes, out_dir)
+    suffix = run_suffix(replace(DEFAULTS, priority=priority), distance)
+    save_routes(secondary_routes, out_dir, suffix)
 
     # School priorities are the transpose of the same pairwise distances that rank
     # student preferences, so one distance matrix per phase serves both. Progress 8
@@ -186,7 +190,7 @@ def build(
     # and the distances are measured by, so the instance says how it was
     # ranked.
     np.savez_compressed(
-        out_dir / OUTPUT_NPZ,
+        out_dir / suffixed(OUTPUT_NPZ, suffix),
         primary_student_preferences=primary_student_preferences,
         secondary_student_preferences=secondary_student_preferences,
         primary_preference_ranks=primary_preference_ranks,
@@ -218,7 +222,7 @@ def main() -> None:
             areas,
             primary_schools,
             secondary_schools,
-            region_dir(las, priority=args.priority, distance=args.distance),
+            region_dir(las),
             "+".join(sorted(las)),
             priority=args.priority,
             distance=args.distance,

@@ -1,6 +1,6 @@
+import re
 import sys
 from dataclasses import replace
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -58,6 +58,11 @@ OPTIMISE_ARGV = [
 NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
 
 
+def unsuffixed(name: str) -> str:
+    """The file name `name` without its run's suffix."""
+    return re.sub(r"_dis-.*(?=\.)", "", name)
+
+
 # --------------------------------------------------------------------------
 # main: every entry point, on minimal arguments against the real data folder
 # --------------------------------------------------------------------------
@@ -66,18 +71,18 @@ NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
 @pytest.mark.parametrize(
     ("module", "argv", "folder", "written", "anon_argv"),
     [
-        (bp, BRACKET, "bracket", [bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ], None),
+        (bp, BRACKET, "", [bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ], None),
         (
             op,
             OPTIMISE_ARGV,
-            Path("bracket") / op.OUT_DIR,
+            op.OUT_DIR,
             [op.EVALUATIONS_CSV, op.FRONT_CSV, op.FRONT_PNG, *RUN_FILES],
             [*OPTIMISE_ARGV, "--anon"],
         ),
         (
             rn,
             ["--seeds", "2", *BRACKET],
-            Path("bracket") / rn.OUT_DIR,
+            rn.OUT_DIR,
             RUN_FILES,
             ["--seeds", "2", "--anon", *BRACKET],
         ),
@@ -87,7 +92,7 @@ NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
         (
             sw,
             ["--seeds", "2", "--map", "--lorenz", *BRACKET],
-            Path("bracket") / sw.SWEEP_DIR,
+            sw.SWEEP_DIR,
             [
                 sw.RESULTS_CSV,
                 sw.SCHOOLS_CSV,
@@ -139,14 +144,16 @@ def test_main_writes_its_outputs_and_nothing_else(
     module.main()
 
     out_dir = tmp_path / "Southampton" / folder
-    assert sorted(path.name for path in out_dir.iterdir() if path.is_file()) == sorted(
-        written
-    )
+    rule = "bracket" if argv[-len(BRACKET) :] == BRACKET else PRIORITY
+    # Every file is named for the rules it ran under, and a scenario's for
+    # its preset's parameters as well.
+    names = [path.name for path in out_dir.iterdir() if path.is_file()]
+    assert all(f"_dis-score_pri-{rule}_dst-network" in name for name in names)
+    assert sorted(map(unsuffixed, names)) == sorted(written)
     # Every row scored, and the instance built, records the rule it ran
     # under.
-    rule = "bracket" if argv[-len(BRACKET) :] == BRACKET else PRIORITY
     if module is bp:
-        with np.load(out_dir / bp.OUTPUT_NPZ) as built:
+        with np.load(next(out_dir.glob("prefprio*"))) as built:
             recorded = [{str(built["priority"])}]
     else:
         recorded = [
@@ -177,7 +184,7 @@ def test_main_writes_its_outputs_and_nothing_else(
     module.main()
 
     anon_dir = tmp_path / "Southampton" / ANON_DIR / folder
-    assert sorted(path.name for path in anon_dir.iterdir()) == sorted(
+    assert sorted(unsuffixed(path.name) for path in anon_dir.iterdir()) == sorted(
         set(written) - {rn.MAP_PNG, sw.MAP_PNG}
     )
     # Only the names differ, and the order of the districts numbered by

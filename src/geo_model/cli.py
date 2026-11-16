@@ -173,7 +173,7 @@ def add_priority_argument(parser: argparse.ArgumentParser) -> None:
         "--priority-discount, the sweep or the search sets it; bracket: "
         "every routed student and every student of the school's own district "
         "first, everyone else after, each by distance, the model as it was "
-        f"before, written to {OUTPUT_DIR}/<NAME>/bracket",
+        "before",
     )
 
 
@@ -188,8 +188,7 @@ def add_distance_argument(parser: argparse.ArgumentParser) -> None:
         choices=DISTANCE_CHOICES,
         default=DISTANCE,
         help="network: along the walking network of the OS Multi-modal Routing "
-        "Network; euclidean: in a straight line, the model as it was before, "
-        f"written to {OUTPUT_DIR}/<NAME>/euclidean",
+        "Network; euclidean: in a straight line, the model as it was before",
     )
 
 

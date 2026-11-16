@@ -9,6 +9,7 @@ import pytest
 from geo_model.analysis.sweep import GRID, swept
 from geo_model.measures.travel import MODES
 from geo_model.model.settings import DEFAULTS, DISADVANTAGE
+from geo_model.output import run_suffix, suffixed
 from geo_model.scripts import sweep as sw
 
 # --------------------------------------------------------------------------
@@ -59,7 +60,10 @@ def test_sweep_scores_every_cell_on_the_same_samples(
         (sw.SCHOOLS_CSV, intake),
         (sw.MODES_CSV, modes),
     ):
-        pd.testing.assert_frame_equal(pd.read_csv(tmp_path / name), frame)
+        pd.testing.assert_frame_equal(
+            pd.read_csv(tmp_path / suffixed(name, run_suffix(DEFAULTS, "euclidean"))),
+            frame,
+        )
 
     # Every seated student sits in exactly one school's intake.
     keys = ["parameter", "value", "seed", "scenario"]

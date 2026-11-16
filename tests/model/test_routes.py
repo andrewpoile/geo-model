@@ -934,7 +934,7 @@ def test_save_routes_writes_the_set_whole_and_by_axis(tmp_path):
         SCHOOL_SEATS,
     )
 
-    save_routes(routes, out_dir)
+    save_routes(routes, out_dir, "")
 
     pd.testing.assert_frame_equal(
         pd.read_csv(out_dir / ROUTES_CSV), routes, check_dtype=False

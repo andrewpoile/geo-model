@@ -18,7 +18,7 @@ from geo_model.model.settings import (
     PRIORITY_CHOICES,
 )
 from geo_model.model.students import disadvantaged_group
-from geo_model.output import ROUTES_CSV, ROUTES_NPZ, region_dir
+from geo_model.output import ROUTES_CSV, ROUTES_NPZ, region_dir, run_suffix, suffixed
 from geo_model.scripts import run as rn
 
 # --------------------------------------------------------------------------
@@ -65,15 +65,24 @@ def test_run_scores_writes_and_plots_the_setting_against_no_routes(
     assert results["n_matched"].add(results["n_unmatched"]).nunique() == 1
     assert set(modes["mode"]) == set(MODES)
     assert modes.groupby("scenario")["students"].sum().round(6).nunique() == 1
+    suffix = run_suffix(settings, "euclidean")
     for frame, name in (
         (results, rn.RESULTS_CSV),
         (intake, rn.SCHOOLS_CSV),
         (modes, rn.MODES_CSV),
         (routes, rn.ROUTE_UTILISATION_CSV),
     ):
-        pd.testing.assert_frame_equal(pd.read_csv(tmp_path / name), frame)
-    assert set(pd.read_csv(tmp_path / rn.DISTRICTS_CSV)["seed"]) == {0}
-    assert (tmp_path / ROUTES_CSV).exists() and (tmp_path / ROUTES_NPZ).exists()
+        pd.testing.assert_frame_equal(
+            pd.read_csv(tmp_path / suffixed(name, suffix)), frame
+        )
+    assert set(pd.read_csv(tmp_path / suffixed(rn.DISTRICTS_CSV, suffix))["seed"]) == {
+        0
+    }
+    for name in (
+        ROUTES_CSV,
+        ROUTES_NPZ,
+    ):
+        assert (tmp_path / suffixed(name, suffix)).exists(), name
     for name in (
         rn.DISSIMILARITY_PNG,
         rn.UNASSIGNED_PNG,
@@ -84,14 +93,15 @@ def test_run_scores_writes_and_plots_the_setting_against_no_routes(
         rn.ROUTES_PNG,
         rn.LOCALS_PNG,
     ):
-        assert (tmp_path / name).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
+        png = tmp_path / suffixed(name, suffix)
+        assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
 
 
 def test_load_region_measures_along_the_walking_network_by_default(
     areas, to_school, route_data
 ):
     _, _, walk, district_distance, district_minutes, folder = rn.load_region(
-        sources.LAS, areas, False, "distance", "network", math.inf
+        sources.LAS, areas, False, "network", math.inf
     )
     straight = to_school(centroid_xy(areas))
     assert walk.rule == "network"
@@ -111,7 +121,7 @@ def test_load_region_reads_no_network_in_a_straight_line_run_with_no_cap(
 
     monkeypatch.setattr(rn, "region_links", unread)
     _, _, straight, _, district_minutes, _ = rn.load_region(
-        sources.LAS, areas, False, "distance", "euclidean", math.inf
+        sources.LAS, areas, False, "euclidean", math.inf
     )
     assert straight.rule == "euclidean"
     assert district_minutes is None

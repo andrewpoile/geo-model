@@ -13,7 +13,7 @@ from geo_model.analysis.sweep import sweep_tests
 from geo_model.measures.summaries import unassigned_rows
 from geo_model.measures.travel import mode_change
 from geo_model.model.settings import DEFAULTS, SCENARIOS, Settings
-from geo_model.output import save
+from geo_model.output import save, suffixed
 from geo_model.plots.style import (
     AXIS_LABELS,
     COLOURS,
@@ -442,11 +442,12 @@ def plot_sweep(
     parameters: list[str],
     path: Path,
     measure: str = "dissimilarity",
+    suffix: str = "",
 ) -> None:
     """Plot every parameter on its own and all of them side by side.
 
     Each parameter is written as its own PNG beside `path`, named for the
-    parameter, and the matrix of every column to `path`.
+    parameter and `suffixed`, and the matrix of every column to `path`.
 
     Args:
         results (pd.DataFrame): The scenario rows `sweep` returns.
@@ -468,12 +469,15 @@ def plot_sweep(
 
         measure (str, optional): Passed to `draw_columns`. Defaults to
         "dissimilarity".
+
+        suffix (str, optional): The sweep's, as `run_suffix` gives it, which
+        `path` already ends in. Defaults to "".
     """
     for parameter in parameters:
         # A bare Figure draws without a display backend, which pyplot would need.
         fig = Figure(figsize=(9, 19), layout="constrained")
         draw_columns(fig, results, schools, modes, fsm, grid, [parameter], measure)
-        save(fig, path.parent / f"{parameter}.png")
+        save(fig, path.parent / suffixed(f"{parameter}.png", suffix))
 
     fig = Figure(figsize=(4.5 * len(parameters), 20), layout="constrained")
     draw_columns(fig, results, schools, modes, fsm, grid, parameters, measure)
