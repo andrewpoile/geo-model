@@ -1,10 +1,16 @@
 import numpy as np
 
 from geo_model.data.sources import LAS
-from geo_model.output import ROUTES_CSV, ROUTES_NPZ
+from geo_model.model.settings import DEFAULTS
+from geo_model.output import ROUTES_CSV, ROUTES_NPZ, run_suffix, suffixed
 from geo_model.scripts import build_prefs as bp
 
 REGION = "+".join(sorted(LAS))
+# What `build` below names its files, the routes' as well.
+OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ = (
+    suffixed(name, run_suffix(DEFAULTS, "euclidean"))
+    for name in (bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ)
+)
 
 # --------------------------------------------------------------------------
 # build: the whole pipeline, against the real data folder
@@ -26,11 +32,11 @@ def build(areas, schools, out_dir):
 def test_build_writes_a_consistent_instance_for_both_phases(areas, schools, tmp_path):
     out_dir = build(areas, schools, tmp_path)
 
-    assert (out_dir / bp.OUTPUT_NPZ).exists()
+    assert (out_dir / OUTPUT_NPZ).exists()
     assert (out_dir / ROUTES_CSV).exists() and (out_dir / ROUTES_NPZ).exists()
 
     with (
-        np.load(out_dir / bp.OUTPUT_NPZ) as built,
+        np.load(out_dir / OUTPUT_NPZ) as built,
         np.load(out_dir / ROUTES_NPZ) as routes,
     ):
         n_routes = len(routes["route_capacities"])
@@ -102,8 +108,8 @@ def test_build_ranks_both_phases_under_the_rule_given(
 
 def test_build_is_reproducible_from_the_seed(areas, schools, tmp_path):
     with (
-        np.load(build(areas, schools, tmp_path / "first") / bp.OUTPUT_NPZ) as first,
-        np.load(build(areas, schools, tmp_path / "second") / bp.OUTPUT_NPZ) as second,
+        np.load(build(areas, schools, tmp_path / "first") / OUTPUT_NPZ) as first,
+        np.load(build(areas, schools, tmp_path / "second") / OUTPUT_NPZ) as second,
     ):
         assert first.files == second.files
         for name in first.files:

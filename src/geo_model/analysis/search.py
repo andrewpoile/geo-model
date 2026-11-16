@@ -8,7 +8,7 @@ from pymoo.core.problem import Problem
 
 from geo_model.analysis.sweep import GRID, swept
 from geo_model.measures.travel import mode_change
-from geo_model.model.settings import DEFAULTS, RULES, Settings
+from geo_model.model.settings import DEFAULTS, Settings, rules_of
 
 # Every swept parameter. Which of them a search may vary depends on the
 # choices of DISADVANTAGE and PRIORITY, as `searchable` gives it.
@@ -191,7 +191,7 @@ class Pipeline(Problem):
         self.parameters = parameters
         self.objectives = objectives
         self.scores = scores
-        self.rules = {rule: getattr(rules, rule) for rule in RULES}
+        self.rules = rules_of(rules)
         self.evaluations: list[dict] = []
         self.generation = 0
 

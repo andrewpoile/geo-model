@@ -67,7 +67,7 @@ from geo_model.model.settings import (
     Settings,
 )
 from geo_model.model.students import Sample, disadvantaged_group, student_samples
-from geo_model.output import region_dir, save, save_routes
+from geo_model.output import region_dir, run_suffix, save, save_routes, suffixed
 from geo_model.plots.comparison import (
     draw_local_acceptance,
     draw_route_utilisation,
@@ -241,7 +241,6 @@ def load_region(
     las: list[str],
     areas: gpd.GeoDataFrame,
     anon: bool,
-    priority: str,
     distance: str,
     max_minutes: float,
 ) -> tuple[
@@ -262,10 +261,7 @@ def load_region(
         anon (bool): Pass both frames through `anonymise` and write to the
         region's ANON_DIR, as --anon asks.
 
-        priority (str): Passed to `region_dir`, so a run under each rule
-        writes to a folder of its own.
-
-        distance (str): Passed to `school_distance` and `region_dir`.
+        distance (str): Passed to `school_distance`.
 
         max_minutes (float): The cap on a route's minutes by bus. The minutes
         are measured under "network" distance or a finite cap alone, so a
@@ -295,7 +291,7 @@ def load_region(
         to_school,
         to_school(district_xy),
         bus_minutes(links(), school_xy, district_xy) if measured else None,
-        region_dir(las, anon, priority, distance),
+        region_dir(las, anon),
     )
 
 
@@ -313,9 +309,11 @@ def run(
     distance: str,
     measure: str = "dissimilarity",
     anon: bool = False,
+    suffix: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score `settings` over `samples` with routes and without, and write,
-    plot and report the two against each other in `out_dir`.
+    plot and report the two against each other in `out_dir`, every file
+    named below `suffixed` with `suffix`.
 
     Writes the route set, as `save_routes` does, the scenario, school, mode
     and route rows to RESULTS_CSV, SCHOOLS_CSV, MODES_CSV and
@@ -367,6 +365,9 @@ def run(
         the register's FSM figures blank, as `register_fsm` does, and writes
         DISTRICTS_CSV without DEPRIVATION_COLUMNS. Defaults to False.
 
+        suffix (str, optional): What every file name ends in. Defaults to
+        the `run_suffix` of `settings` and `distance`.
+
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]: The
         scenario, school, mode and route rows `score_settings` returns with
@@ -377,7 +378,9 @@ def run(
     network = settings_routes(
         settings, areas, secondary_schools, district_distance, district_minutes
     )
-    save_routes(network, out_dir)
+    if suffix is None:
+        suffix = run_suffix(settings, distance)
+    save_routes(network, out_dir, suffix)
     results, schools, modes, routes = (
         pd.DataFrame(rows)
         for rows in score_settings(
@@ -394,20 +397,20 @@ def run(
             routes=network,
         )
     )
-    plot_dissimilarity(results, out_dir / DISSIMILARITY_PNG)
+    plot_dissimilarity(results, out_dir / suffixed(DISSIMILARITY_PNG, suffix))
     # A bare Figure draws without a display backend, which pyplot would need.
     fig = Figure(figsize=(5, 4.5), layout="constrained")
     draw_unassigned(fig.subplots(), results)
-    save(fig, out_dir / UNASSIGNED_PNG)
+    save(fig, out_dir / suffixed(UNASSIGNED_PNG, suffix))
     fig = Figure(
         figsize=(8, 1.5 + 0.4 * schools["school"].nunique()), layout="constrained"
     )
     draw_school_intake(
         fig, schools, register_fsm(secondary_schools, measure, anon), measure
     )
-    save(fig, out_dir / INTAKE_PNG)
-    plot_modes(modes, out_dir / MODES_PNG)
-    plot_lorenz(schools, out_dir / LORENZ_PNG, settings.disadvantage)
+    save(fig, out_dir / suffixed(INTAKE_PNG, suffix))
+    plot_modes(modes, out_dir / suffixed(MODES_PNG, suffix))
+    plot_lorenz(schools, out_dir / suffixed(LORENZ_PNG, suffix), settings.disadvantage)
     if not anon:
         plot_map(
             areas,
@@ -422,20 +425,20 @@ def run(
                 district_minutes,
                 routes=network,
             ),
-            out_dir / MAP_PNG,
+            out_dir / suffixed(MAP_PNG, suffix),
         )
     n_routes = routes["route"].nunique()
     fig = Figure(
         figsize=(min(max(8.0, 2 + 0.3 * n_routes), 30.0), 9), layout="constrained"
     )
     draw_route_utilisation(fig, routes)
-    save(fig, out_dir / ROUTES_PNG)
+    save(fig, out_dir / suffixed(ROUTES_PNG, suffix))
     n_schools = schools["school"].nunique()
     fig = Figure(
         figsize=(min(max(8.0, 2 + 0.4 * n_schools), 30.0), 11), layout="constrained"
     )
     draw_local_acceptance(fig, schools)
-    save(fig, out_dir / LOCALS_PNG)
+    save(fig, out_dir / suffixed(LOCALS_PNG, suffix))
 
     # In district order, so an anonymised run's rows follow its labels, by
     # deprivation, rather than the code order the districts are held in.
@@ -451,7 +454,7 @@ def run(
         (routes, ROUTE_UTILISATION_CSV),
         (districts, DISTRICTS_CSV),
     ):
-        frame.to_csv(out_dir / name, index=False)
+        frame.to_csv(out_dir / suffixed(name, suffix), index=False)
 
     print(f"With routes and without, mean over {len(samples)} samples:")
     print(
@@ -488,7 +491,8 @@ def run(
     print(local_summary(schools))
     print(
         f"Wrote the routes, {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, "
-        f"{ROUTE_UTILISATION_CSV}, {DISTRICTS_CSV} and the plots in {out_dir}."
+        f"{ROUTE_UTILISATION_CSV}, {DISTRICTS_CSV} and the plots in {out_dir}, "
+        f"each ending {suffix}."
     )
     return results, schools, modes, routes
 
@@ -569,7 +573,6 @@ def main(
             las,
             areas,
             args.anon,
-            settings.priority,
             args.distance,
             settings.max_route_minutes,
         )

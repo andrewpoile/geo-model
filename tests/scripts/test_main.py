@@ -1,6 +1,5 @@
 import sys
 from dataclasses import replace
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -10,8 +9,9 @@ from matplotlib.text import Text
 
 from geo_model import output
 from geo_model.data import regions as rg
+from geo_model.data.network import DISTANCE
 from geo_model.model.settings import DEFAULTS, PRIORITY
-from geo_model.output import ANON_DIR, ROUTES_CSV, ROUTES_NPZ
+from geo_model.output import ANON_DIR, ROUTES_CSV, ROUTES_NPZ, run_suffix, suffixed
 from geo_model.scripts import build_prefs as bp
 from geo_model.scripts import optimise as op
 from geo_model.scripts import run as rn
@@ -66,18 +66,18 @@ NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
 @pytest.mark.parametrize(
     ("module", "argv", "folder", "written", "anon_argv"),
     [
-        (bp, BRACKET, "bracket", [bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ], None),
+        (bp, BRACKET, "", [bp.OUTPUT_NPZ, ROUTES_CSV, ROUTES_NPZ], None),
         (
             op,
             OPTIMISE_ARGV,
-            Path("bracket") / op.OUT_DIR,
+            op.OUT_DIR,
             [op.EVALUATIONS_CSV, op.FRONT_CSV, op.FRONT_PNG, *RUN_FILES],
             [*OPTIMISE_ARGV, "--anon"],
         ),
         (
             rn,
             ["--seeds", "2", *BRACKET],
-            Path("bracket") / rn.OUT_DIR,
+            rn.OUT_DIR,
             RUN_FILES,
             ["--seeds", "2", "--anon", *BRACKET],
         ),
@@ -87,7 +87,7 @@ NAME_COLUMNS = ["school", "LSOA21CD", "LA (name)"]
         (
             sw,
             ["--seeds", "2", "--map", "--lorenz", *BRACKET],
-            Path("bracket") / sw.SWEEP_DIR,
+            sw.SWEEP_DIR,
             [
                 sw.RESULTS_CSV,
                 sw.SCHOOLS_CSV,
@@ -139,14 +139,20 @@ def test_main_writes_its_outputs_and_nothing_else(
     module.main()
 
     out_dir = tmp_path / "Southampton" / folder
+    rule = "bracket" if argv[-len(BRACKET) :] == BRACKET else PRIORITY
+    # Every file is named for the rules it ran under, a scenario's for its
+    # preset's parameters as well, and the search's compromise as one.
+    settings = replace(getattr(module, "SCENARIO", DEFAULTS), priority=rule)
+    suffix = run_suffix(settings, DISTANCE)
+    ran = suffix + op.COMPROMISE if module is op else suffix
+    written = [suffixed(name, ran if name in RUN_FILES else suffix) for name in written]
     assert sorted(path.name for path in out_dir.iterdir() if path.is_file()) == sorted(
         written
     )
     # Every row scored, and the instance built, records the rule it ran
     # under.
-    rule = "bracket" if argv[-len(BRACKET) :] == BRACKET else PRIORITY
     if module is bp:
-        with np.load(out_dir / bp.OUTPUT_NPZ) as built:
+        with np.load(out_dir / suffixed(bp.OUTPUT_NPZ, suffix)) as built:
             recorded = [{str(built["priority"])}]
     else:
         recorded = [
@@ -178,7 +184,7 @@ def test_main_writes_its_outputs_and_nothing_else(
 
     anon_dir = tmp_path / "Southampton" / ANON_DIR / folder
     assert sorted(path.name for path in anon_dir.iterdir()) == sorted(
-        set(written) - {rn.MAP_PNG, sw.MAP_PNG}
+        name for name in written if not name.startswith("map")
     )
     # Only the names differ, and the order of the districts numbered by
     # deprivation, so the matchings are the named run's, and the districts'

@@ -37,10 +37,11 @@ from geo_model.measures.travel import CIRCUITY, MODES, mode_change
 from geo_model.model.settings import (
     DEFAULTS,
     N_SEEDS,
-    RULES,
     Settings,
+    rules_of,
 )
 from geo_model.model.students import Sample, student_samples
+from geo_model.output import rules_suffix, suffixed
 from geo_model.plots.comparison import plot_lorenz
 from geo_model.plots.maps import plot_map
 from geo_model.plots.style import INTAKE_MEASURES
@@ -120,9 +121,10 @@ def sweep(
         (parameter, value, seed, scenario, school), and the mode rows, one
         per (parameter, value, seed, scenario, mode), each with "parameter"
         and "value" ahead of the columns `score_settings` returns. Also
-        written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV in `out_dir`.
+        written to RESULTS_CSV, SCHOOLS_CSV and MODES_CSV in `out_dir`, each
+        `suffixed` with the `rules_suffix` of `rules`.
     """
-    taken = {rule: getattr(rules, rule) for rule in RULES}
+    taken = rules_of(rules)
     cells = [
         (p, replace(settings, **taken))
         for p in swept(GRID, rules.disadvantage, rules.priority)
@@ -157,10 +159,11 @@ def sweep(
         pd.DataFrame(school_rows),
         pd.DataFrame(mode_rows),
     )
+    suffix = rules_suffix(rules, distance)
     out_dir.mkdir(parents=True, exist_ok=True)
-    results.to_csv(out_dir / RESULTS_CSV, index=False)
-    schools.to_csv(out_dir / SCHOOLS_CSV, index=False)
-    modes.to_csv(out_dir / MODES_CSV, index=False)
+    results.to_csv(out_dir / suffixed(RESULTS_CSV, suffix), index=False)
+    schools.to_csv(out_dir / suffixed(SCHOOLS_CSV, suffix), index=False)
+    modes.to_csv(out_dir / suffixed(MODES_CSV, suffix), index=False)
     return results, schools, modes
 
 
@@ -216,11 +219,11 @@ def main() -> None:
             las,
             areas,
             args.anon,
-            base.priority,
             args.distance,
             base.max_route_minutes,
         )
         out_dir = folder / SWEEP_DIR
+        suffix = rules_suffix(base, to_school.rule)
         samples = list(student_samples(areas, args.seeds, to_school))
 
         results, schools, modes = sweep(
@@ -238,7 +241,7 @@ def main() -> None:
         )
         print(" + ".join(las) + ":")
         tests = sweep_tests(results)
-        tests.to_csv(out_dir / TESTS_CSV)
+        tests.to_csv(out_dir / suffixed(TESTS_CSV, suffix))
         summary = results.pivot_table(
             index=["parameter", "value"],
             columns="scenario",
@@ -281,8 +284,9 @@ def main() -> None:
             register_fsm(secondary_schools, args.intake, args.anon),
             GRID,
             parameters,
-            out_dir / PLOT_PNG,
+            out_dir / suffixed(PLOT_PNG, suffix),
             args.intake,
+            suffix=suffix,
         )
         if args.map:
             plot_map(
@@ -297,15 +301,17 @@ def main() -> None:
                     district_distance,
                     district_minutes,
                 ),
-                out_dir / MAP_PNG,
+                out_dir / suffixed(MAP_PNG, suffix),
             )
         if args.lorenz:
             plot_lorenz(
-                default_cell(schools, GRID), out_dir / LORENZ_PNG, base.disadvantage
+                default_cell(schools, GRID),
+                out_dir / suffixed(LORENZ_PNG, suffix),
+                base.disadvantage,
             )
         print(
             f"Wrote {RESULTS_CSV}, {SCHOOLS_CSV}, {MODES_CSV}, {TESTS_CSV} and "
-            f"the plots in {out_dir}."
+            f"the plots in {out_dir}, each ending {suffix}."
         )
 
 

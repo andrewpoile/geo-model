@@ -64,6 +64,7 @@ from geo_model.model.settings import (
 )
 from geo_model.model.settings import N_SEEDS as HELD_OUT_SEEDS
 from geo_model.model.students import Sample, student_samples
+from geo_model.output import rules_suffix, suffixed
 from geo_model.plots.front import plot_front
 from geo_model.plots.style import INTAKE_MEASURES
 from geo_model.scripts.run import load_region, run, score_settings
@@ -73,6 +74,9 @@ OUT_DIR = Path("optimise")
 EVALUATIONS_CSV = "evaluations.csv"
 FRONT_CSV = "front.csv"
 FRONT_PNG = "front.png"
+# Ends the name of every file `run` writes of the compromise, after the
+# search's suffix.
+COMPROMISE = "_compromise"
 
 
 # Several samples rather than the 30 `run` draws, since every candidate
@@ -179,7 +183,7 @@ def optimise(
         "priority" and "distance", the rules it was scored under;
         and the feasible settings on the front, sorted by the first
         objective. Also written to EVALUATIONS_CSV and FRONT_CSV in
-        `out_dir`.
+        `out_dir`, each `suffixed` with the `rules_suffix` of `rules`.
     """
     if not samples:
         raise ValueError("No student sample to score, so every objective is undefined.")
@@ -231,9 +235,10 @@ def optimise(
         .sort_values(objectives[0])
         .reset_index(drop=True)
     )
+    suffix = rules_suffix(rules, distance)
     out_dir.mkdir(parents=True, exist_ok=True)
-    evaluations.to_csv(out_dir / EVALUATIONS_CSV, index=False)
-    front.to_csv(out_dir / FRONT_CSV, index=False)
+    evaluations.to_csv(out_dir / suffixed(EVALUATIONS_CSV, suffix), index=False)
+    front.to_csv(out_dir / suffixed(FRONT_CSV, suffix), index=False)
     return evaluations, front
 
 
@@ -332,6 +337,10 @@ def search(
     # The rules are text, which a row cannot be rounded with.
     print(chosen.drop(["priority", "distance"]).round(3).to_string())
 
+    # The compromise's files take the search's suffix and COMPROMISE, so each
+    # search writes over the last one's as over its front, and none reads as
+    # a run of the defaults.
+    suffix = rules_suffix(base, to_school.rule)
     print(f"At the compromise, on {len(held_out)} held-out samples:")
     run(
         replace(base, **cast({p: chosen[p] for p in args.parameters})),
@@ -346,6 +355,7 @@ def search(
         distance=to_school.rule,
         measure=args.intake,
         anon=args.anon,
+        suffix=suffix + COMPROMISE,
     )
 
     written = [EVALUATIONS_CSV, FRONT_CSV]
@@ -356,12 +366,12 @@ def search(
             chosen,
             reference,
             args.objectives,
-            out_dir / FRONT_PNG,
+            out_dir / suffixed(FRONT_PNG, suffix),
         )
         written.append(FRONT_PNG)
     else:
         print("The front is plotted in two objectives only, so no front plot.")
-    print("Wrote " + ", ".join(written) + f" in {out_dir}.")
+    print("Wrote " + ", ".join(written) + f" in {out_dir}, each ending {suffix}.")
 
 
 def main() -> None:
@@ -425,7 +435,6 @@ def main() -> None:
             las,
             areas,
             args.anon,
-            args.priority,
             args.distance,
             DEFAULTS.max_route_minutes,
         )

@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 SEED = 20260907
 # Samples drawn unless --seeds says otherwise by run.py and sweep.py, and by
@@ -295,6 +296,36 @@ DEFAULTS = Settings()
 # parameter it is swept or searched over, so every cell and candidate takes
 # them from the command line alike.
 RULES = ("round_up_seats", "linear_progressivity", "disadvantage", "priority")
+
+
+def rules_of(settings: Settings) -> dict[str, Any]:
+    """The RULES of `settings`, each by its field's name."""
+    return {rule: getattr(settings, rule) for rule in RULES}
+
+
+# Every field of Settings in three characters, as output file names spell it.
+SHORT = {
+    "decile": "dec",
+    "min_distance": "mnd",
+    "max_route_minutes": "mrm",
+    "capacity_scale": "cap",
+    "progressivity": "prg",
+    "max_local_p8": "mlp",
+    "local_radius": "rad",
+    "performance_weight": "pfw",
+    "route_discount": "rtd",
+    "disadvantaged_performance_weight": "dpw",
+    "disadvantaged_route_discount": "drd",
+    "priority_discount": "prd",
+    "priority_per_route": "ppr",
+    "shortest_only": "sho",
+    "bottleneck": "btn",
+    "largest_first": "lgf",
+    "round_up_seats": "rus",
+    "linear_progressivity": "lin",
+    "disadvantage": "dis",
+    "priority": "pri",
+}
 
 # The two scenarios every sample is matched in: with the routes, and the same
 # students with none, the baseline the routes are measured against.

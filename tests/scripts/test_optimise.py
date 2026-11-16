@@ -8,6 +8,7 @@ import pytest
 
 from geo_model.analysis.search import DEFAULT_OBJECTIVES, bounds, objective_values
 from geo_model.model.settings import DEFAULTS
+from geo_model.output import run_suffix, suffixed
 from geo_model.scripts import optimise as op
 from geo_model.scripts.run import score_settings
 
@@ -167,10 +168,13 @@ def test_optimise_finds_the_front_of_every_setting_scored(
     for parameter in parameters:
         low, high = bounds(parameter)
         assert evaluations[parameter].between(low, high).all()
+    suffix = run_suffix(DEFAULTS, "euclidean")
     pd.testing.assert_frame_equal(
-        pd.read_csv(tmp_path / op.EVALUATIONS_CSV), evaluations
+        pd.read_csv(tmp_path / suffixed(op.EVALUATIONS_CSV, suffix)), evaluations
     )
-    pd.testing.assert_frame_equal(pd.read_csv(tmp_path / op.FRONT_CSV), front)
+    pd.testing.assert_frame_equal(
+        pd.read_csv(tmp_path / suffixed(op.FRONT_CSV, suffix)), front
+    )
 
     # No feasible setting beats a front setting on one objective without
     # losing on the other, and every feasible setting off the front is beaten.
