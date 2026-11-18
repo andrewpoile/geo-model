@@ -42,6 +42,7 @@ from geo_model.cli import (
     parsed_settings,
 )
 from geo_model.data.anonymise import anonymise
+from geo_model.data.fleet import minibus_seats
 from geo_model.data.network import (
     Distance,
     bus_minutes,
@@ -547,16 +548,22 @@ def main(
             "--shortest-only, --bottleneck and --largest-first each keep one route "
             "per school by a rule of their own, so only one may be set"
         )
-    if args.minibus is not None and not (
-        args.shortest_only or args.bottleneck or args.largest_first
-    ):
-        parser.error(
-            "--minibus hires minibuses for each school's one route, so it needs "
-            "--shortest-only, --bottleneck or --largest-first"
-        )
-    if args.minibus is None and (
-        args.hire != settings.hire or args.minibuses != settings.minibuses
-    ):
+    if args.minibus is not None:
+        if not (args.shortest_only or args.bottleneck or args.largest_first):
+            parser.error(
+                "--minibus hires minibuses for each school's one route, so it needs "
+                "--shortest-only, --bottleneck or --largest-first"
+            )
+        if args.hire == "fixed" and args.capacity_scale != settings.capacity_scale:
+            parser.error(
+                "under --hire fixed each school's seats are its minibuses' alone, so "
+                "--capacity-scale is read under --hire seats alone"
+            )
+        try:
+            minibus_seats(args.minibus)
+        except ValueError as error:
+            parser.error(str(error))
+    elif args.hire != settings.hire or args.minibuses != settings.minibuses:
         parser.error("--hire and --minibuses are read under --minibus alone")
     if not 0 <= args.priority_discount <= 1:
         parser.error("--priority-discount must lie in [0, 1]")
