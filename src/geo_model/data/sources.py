@@ -65,6 +65,10 @@ MRN_GPKG = DATA_DIR / (
 MRN_LINKS = "mrn_ntwk_transportlink"
 NETWORK_CACHE_DIR = Path("temp/network")
 
+# The minibus models a school can hire for its route, one row per model: a
+# "model" name and its passenger "seats", any further columns kept as read.
+MINIBUSES_CSV = DATA_DIR / "route_data/minibuses.csv"
+
 # NTS0614a: trips to and from school by trip length, main mode and age, England,
 # 2002 onwards. Education trips under 50 miles only; bus is private and local
 # bus together, other is rail and everything else.

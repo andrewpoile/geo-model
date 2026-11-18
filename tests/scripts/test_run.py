@@ -151,12 +151,25 @@ def test_run_rejects_no_samples(tmp_path):
         ["--local-radius", "nan"],
         ["--priority", "bracket", "--priority-discount", "0.8"],
         ["--priority", "bracket", "--priority-per-route"],
+        ["--minibus", "A"],
+        ["--hire", "seats"],
+        ["--minibuses", "2"],
+        ["--shortest-only", "--minibus", "A", "--capacity-scale", "2"],
+        ["--shortest-only", "--minibus", "B"],
+        ["--shortest-only", "--minibus", "A", "--minibuses", "0"],
+        ["--shortest-only", "--minibus", "A", "--round-up-seats"],
     ],
 )
-def test_main_rejects_settings_it_cannot_run_before_loading_a_region(monkeypatch, argv):
+def test_main_rejects_settings_it_cannot_run_before_loading_a_region(
+    monkeypatch, tmp_path, argv
+):
     def load(*args):
         pytest.fail("loaded a region for settings it cannot run")
 
+    # Model A alone, so B is a model the file does not hold.
+    minibuses = tmp_path / "minibuses.csv"
+    minibuses.write_text("model,seats\nA,16\n")
+    monkeypatch.setattr(sources, "MINIBUSES_CSV", minibuses)
     monkeypatch.setattr(rn, "regions", load)
     monkeypatch.setattr(sys, "argv", ["run", *argv])
 

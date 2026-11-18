@@ -31,6 +31,7 @@ from geo_model.cli import (
     add_disadvantage_argument,
     add_distance_argument,
     add_intake_argument,
+    add_minibus_arguments,
     add_priority_argument,
     add_progressivity_argument,
     add_region_arguments,
@@ -41,6 +42,7 @@ from geo_model.cli import (
     parsed_settings,
 )
 from geo_model.data.anonymise import anonymise
+from geo_model.data.fleet import minibus_seats
 from geo_model.data.network import (
     Distance,
     bus_minutes,
@@ -59,7 +61,7 @@ from geo_model.measures.summaries import (
     utilisation_summary,
 )
 from geo_model.measures.travel import CIRCUITY, MODES
-from geo_model.model.routes import centroid_xy
+from geo_model.model.routes import centroid_xy, check_hire
 from geo_model.model.settings import (
     DEFAULTS,
     N_SEEDS,
@@ -530,6 +532,7 @@ def main(
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
+    add_minibus_arguments(parser)
     add_distance_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
@@ -544,6 +547,32 @@ def main(
         parser.error(
             "--shortest-only, --bottleneck and --largest-first each keep one route "
             "per school by a rule of their own, so only one may be set"
+        )
+    try:
+        check_hire(
+            args.shortest_only or args.bottleneck or args.largest_first,
+            args.minibus is not None,
+            args.hire,
+            args.minibuses,
+        )
+        if args.minibus is not None:
+            minibus_seats(args.minibus)
+    except ValueError as error:
+        parser.error(str(error))
+    # Under --hire fixed each school's seats are its minibuses' alone, so the
+    # seat options would only rename the files of the same run. Against
+    # DEFAULTS, which the file names are read against, and the preset's own
+    # rounding, which every scenario sets.
+    if (
+        args.minibus is not None
+        and args.hire == "fixed"
+        and (
+            args.capacity_scale != DEFAULTS.capacity_scale
+            or args.round_up_seats != settings.round_up_seats
+        )
+    ):
+        parser.error(
+            "--capacity-scale and --round-up-seats are read under --hire seats alone"
         )
     if not 0 <= args.priority_discount <= 1:
         parser.error("--priority-discount must lie in [0, 1]")

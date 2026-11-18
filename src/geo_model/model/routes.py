@@ -13,12 +13,15 @@ from geo_model.model.settings import (
     DISADVANTAGE,
     DISADVANTAGE_CHOICES,
     DISADVANTAGED_DECILE,
+    HIRE,
+    HIRE_CHOICES,
     LARGEST_FIRST_ROUTES,
     LINEAR_PROGRESSIVITY,
     LOCAL_RADIUS,
     MAX_LOCAL_P8,
     MAX_ROUTE_MINUTES,
     MIN_ROUTE_DISTANCE,
+    MINIBUSES,
     ROUND_UP_SEATS,
     ROUTE_CAPACITY_SCALE,
     ROUTE_PROGRESSIVITY,
@@ -411,6 +414,36 @@ def build_routes(
     )
 
 
+def check_hire(one_route: bool, hired: bool, hire: str, minibuses: int) -> None:
+    """Raise where the minibus options cannot be run together.
+
+    Args:
+        one_route (bool): Whether a rule keeps one route per school.
+
+        hired (bool): Whether each school hires minibuses for its route.
+
+        hire (str): One of HIRE_CHOICES, how many it hires.
+
+        minibuses (int): Minibuses each school hires under `hire` "fixed".
+
+    Raises:
+        ValueError: If `hire` is no choice, `minibuses` is below 1, either is
+        off its default with no minibus hired, or one is hired with no rule
+        keeping one route per school.
+    """
+    if hire not in HIRE_CHOICES:
+        raise ValueError(f"hire must be one of {HIRE_CHOICES}, got {hire!r}.")
+    if minibuses < 1:
+        raise ValueError(f"minibuses must be at least 1, got {minibuses}.")
+    if not hired and (hire != HIRE or minibuses != MINIBUSES):
+        raise ValueError("hire and minibuses are read with a minibus hired alone.")
+    if hired and not one_route:
+        raise ValueError(
+            "Minibuses are hired for each school's one route, so they need "
+            "shortest_only, bottleneck or largest_first."
+        )
+
+
 def route_network(
     areas: gpd.GeoDataFrame,
     district_distance: np.ndarray,
@@ -431,6 +464,9 @@ def route_network(
     shortest_only: bool = SHORTEST_ROUTE_ONLY,
     bottleneck: bool = BOTTLENECK_ROUTES,
     largest_first: bool = LARGEST_FIRST_ROUTES,
+    bus_seats: int | None = None,
+    hire: str = HIRE,
+    minibuses: int = MINIBUSES,
 ) -> pd.DataFrame:
     """Select the route-eligible districts of `areas` and route them to schools.
 
@@ -464,6 +500,13 @@ def route_network(
     district at IDACI decile D_d, or ((decile + 1 - D_d) / decile)^p when
     `linear`: p moves a school's seats towards the more deprived districts
     without changing how many it holds.
+
+    Given `bus_seats`, under a rule keeping one route per school, each school
+    hires minibuses of that many seats for its route instead, `minibuses` of
+    them under `hire` "fixed", whatever its seats, or under "seats" as many as
+    its seats need, rounded up, and its route holds the minibuses' seats. The
+    seats are set before the districts are paired, so `bottleneck` and
+    `largest_first` pair them on the seats hired.
 
     Args:
         areas (gpd.GeoDataFrame): Every district, carrying "LSOA21CD", "IDACI
@@ -550,6 +593,16 @@ def route_network(
         on `school_places`, each route then holding all of its school's route
         seats. Defaults to LARGEST_FIRST_ROUTES.
 
+        bus_seats (int | None, optional): Passenger seats of the minibus model
+        every school hires for its one route, or None to hire none, each
+        route holding its school's seats alone. Defaults to None.
+
+        hire (str, optional): One of HIRE_CHOICES, how many minibuses each
+        school hires. Defaults to HIRE.
+
+        minibuses (int, optional): Minibuses each school hires under `hire`
+        "fixed". Defaults to MINIBUSES.
+
     Returns:
         pd.DataFrame: The route set, as returned by `build_routes`.
     """
@@ -613,6 +666,12 @@ def route_network(
         raise ValueError(f"capacity_scale must be positive, got {capacity_scale}.")
     if progressivity < 0:
         raise ValueError(f"progressivity must be non-negative, got {progressivity}.")
+    check_hire(
+        shortest_only or bottleneck or largest_first,
+        bus_seats is not None,
+        hire,
+        minibuses,
+    )
 
     cohort = np.asarray(district_cohort, dtype=float)
     disadvantaged = (
@@ -678,6 +737,14 @@ def route_network(
         * disadvantaged.sum()
         / cohort.sum()
     )
+    school_seats = (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int64)
+    if bus_seats is not None:
+        buses = (
+            np.full(n_schools, minibuses)
+            if hire == "fixed"
+            else np.ceil(school_seats / bus_seats).astype(np.int64)
+        )
+        school_seats = buses * bus_seats
     routes = build_routes(
         eligible,
         district_distance[eligible.index],
@@ -685,7 +752,7 @@ def route_network(
         min_distance,
         max_minutes,
         weight,
-        (np.ceil(seats) if round_up else np.rint(seats)).astype(np.int64),
+        school_seats,
         shortest_only,
         bottleneck,
         np.asarray(school_places) if largest_first else None,
@@ -722,6 +789,12 @@ def route_network(
             "route, so no routes: " + ", ".join(unrouted)
         )
 
+    if bus_seats is not None:
+        # Each school's one route holds all of its seats, so its minibuses'.
+        print(
+            f"{routes['capacity'].sum() // bus_seats} minibuses of {bus_seats} "
+            f"seats hired for {len(routes)} routes."
+        )
     n_routed = routes["district_idx"].nunique()
     if shortest_only:
         rule = ", each school keeping only its route to the nearest district."

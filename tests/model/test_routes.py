@@ -528,11 +528,34 @@ def test_route_network_uses_the_module_defaults():
         ({"shortest_only": True, "bottleneck": True}, "only one may be set"),
         ({"shortest_only": True, "largest_first": True}, "only one may be set"),
         ({"bottleneck": True, "largest_first": True}, "only one may be set"),
+        ({"bus_seats": 16}, "they need shortest_only"),
+        ({"hire": "seats"}, "with a minibus hired alone"),
+        ({"bus_seats": 16, "shortest_only": True, "hire": "hourly"}, "hire must be"),
+        ({"bus_seats": 16, "shortest_only": True, "minibuses": 0}, "at least 1"),
     ],
 )
 def test_route_network_rejects_bad_arguments(kwargs, message):
     with pytest.raises(ValueError, match=message):
         network(make_areas([1, 1]), **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("hire", "minibuses", "capacity"),
+    # Each school's seats are 1 * 100 * 30 / 30: one minibus or two, whatever
+    # they are, or the seven of 16 seats that 100 need.
+    [("fixed", 1, 16), ("fixed", 2, 32), ("seats", 1, 112)],
+)
+def test_route_network_seats_each_route_on_the_minibuses_hired(
+    hire, minibuses, capacity
+):
+    routes = network(
+        make_areas([1, 1, 1]),
+        shortest_only=True,
+        bus_seats=16,
+        hire=hire,
+        minibuses=minibuses,
+    )
+    assert (routes["capacity"] == capacity).all()
 
 
 def test_route_network_rejects_an_area_frame_that_is_not_positionally_indexed():
