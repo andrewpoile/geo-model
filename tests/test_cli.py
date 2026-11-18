@@ -8,6 +8,7 @@ from geo_model.cli import (
     add_anon_argument,
     add_disadvantage_argument,
     add_intake_argument,
+    add_minibus_arguments,
     add_priority_argument,
     add_progressivity_argument,
     add_region_arguments,
@@ -110,6 +111,7 @@ def test_every_setting_takes_the_presets_value_and_its_own():
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
+    add_minibus_arguments(parser)
     parser.set_defaults(**{rule: getattr(preset, rule) for rule in RULES})
 
     # Unset, every option is the preset's value, so the preset runs as it is.

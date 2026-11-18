@@ -31,6 +31,7 @@ from geo_model.cli import (
     add_disadvantage_argument,
     add_distance_argument,
     add_intake_argument,
+    add_minibus_arguments,
     add_priority_argument,
     add_progressivity_argument,
     add_region_arguments,
@@ -530,6 +531,7 @@ def main(
     add_progressivity_argument(parser)
     add_disadvantage_argument(parser)
     add_priority_argument(parser)
+    add_minibus_arguments(parser)
     add_distance_argument(parser)
     add_intake_argument(parser, list(INTAKE_MEASURES))
     add_region_arguments(parser)
@@ -545,6 +547,17 @@ def main(
             "--shortest-only, --bottleneck and --largest-first each keep one route "
             "per school by a rule of their own, so only one may be set"
         )
+    if args.minibus is not None and not (
+        args.shortest_only or args.bottleneck or args.largest_first
+    ):
+        parser.error(
+            "--minibus hires minibuses for each school's one route, so it needs "
+            "--shortest-only, --bottleneck or --largest-first"
+        )
+    if args.minibus is None and (
+        args.hire != settings.hire or args.minibuses != settings.minibuses
+    ):
+        parser.error("--hire and --minibuses are read under --minibus alone")
     if not 0 <= args.priority_discount <= 1:
         parser.error("--priority-discount must lie in [0, 1]")
     if not args.local_radius >= 0:

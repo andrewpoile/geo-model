@@ -9,7 +9,10 @@ from geo_model.model.settings import (
     DEFAULTS,
     DISADVANTAGE,
     DISADVANTAGE_CHOICES,
+    HIRE,
+    HIRE_CHOICES,
     LINEAR_PROGRESSIVITY,
+    MINIBUS,
     PRIORITY,
     PRIORITY_CHOICES,
     PRIORITY_DISCOUNT,
@@ -174,6 +177,30 @@ def add_priority_argument(parser: argparse.ArgumentParser) -> None:
         "every routed student and every student of the school's own district "
         "first, everyone else after, each by distance, the model as it was "
         "before",
+    )
+
+
+def add_minibus_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the options of the minibuses each school hires for its one route.
+
+    Args:
+        parser (argparse.ArgumentParser): The entry point's parser.
+    """
+    parser.add_argument(
+        "--minibus",
+        default=MINIBUS,
+        metavar="MODEL",
+        help="the minibus model, as the minibus file names it, every school hires "
+        "for its one route under --shortest-only, --bottleneck or "
+        "--largest-first, so its route seats come in whole minibuses; unset, "
+        "they are its route seats alone",
+    )
+    parser.add_argument(
+        "--hire",
+        choices=HIRE_CHOICES,
+        default=HIRE,
+        help="fixed: each school hires --minibuses minibuses; seats: as many as "
+        "its route seats need, rounded up",
     )
 
 

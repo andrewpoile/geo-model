@@ -4,6 +4,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
+from geo_model.data.fleet import minibus_seats
 from geo_model.measures.segregation import (
     dissimilarity_index,
     dissimilarity_terms,
@@ -377,6 +378,9 @@ def settings_routes(
         shortest_only=settings.shortest_only,
         bottleneck=settings.bottleneck,
         largest_first=settings.largest_first,
+        bus_seats=None if settings.minibus is None else minibus_seats(settings.minibus),
+        hire=settings.hire,
+        minibuses=settings.minibuses,
     )
 
 

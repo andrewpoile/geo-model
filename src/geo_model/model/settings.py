@@ -87,6 +87,19 @@ BOTTLENECK_ROUTES = False
 # below its disadvantaged students. Every school offers a single route.
 LARGEST_FIRST_ROUTES = False
 
+# The minibus model, as data/route_data/minibuses.csv names it, every school
+# hires for its one route under SHORTEST_ROUTE_ONLY, BOTTLENECK_ROUTES or
+# LARGEST_FIRST_ROUTES, so its route seats come in whole minibuses. None
+# seats each school's route on its route seats alone.
+MINIBUS = None
+
+# How many minibuses each school hires:
+#   "fixed"  MINIBUSES each, whatever its route seats.
+#   "seats"  As many as its route seats need, rounded up.
+HIRE_CHOICES = ("fixed", "seats")
+HIRE = "fixed"
+MINIBUSES = 1
+
 # A route carries a student past their local schools, so a district already
 # within reach of a school performing above this needs none. P8MEA is centred
 # on the England average, so 0 is an average school.
@@ -282,12 +295,20 @@ class Settings:
             )
         },
     )
+    minibuses: int = field(
+        default=MINIBUSES,
+        metadata={"help": "minibuses each school hires under --hire fixed"},
+    )
     # The rules, RULES. Their options are cli's add_* functions, which the
-    # sweep and the search take as well, so they carry no help of their own.
+    # sweep and the search take as well, so they carry no help of their own,
+    # but for the minibus and hire, which only run takes, since they need a
+    # rule keeping one route per school, which neither varies.
     round_up_seats: bool = ROUND_UP_SEATS
     linear_progressivity: bool = LINEAR_PROGRESSIVITY
     disadvantage: str = DISADVANTAGE
     priority: str = PRIORITY
+    minibus: str | None = MINIBUS
+    hire: str = HIRE
 
 
 DEFAULTS = Settings()
@@ -295,7 +316,14 @@ DEFAULTS = Settings()
 # The fields of Settings that set the rules a matching follows rather than a
 # parameter it is swept or searched over, so every cell and candidate takes
 # them from the command line alike.
-RULES = ("round_up_seats", "linear_progressivity", "disadvantage", "priority")
+RULES = (
+    "round_up_seats",
+    "linear_progressivity",
+    "disadvantage",
+    "priority",
+    "minibus",
+    "hire",
+)
 
 
 def rules_of(settings: Settings) -> dict[str, Any]:
@@ -321,10 +349,13 @@ SHORT = {
     "shortest_only": "sho",
     "bottleneck": "btn",
     "largest_first": "lgf",
+    "minibuses": "mbs",
     "round_up_seats": "rus",
     "linear_progressivity": "lin",
     "disadvantage": "dis",
     "priority": "pri",
+    "minibus": "mnb",
+    "hire": "hir",
 }
 
 # The two scenarios every sample is matched in: with the routes, and the same
