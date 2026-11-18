@@ -156,6 +156,8 @@ def test_run_rejects_no_samples(tmp_path):
         ["--minibuses", "2"],
         ["--shortest-only", "--minibus", "A", "--capacity-scale", "2"],
         ["--shortest-only", "--minibus", "B"],
+        ["--shortest-only", "--minibus", "A", "--minibuses", "0"],
+        ["--shortest-only", "--minibus", "A", "--round-up-seats"],
     ],
 )
 def test_main_rejects_settings_it_cannot_run_before_loading_a_region(

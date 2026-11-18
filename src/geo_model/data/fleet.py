@@ -20,12 +20,18 @@ def load_minibuses() -> pd.DataFrame:
         and every further column as read.
 
     Raises:
-        ValueError: If a model is named twice or by anything but letters,
-        digits, "." and "-", or its seats are not a whole number in
-        [1, MAX_MINIBUS_SEATS].
+        ValueError: If the "model" or "seats" column is missing, a model is
+        named twice or by anything but letters, digits, "." and "-", or its
+        seats are not a whole number in [1, MAX_MINIBUS_SEATS].
     """
-    minibuses = pd.read_csv(sources.MINIBUSES_CSV, dtype={"model": str})
-    named = minibuses["model"].str.fullmatch(MODEL_NAME, na=False)
+    # Every cell as written, so a model named "NA" is not read as missing.
+    minibuses = pd.read_csv(sources.MINIBUSES_CSV, dtype=str, keep_default_na=False)
+    missing = {"model", "seats"} - set(minibuses.columns)
+    if missing:
+        raise ValueError(
+            f"{sources.MINIBUSES_CSV} has no column {', '.join(sorted(missing))}."
+        )
+    named = minibuses["model"].str.fullmatch(MODEL_NAME)
     if not named.all():
         raise ValueError(
             "A minibus model is named by letters, digits, '.' and '-' alone: "
@@ -36,7 +42,8 @@ def load_minibuses() -> pd.DataFrame:
             "Minibus models named twice: "
             + ", ".join(minibuses.loc[minibuses["model"].duplicated(), "model"])
         )
-    seats = minibuses["seats"]
+    # Seats that are no number, "16 seats" or none, fail the check below as NaN.
+    seats = pd.to_numeric(minibuses["seats"], errors="coerce")
     whole = (seats % 1 == 0) & seats.between(1, MAX_MINIBUS_SEATS)
     if not whole.all():
         raise ValueError(
@@ -44,7 +51,7 @@ def load_minibuses() -> pd.DataFrame:
             f"{MAX_MINIBUS_SEATS}], more making it a small coach: "
             + ", ".join(minibuses.loc[~whole, "model"])
         )
-    return minibuses.astype({"seats": int}).set_index("model")
+    return minibuses.assign(seats=seats.astype(int)).set_index("model")
 
 
 def minibus_seats(model: str) -> int:

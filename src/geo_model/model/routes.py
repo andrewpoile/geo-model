@@ -414,6 +414,36 @@ def build_routes(
     )
 
 
+def check_hire(one_route: bool, hired: bool, hire: str, minibuses: int) -> None:
+    """Raise where the minibus options cannot be run together.
+
+    Args:
+        one_route (bool): Whether a rule keeps one route per school.
+
+        hired (bool): Whether each school hires minibuses for its route.
+
+        hire (str): One of HIRE_CHOICES, how many it hires.
+
+        minibuses (int): Minibuses each school hires under `hire` "fixed".
+
+    Raises:
+        ValueError: If `hire` is no choice, `minibuses` is below 1, either is
+        off its default with no minibus hired, or one is hired with no rule
+        keeping one route per school.
+    """
+    if hire not in HIRE_CHOICES:
+        raise ValueError(f"hire must be one of {HIRE_CHOICES}, got {hire!r}.")
+    if minibuses < 1:
+        raise ValueError(f"minibuses must be at least 1, got {minibuses}.")
+    if not hired and (hire != HIRE or minibuses != MINIBUSES):
+        raise ValueError("hire and minibuses are read with a minibus hired alone.")
+    if hired and not one_route:
+        raise ValueError(
+            "Minibuses are hired for each school's one route, so they need "
+            "shortest_only, bottleneck or largest_first."
+        )
+
+
 def route_network(
     areas: gpd.GeoDataFrame,
     district_distance: np.ndarray,
@@ -636,17 +666,12 @@ def route_network(
         raise ValueError(f"capacity_scale must be positive, got {capacity_scale}.")
     if progressivity < 0:
         raise ValueError(f"progressivity must be non-negative, got {progressivity}.")
-    if hire not in HIRE_CHOICES:
-        raise ValueError(f"hire must be one of {HIRE_CHOICES}, got {hire!r}.")
-    if minibuses < 1:
-        raise ValueError(f"minibuses must be at least 1, got {minibuses}.")
-    if bus_seats is None and (hire != HIRE or minibuses != MINIBUSES):
-        raise ValueError("hire and minibuses are read given bus_seats alone.")
-    if bus_seats is not None and not (shortest_only or bottleneck or largest_first):
-        raise ValueError(
-            "Minibuses are hired for each school's one route, so bus_seats needs "
-            "shortest_only, bottleneck or largest_first."
-        )
+    check_hire(
+        shortest_only or bottleneck or largest_first,
+        bus_seats is not None,
+        hire,
+        minibuses,
+    )
 
     cohort = np.asarray(district_cohort, dtype=float)
     disadvantaged = (
